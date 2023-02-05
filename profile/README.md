@@ -7,6 +7,7 @@ Users can also skip the policy reform and estimate their tax liability and benef
 We welcome contributions to our repositories, especially our core ones:
 * [`policyengine-us`](https://github.com/PolicyEngine/policyengine-us), the US tax-benefit microsimulation model (Python)
 * [`policyengine-uk`](https://github.com/PolicyEngine/policyengine-uk), the UK tax-benefit microsimulation model (Python)
+* [`policyengine-canada`](https://github.com/PolicyEngine/policyengine-canada), the Canada tax-benefit microsimulation model (Python - EARLY)
 * [`policyengine-app`](https://github.com/PolicyEngine/policyengine-app), the app client (React)
 * [`policyengine-api`](https://github.com/PolicyEngine/policyengine-api), the REST API (Python)
 * [`policyengine-core`](https://github.com/PolicyEngine/policyengine-core), the microsimulation framework (Python)
