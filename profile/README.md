@@ -1,7 +1,5 @@
 **[PolicyEngine](https://policyengine.org)** is a nonprofit with the mission to **compute the impact of public policy for the world.**
 
-<a href="https://digitalpublicgoods.net/registry/policyengine.html"><img src="https://digitalpublicgoods.net/images/badge.svg" alt="Digital Public Good" height="24"></a>
-
 ## What we do
 
 Our free, open-source software models the tax and benefit systems in the US and UK, using our microsimulation framework based on [OpenFisca](https://openfisca.org). We enhance representative survey microdata for macroeconomic analysis and make everything available as Python packages, APIs, or web apps.
@@ -12,9 +10,9 @@ The PolicyEngine web app lets users design custom tax-benefit reforms and see ho
 
 - **Government use**: Our co-founder and CTO Nikhil Woodruff spent six months as an [Innovation Fellow at 10 Downing Street](https://fellows.ai.gov.uk/articles/nikhil-woodruff-micro-simulation), adapting PolicyEngine for UK government policy analysis
 - **NBER partnership**: We're building an [open-source TAXSIM emulator](https://policyengine.org/us/research/policyengine-nber-mou-taxsim) in collaboration with the National Bureau of Economic Research
+- **Atlanta Fed partnership**: We're integrating the [Policy Rules Database](https://policyengine.org/us/research/policyengine-atlanta-fed-mou-prd) for multi-model validation across tax and benefit programs
 - **State coverage**: We model income taxes for all 50 US states plus DC, along with major federal and state benefit programs
 - **AI-powered explanations**: Our [AI system](https://policyengine.org/uk/research/uk-household-ai) translates complex tax and benefit calculations into plain language
-- **Recognized as a [Digital Public Good](https://digitalpublicgoods.net/registry/policyengine.html)** by the UN-endorsed Digital Public Goods Alliance
 
 ## Core repositories
 
