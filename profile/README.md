@@ -45,5 +45,5 @@ We welcome contributions to our repositories, especially our core ones:
 
 - [policyengine.org](https://policyengine.org) — Try our calculator
 - [Research](https://policyengine.org/us/research) — Policy analysis and blog posts
-- [API documentation](https://householdapi.policyengine.org/docs) — Build with our API
+- [API documentation](https://github.com/PolicyEngine/policyengine-household-api) — Build with our API
 - [Contact](mailto:hello@policyengine.org) — Get in touch
