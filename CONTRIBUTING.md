@@ -74,6 +74,7 @@ Things that reliably break CI or cause silent data loss — don't do any of thes
 - **Don't** create new files with `_v2` / `_v3` / `_new` suffixes. Edit the original in place — git keeps the history.
 - **Don't** delete code without grepping for callers. Passing tests ≠ safe to delete (tests may bypass the code being removed).
 - **Don't** hardcode values to make a specific test pass. Fix the root cause.
+- **Don't** publish a number the model didn't compute. Every fiscal, distributional, poverty or household figure presented as a PolicyEngine estimate in an analysis, dashboard or report comes from running the microsimulation for that scenario, never from scaling, interpolating or extrapolating other runs' outputs, or from a side model standing in for PolicyEngine. A macro or price scenario goes in as model inputs, so the model's uprating carries it through. If there are too many scenarios to run, run fewer and say how many runs stand behind each figure. Agent-facing details are in the `policyengine` skill in [policyengine-skills](https://github.com/PolicyEngine/policyengine-skills).
 - **Don't** use `# pragma: no cover` for code that simply lacks tests — write tests instead.
 
 ## Code-coverage exclusions
