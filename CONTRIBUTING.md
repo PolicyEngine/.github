@@ -65,11 +65,11 @@ PolicyEngine rules are also encoded as Axiom RuleSpec, in `TheAxiomFoundation/ru
 ```text
 axiom: <legal id> encoded-correct   # an existing Axiom module already handles the case; cite the companion test that shows it
 axiom: <rulespec PR> encoded        # the provision was encoded or repaired alongside this PR
-axiom: <rulespec issue> queued      # a dispatch-ready encoding issue, labelled pe-parity
+axiom: <rulespec issue> queued      # the signed encoder is blocked; a dispatch-ready encoding issue, labelled pe-parity
 axiom: n/a: <reason>                # infrastructure, data, UI, microsimulation-only or emulator-mapping changes
 ```
 
-A `queued` issue must be ready for the encoder to run without further research:
+Use `queued` only when the signed encoder is blocked; record the blocker in the issue. Each billed encoder run requires separate approval. A `queued` issue must be ready for the encoder to run without further research:
 
 - the module path and corpus citation;
 - the operative law, quoted verbatim;
