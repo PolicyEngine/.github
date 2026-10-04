@@ -58,9 +58,29 @@ Fragment `<type>` drives the [SemVer](http://semver.org/) bump:
 - Body: layperson-readable explanation of *why* (motivation) and *what* (summary of changes). Include a test-plan checklist for non-trivial PRs.
 - Breaking changes: a separate "Migration" section with explicit before/after guidance.
 
+## Mirror policy changes in Axiom
+
+PolicyEngine rules are also encoded as Axiom RuleSpec, in `TheAxiomFoundation/rulespec-<country>` (for example [rulespec-us](https://github.com/TheAxiomFoundation/rulespec-us) and [rulespec-uk](https://github.com/TheAxiomFoundation/rulespec-uk)). Some country-model PRs change policy: a new program, a parameter or threshold update, an eligibility rule, a bug fix. Those PRs must also leave the same provision correct in the matching rulespec repo. Say how in one line of the PR description:
+
+```text
+axiom: <legal id> encoded-correct   # an existing Axiom module already handles the case; cite the companion test that shows it
+axiom: <rulespec PR> encoded        # the provision was encoded or repaired alongside this PR
+axiom: <rulespec issue> queued      # the signed encoder is blocked; a dispatch-ready encoding issue, labelled pe-parity
+axiom: n/a: <reason>                # infrastructure, data, UI, microsimulation-only or emulator-mapping changes
+```
+
+Use `queued` only when the signed encoder is blocked; record the blocker in the issue. Each billed encoder run requires separate approval. A `queued` issue must be ready for the encoder to run without further research:
+
+- the module path and corpus citation;
+- the operative law, quoted verbatim;
+- the required outputs;
+- companion tests whose expected values come from the same external source as the PolicyEngine tests (statute, official form or worksheet, official calculator).
+
+[rulespec-us#1416](https://github.com/TheAxiomFoundation/rulespec-us/issues/1416) is an example. RuleSpec modules come from the signed encoder and are never written by hand. If you are an external contributor and can't do this, write `axiom: needed` and a maintainer will follow up.
+
 ## Peer review
 
-All PRs must be reviewed by someone other than the author. If no other reviewer is available, wait at least 24 hours from your last commit before self-review. Reviewers should look for tests, changelog fragment presence, and CI green status.
+All PRs must be reviewed by someone other than the author. If no other reviewer is available, wait at least 24 hours from your last commit before self-review. Reviewers should look for tests, changelog fragment presence, CI green status, and an `axiom:` line on any PR that changes policy.
 
 ## Anti-patterns
 
