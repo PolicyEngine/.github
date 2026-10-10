@@ -18,7 +18,7 @@ from typing import Any
 
 from .finder.propose import document_of
 from .github import GitHub
-from .issue_lint import _ARTIFACT, _CORPUS_SINGULAR, _HEADING, _LABEL, _QUOTE, lint_issue
+from .issue_lint import _ARTIFACT, _CORPUS_SINGULAR, lint_issue, review_finding_text
 
 # Measured model spend per completed targeted-signed-reencode run, GPT-6 Luna
 # with Sol escalation (axiom-encode#1699), 2026-09-25 to 2026-10-10: 121 runs,
@@ -68,7 +68,8 @@ class Batch:
 
     @property
     def ready(self) -> bool:
-        return all(i.ready for i in self.issues) and not any(i.blocked for i in self.issues)
+        """Every issue passes the lint, has a review_finding to paste, and is in the pin."""
+        return all(i.ready and i.review_finding for i in self.issues) and not any(i.blocked for i in self.issues)
 
 
 _PE_PR = re.compile(r"PolicyEngine/policyengine-(?:us|uk|canada|il|ng|nz)(?:/pull/|#)(\d+)")
@@ -82,39 +83,6 @@ _BLOCKERS = {
     "encoder-pin": re.compile(r"does not match the running pinned encoder|encoder pin", re.I),
     "waiver": re.compile(r"waiver-frozen|validate_failures", re.I),
 }
-
-
-def review_finding_text(markdown: str) -> str | None:
-    """The pasteable review_finding: the quote or code block under its heading or cue."""
-    lines = markdown.splitlines()
-    for i, line in enumerate(lines):
-        heading = _HEADING.match(line) or _LABEL.match(line)
-        cue = re.search(r"review[_\s-]?finding", line, re.I)
-        if not cue:
-            continue
-        if heading and not re.search(r"review[_\s-]?finding", (heading.group("title") or ""), re.I):
-            continue
-        quoted, fenced = [], False
-        for nxt in lines[i + 1 : i + 80]:
-            if re.match(r"^\s*(```|~~~)", nxt):
-                if fenced:
-                    break
-                fenced = True
-                continue
-            if fenced:
-                quoted.append(nxt)
-                continue
-            q = _QUOTE.match(nxt)
-            if q:
-                quoted.append(q.group(1))
-            elif quoted and not nxt.strip():
-                quoted.append("")
-            elif quoted or _HEADING.match(nxt):
-                break
-        text = "\n".join(quoted).strip()
-        if len(text) >= 80:
-            return text
-    return None
 
 
 _EXPLICIT_TARGET = re.compile(

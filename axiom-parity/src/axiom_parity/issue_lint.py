@@ -166,6 +166,60 @@ def _snippet(text: str, n: int = 90) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
+_YAML_KEY = re.compile(r"^(?P<indent>\s*)-?\s*review_finding:\s*(?P<style>[|>][-+]?)?\s*(?P<inline>.*)$")
+
+
+def review_finding_text(markdown: str) -> str | None:
+    """The pasteable review_finding: the quote or code block under its heading or cue.
+
+    Also reads the YAML form dispatch snippets use (``review_finding: |-`` and
+    an indented block).
+    """
+    lines = markdown.splitlines()
+    for i, line in enumerate(lines):
+        y = _YAML_KEY.match(line)
+        if y:
+            if y.group("style"):
+                indent = len(y.group("indent"))
+                block = []
+                for nxt in lines[i + 1 :]:
+                    if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= indent:
+                        break
+                    block.append(nxt.strip())
+                text = " ".join(t for t in block if t).strip()
+            else:
+                text = y.group("inline").strip().strip("'\"")
+            if len(text) >= 80:
+                return text
+            continue
+        if not re.search(r"review[_\s-]?finding", line, re.I):
+            continue
+        heading = _HEADING.match(line)
+        if heading and not re.search(r"review[_\s-]?finding", heading.group("title"), re.I):
+            continue
+        quoted, fenced = [], False
+        for nxt in lines[i + 1 : i + 80]:
+            if re.match(r"^\s*(```|~~~)", nxt):
+                if fenced:
+                    break
+                fenced = True
+                continue
+            if fenced:
+                quoted.append(nxt)
+                continue
+            q = _QUOTE.match(nxt)
+            if q:
+                quoted.append(q.group(1))
+            elif quoted and not nxt.strip():
+                quoted.append("")
+            elif quoted or _HEADING.match(nxt):
+                break
+        text = "\n".join(quoted).strip()
+        if len(text) >= 80:
+            return text
+    return None
+
+
 def lint_texts(texts: list[tuple[str, str]]) -> LintResult:
     """Lint an issue given (source label, markdown) pairs: body, then comments."""
     result = LintResult()
@@ -215,6 +269,14 @@ def lint_texts(texts: list[tuple[str, str]]) -> LintResult:
                     result.found[element] = f"{sec.source}: “{_snippet(line)}”"
                     break
             if element in result.found:
+                break
+
+    if "review_finding" not in result.found:
+        # The same extractor the drain uses to paste the finding: anything it
+        # can paste counts here too.
+        for source, text in texts:
+            if review_finding_text(text or ""):
+                result.found["review_finding"] = f"{source}: pasteable review_finding"
                 break
 
     result.missing = [e for e in ELEMENTS if e not in result.found]

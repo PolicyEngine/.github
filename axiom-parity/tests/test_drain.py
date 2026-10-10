@@ -18,6 +18,39 @@ def test_review_finding_under_heading_and_after_cue():
     assert review_finding_text("## review_finding\n\nTBD\n") is None
 
 
+def test_review_finding_after_a_bold_step_label_and_in_yaml():
+    md = "**Step 1.** Encode one module. `review_finding` (paste as-is):\n\n> " + "Encode reg 3 from its elements. " * 4
+    assert review_finding_text(md).startswith("Encode reg 3")
+    yml = (
+        "```yaml\ncitation: us/statute/26/1\nreview_finding: |-\n  "
+        + "Encode section 1 from its own terms. " * 4
+        + "\nopen_pr: true\n```"
+    )
+    assert review_finding_text(yml).startswith("Encode section 1")
+    assert "open_pr" not in review_finding_text(yml)
+
+
+@given(
+    st.text(alphabet="abcdefgh ,.`>#*-_:|\n", max_size=400),
+    st.integers(60, 140).map(lambda n: "x" * n),
+)
+def test_property_extracted_review_finding_implies_lint_found_it(text, near_threshold):
+    """Differential: the drain never pastes a review_finding the lint didn't see."""
+    from axiom_parity.issue_lint import lint_issue
+
+    bodies = [
+        text,
+        "## review_finding\n\n> " + text,
+        "review_finding: |-\n  " + text.replace("\n", " "),
+        "review_finding: |-\n  " + near_threshold,
+        "review_finding: " + near_threshold,
+        "Paste this as `review_finding`:\n\n> " + near_threshold,
+    ]
+    for body in bodies:
+        if review_finding_text(body):
+            assert "review_finding" in lint_issue({"body": body}).found
+
+
 def test_explicit_target_beats_context_mentions():
     body = (
         READY_ISSUE_BODY
