@@ -47,7 +47,20 @@ _NEGATION = re.compile(
     r"yet to be|needs? to be|must be)|n't)\s+(?:\w+\s+){0,4}$",
     re.IGNORECASE,
 )
-_NA_START = re.compile(r"^\s*(?:\*\*|`)?n\s*/\s*a(?:\*\*|`)?(?![\w])\s*(?P<reason>.*)$", re.IGNORECASE | re.DOTALL)
+# A negation left hanging before an aside still governs the status after it:
+# "is not (yet) queued", "is not, in fact, queued", "(not yet) queued". The aside is
+# the only thing between them, so "(not #2) queued" and "Not in Axiom, #5 queued"
+# still claim queued.
+_NEG = r"(?:\b(?:not|never|no longer|cannot)|n't)"
+_ADVERBS = r"(?:\s+(?:yet|currently|really|actually|quite|fully|already|now|still|ever))*"
+_ASIDE_NEGATION = re.compile(
+    rf"(?:{_NEG}{_ADVERBS}\s*(?:\([^()]*\)|,[^,;:.()]*,)|\(\s*(?:(?:still|currently)\s+)?{_NEG}{_ADVERBS}\s*\))"
+    r"\s*(?:\w+\s+){0,4}$",
+    re.IGNORECASE,
+)
+_NA_START = re.compile(
+    r"^\s*(?:\*\*|__|`)?n\s*/\s*a(?:\*\*|__|`)?(?![\w])\s*(?P<reason>.*)$", re.IGNORECASE | re.DOTALL
+)
 _NEEDED_START = re.compile(r"^\s*(?:\*\*|`)?needed(?:\*\*|`)?(?![\w-])\s*(?P<note>.*)$", re.IGNORECASE | re.DOTALL)
 
 
@@ -165,8 +178,11 @@ _SENTENCE = re.compile(r"(?<=[.)])\s+(?=[A-Z`*])")
 _CLAUSE_BREAK = re.compile(r"[,;:.()]|\b(?:but|and|though|although|however|while|whereas)\b", re.IGNORECASE)
 # "the queued federal rule", "an encoded module": the status word describes a noun.
 # The determiner must be a word of its own: the "A" ending "26/24/d/1/A" is a path segment.
+# An adverb may sit between them: "the already queued federal rule".
 _ADJECTIVE = re.compile(
-    r"(?:^|(?<=\s))(?:the|a|an|this|that|these|those|its|their|each|every|any|no|other)\s+$", re.IGNORECASE
+    r"(?:^|(?<=\s))(?:the|a|an|this|that|these|those|its|their|each|every|any|no|other)\s+"
+    r"(?:(?:already|still|now|newly|previously|currently|recently|\w+ly)\s+){0,2}$",
+    re.IGNORECASE,
 )
 
 
@@ -181,7 +197,7 @@ def _status_hits(text: str) -> list[re.Match[str]]:
         # "is not encoded but is queued" still claims queued.
         breaks = [b.end() for b in _CLAUSE_BREAK.finditer(before)]
         clause = before[breaks[-1] :] if breaks else before
-        if _NEGATION.search(clause) or _ADJECTIVE.search(before):
+        if _NEGATION.search(clause) or _ASIDE_NEGATION.search(before) or _ADJECTIVE.search(before):
             continue
         hits.append(m)
     return hits
@@ -211,7 +227,9 @@ def _merge_statusless(sentences: list[str]) -> list[str]:
     return out
 
 
-_NA_INLINE = re.compile(r"(?:\s*(?:\band\b|[.,])\s*|\s+)(?=n\s*/\s*a\s*[:(—–-])", re.IGNORECASE)
+_NA_INLINE = re.compile(
+    r"(?:\s*(?:\band\b|[.,])\s*|\s+)(?=(?:\*\*|__|`)?n\s*/\s*a(?:\*\*|__|`)?\s*[:(—–-])", re.IGNORECASE
+)
 
 
 def _segments(rest: str) -> list[str]:

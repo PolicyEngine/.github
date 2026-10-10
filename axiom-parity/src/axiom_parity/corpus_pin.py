@@ -96,12 +96,19 @@ def read_pin(
 
 
 def pinned_citations(corpus: Path, pin: Pin) -> set[str]:
+    """Citations with an operative body that aren't repealed."""
+    return pinned_rows(corpus, pin)[0]
+
+
+def pinned_rows(corpus: Path, pin: Pin) -> tuple[set[str], set[str]]:
+    """(citations the encoder can read, citations whose row is marked repealed)."""
     manifest = json.loads(_show(corpus, pin.corpus_ref, f"manifests/releases/{pin.release}.json"))
     paths = [
         f"data/corpus/provisions/{s['jurisdiction']}/{s['document_class']}/{s['version']}.jsonl"
         for s in manifest.get("scopes", [])
     ]
     out: set[str] = set()
+    repealed: set[str] = set()
     proc = subprocess.Popen(
         ["git", "-C", str(corpus), "cat-file", "--batch"],
         stdin=subprocess.PIPE,
@@ -125,15 +132,15 @@ def pinned_citations(corpus: Path, pin: Pin) -> set[str]:
             buf += chunk
             *lines, buf = buf.split(b"\n")
             for line in lines:
-                _take(line, out)
-        _take(buf, out)
+                _take(line, out, repealed)
+        _take(buf, out, repealed)
         proc.stdout.read(1)  # trailing newline after each object
     proc.stdin.close()
     proc.wait()
-    return out
+    return out, repealed - out
 
 
-def _take(line: bytes, out: set[str]) -> None:
+def _take(line: bytes, out: set[str], repealed: set[str] | None = None) -> None:
     if not line.strip():
         return
     try:
@@ -144,6 +151,8 @@ def _take(line: bytes, out: set[str]) -> None:
     meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
     # The encoder refuses a repealed source (corpus_resolver: "Active corpus source ... is repealed").
     if meta.get("status") == "repealed":
+        if repealed is not None and row.get("citation_path"):
+            repealed.add(row["citation_path"])
         return
     if row.get("citation_path") and isinstance(body, str) and body.strip():
         out.add(row["citation_path"])
@@ -153,6 +162,9 @@ def write_pin_file(
     rulespec: str | Path, corpus: str | Path, out: str | Path, ref: str = "origin/main", corpus_ref: str | None = None
 ) -> tuple[Pin, int]:
     pin = read_pin(Path(rulespec), ref, Path(corpus), corpus_ref)
-    cites = pinned_citations(Path(corpus), pin)
-    Path(out).write_text("\n".join(sorted(cites)) + "\n", encoding="utf-8")
+    cites, repealed = pinned_rows(Path(corpus), pin)
+    # One file: readable citations, then repealed ones marked with "!". A repealed
+    # row blocks its citation even when rows below it still carry text.
+    lines = sorted(cites) + [f"!{c}" for c in sorted(repealed)]
+    Path(out).write_text("\n".join(lines) + "\n", encoding="utf-8")
     return pin, len(cites)

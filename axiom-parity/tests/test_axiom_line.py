@@ -192,3 +192,37 @@ def test_property_text_without_axiom_prefix_has_no_lines(text):
     if "axiom" in text.lower():
         return
     assert parse_body(text) == []
+
+
+ASIDE = st.from_regex(r"[a-z]{1,8}( [a-z]{1,8}){0,3}", fullmatch=True).filter(
+    lambda s: not any(w in s.split() for w in ("queued", "encoded", "debt", "and", "but", "though", "while"))
+)
+
+
+@given(
+    ASIDE,
+    st.sampled_from(["is not ({a}) queued", "is not, {a}, queued", "isn't ({a}) queued", "is not yet ({a}) queued"]),
+)
+@settings(max_examples=200)
+def test_property_an_aside_does_not_cancel_a_negation(aside, wording):
+    line = parse_line("rulespec-us#1416 " + wording.format(a=aside))
+    assert not line.claims
+
+
+def test_a_negation_in_an_aside_of_its_own():
+    assert not parse_line("rulespec-us#1416 (not yet) queued").claims
+    # The aside rules out something else; the status stands.
+    assert [c.status for c in parse_line("rulespec-us#1416 (not #1417) queued").claims] == [QUEUED]
+    assert [c.status for c in parse_line("Not in Axiom yet, rulespec-us#1416 queued").claims] == [QUEUED]
+    assert [c.status for c in parse_line("rulespec-us#9 is not encoded, rulespec-us#1416 queued").claims] == [QUEUED]
+
+
+def test_bold_na_after_a_claim_is_still_a_claim():
+    claims = parse_line("rulespec-us#1416 queued and **n/a**: metadata: update labels").claims
+    assert [c.status for c in claims] == [QUEUED, NA]
+    assert claims[1].na_reason == "metadata: update labels"
+
+
+def test_adjective_with_an_adverb_is_not_a_claim():
+    claims = parse_line("rulespec-us#1416 queued. The already queued federal rule covers the rest.").claims
+    assert [c.status for c in claims] == [QUEUED]

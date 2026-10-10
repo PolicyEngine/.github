@@ -316,6 +316,35 @@ def test_finder_never_overwrites_a_person_s_comment():
     assert bot.sent == [("PATCH", "/repos/o/r/issues/comments/9")]
 
 
+def test_finder_never_overwrites_another_bot_s_comment():
+    from axiom_parity.finder.cli import MARKER, upsert_comment
+
+    class Hub:
+        def __init__(self, comments):
+            self.comments, self.sent = comments, []
+
+        def issue_comments(self, repo, pr):
+            return self.comments
+
+        def send_json(self, method, path, data):
+            self.sent.append((method, path))
+
+    new = {"would_fail_enforced": True}
+    # Another bot that quotes the marker, or even opens with it, keeps its comment.
+    for body in ("Quotation: " + MARKER, MARKER + "\ncopied"):
+        other = Hub([{"id": 9, "body": body, "user": {"login": "renovate[bot]", "type": "Bot"}}])
+        upsert_comment(other, "o/r", 1, MARKER + "\nnew", new)
+        assert other.sent == [("POST", "/repos/o/r/issues/1/comments")], body
+    # Our own account quoting the marker mid-comment is not the finder comment either.
+    quoting = Hub([{"id": 9, "body": "see " + MARKER, "user": {"login": "github-actions[bot]", "type": "Bot"}}])
+    upsert_comment(quoting, "o/r", 1, MARKER + "\nnew", new)
+    assert quoting.sent == [("POST", "/repos/o/r/issues/1/comments")]
+    # A caller with its own token names its account.
+    app = Hub([{"id": 7, "body": MARKER + "\nold", "user": {"login": "pe-parity[bot]", "type": "Bot"}}])
+    upsert_comment(app, "o/r", 1, MARKER + "\nnew", new, author="pe-parity[bot]")
+    assert app.sent == [("PATCH", "/repos/o/r/issues/comments/7")]
+
+
 def test_open_issues_come_with_their_comments(monkeypatch):
     from axiom_parity.finder.cli import _open_issues
     from axiom_parity.github import GitHub

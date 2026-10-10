@@ -142,10 +142,17 @@ class _StripDescriptive(ast.NodeTransformer):
     visit_AsyncFunctionDef = visit_FunctionDef
 
 
+_MODEL_API = re.compile(r"policyengine_[a-z]+\.model_api")
+
+
 def _binds(tree: ast.AST, name: str) -> bool:
     """Does the module define, assign, take as an argument or import ``name``?
 
-    A star import could bind anything, so it counts.
+    A star import could bind anything, so it counts, with one exception: the
+    preamble every variable file starts with, ``from policyengine_<x>.model_api
+    import *``. None of the six ``model_api`` modules (core, us, uk, canada, il,
+    ng), nor anything they star-import in their own repos, binds ``dict``
+    (scanned 2026-10-10).
     """
     for node in ast.walk(tree):
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) and node.name == name:
@@ -155,7 +162,8 @@ def _binds(tree: ast.AST, name: str) -> bool:
         if isinstance(node, ast.arg) and node.arg == name:
             return True
         if isinstance(node, ast.Import | ast.ImportFrom):
-            if any((a.asname or a.name).split(".")[0] == name for a in node.names):
+            preamble = isinstance(node, ast.ImportFrom) and bool(_MODEL_API.fullmatch(node.module or ""))
+            if any((a.name == "*" and not preamble) or (a.asname or a.name).split(".")[0] == name for a in node.names):
                 return True
     return False
 

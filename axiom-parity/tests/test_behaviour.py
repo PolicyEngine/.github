@@ -175,3 +175,13 @@ def test_a_rebound_dict_is_not_assumed_inert():
         )
 
     assert changes_behaviour("p/variables/x.py", source(0), source(1))
+
+
+def test_a_star_import_may_rebind_dict():
+    before = "from helpers import *\n\n\nclass v(Variable):\n    dict(n=0)\n"
+    assert changes_behaviour("v.py", before, before.replace("n=0", "n=1"))
+    plain = "class v(Variable):\n    dict(n=0)\n"
+    assert not changes_behaviour("v.py", plain, plain.replace("n=0", "n=1"))
+    # The preamble of every PolicyEngine variable file is known not to bind dict.
+    preamble = "from policyengine_us.model_api import *\n\n\nclass v(Variable):\n    dict(n=0)\n"
+    assert not changes_behaviour("v.py", preamble, preamble.replace("n=0", "n=1"))

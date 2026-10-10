@@ -3,7 +3,7 @@
 Tooling for PolicyEngine's rule that every policy change in a country model is mirrored in Axiom RuleSpec ([CONTRIBUTING, Mirror policy changes in Axiom](../CONTRIBUTING.md#mirror-policy-changes-in-axiom)). Its commands:
 
 - **`check`** reads a PR's `axiom:` line and verifies what it cites against GitHub. The reusable workflow [`axiom-parity.yml`](../.github/workflows/axiom-parity.yml) runs it on every country-model PR.
-- **`suggest`** suggests the line. It maps the changed parameters' and variables' `reference` URLs to corpus citations, looks up RuleSpec modules and open `pe-parity` issues, and drafts a dispatch-ready issue when nothing covers a citation.
+- **`suggest`** suggests the line. It maps the changed parameters' and variables' `reference` URLs to corpus citations, looks up RuleSpec modules and open `pe-parity` issues, and drafts a dispatch-ready issue when nothing covers a citation. With `--comment` it keeps one comment on the PR. It only ever updates a comment that the workflow's own account (`github-actions[bot]`, or `--comment-author`) wrote and that opens with the finder's marker.
 - **`lint-issue`** and **`backlog`** say whether `pe-parity` issues are dispatch-ready, one issue at a time or across the whole backlog.
 - **`corpus-pin`** and **`drain-plan`** plan a drain of that backlog through the signed encoder ([docs/drain.md](docs/drain.md)). They plan; they dispatch nothing.
 
@@ -54,10 +54,12 @@ A queued issue must let the signed encoder run without further research. Its bod
 - a pasteable `review_finding`;
 - companion tests.
 
-Each element is found under a heading that names it (`## Law (verbatim)`, `## Required outputs`, `## review_finding (paste as-is)`, `## Companion tests`), or after an inline cue that introduces it, such as "Required outputs: `a`, `b`" or "Paste this as `review_finding`:". The lint reports where it found each element. Three rules keep it honest:
+Each element is found under a heading that names it (`## Law (verbatim)`, `## Required outputs`, `## review_finding (paste as-is)`, `## Companion tests`), or after an inline cue that introduces it, such as "Required outputs: `a`, `b`" or "Paste this as `review_finding`:". The lint reports where it found each element. These rules keep it honest:
 
 - An element with a `TODO` in it is unfinished and counts as missing. The finder's drafts therefore never pass until a person completes them.
-- Companion tests must state expected values.
+- Companion tests must state an expected outcome. Input facts ("input income: 0", or the lines under an `input:` key) are not one.
+- A required output is a declared output: a section or cue that lists outputs, or a finding that says "Output `x_y_z`", "Add a Judgment x_y_z" or "Add … to `9.yaml#rule`". "Add an input named x_y_z" declares an input.
+- A cue hands the finding over only if it does so now. "`review_finding` will be supplied later:" and "`review_finding` is unavailable:" hand over nothing, and an inline cue takes the quote or code block right below it, not one further down.
 - The `review_finding` is whatever `drain-plan` could paste into the encoder. One extractor decides both, so a lint-ready issue always has dispatch input.
 
 The lint checks presence, not legal completeness. An issue that leaves a question of interpretation open can still pass.
@@ -98,6 +100,9 @@ The tests use an in-memory GitHub. Besides example cases, they include property 
 - warn and enforce modes block on exactly the same findings (differential);
 - adding a passing claim never breaks a passing PR;
 - a drain batch is ready if and only if every issue is lint-ready and every target is in the pin;
+- every drain batch holds one source document and one jurisdiction, each target sits in exactly one batch, and a batch's run count is its citations over 16, rounded up;
+- an aside never cancels a negation: "is not (…) queued" and "is not, …, queued" claim nothing;
+- an input is never an expected outcome, and a named input is never a required output;
 - the URL mapper never contradicts 427 URL-to-citation pairs checked against the corpus (differential; `tests/fixtures/url_vectors.json`).
 
-`scripts/replay_history.py` replays the check over merged PRs to measure compliance and calibrate the parser.
+`scripts/replay_history.py` replays the check over merged PRs to measure compliance and calibrate the parser. With `--rulespec-dir` and `--issues-file` it reads rulespec and the open issues from local copies, and uses the API only for closed issues and rulespec PRs.

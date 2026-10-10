@@ -384,3 +384,18 @@ def test_the_error_path_never_raises(monkeypatch, tmp_path):
         ["check", "--repo", "o/r", "--pr", "1", "--mode", "warn", "--summary", str(tmp_path / "no-such-dir" / "s.md")]
     )
     assert cli.cmd_check(args) == 0
+
+
+def test_a_test_named_only_to_rule_it_out_is_not_evidence(hub):
+    body = (
+        "axiom: us:statutes/26/24/d encoded-correct; "
+        "rulespec-us#1416 queued (not `three_children_social_security_excess`, which covers another rule)"
+    )
+    assert codes(run(hub, body)) == {"encoded-correct-no-test"}
+    own = "axiom: us:statutes/26/24/d encoded-correct (not `three_children_social_security_excess`)"
+    assert codes(run(hub, own)) == {"encoded-correct-no-test"}
+    stated = (
+        "axiom: us:statutes/26/24/d encoded-correct "
+        "(no new test is needed: `three_children_social_security_excess` covers it)"
+    )
+    assert not run(hub, stated).would_fail

@@ -12,13 +12,16 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .finder.draft import module_path_for
 from .finder.propose import document_of
 from .github import GitHub
-from .issue_lint import _ARTIFACT, _CORPUS_SINGULAR, lint_issue, review_finding_text
+from .issue_lint import _ARTIFACT, _CORPUS_SINGULAR, _JURIS, expand_braces, lint_issue, review_findings
+from .refs import norm_dashes
 
 # Measured model spend per completed targeted-signed-reencode run, GPT-6 Luna
 # with Sol escalation (axiom-encode#1699), 2026-09-25 to 2026-10-10: 121 runs,
@@ -44,32 +47,56 @@ class IssueInputs:
     ready: bool
     missing: list[str]
     citations: list[str]  # every corpus citation the issue mentions
-    targets: list[str]  # the ones to encode: cited in the review_finding, else the first
-    review_finding: str | None
+    targets: list[str]  # the ones to encode: labelled as the citation, or asked for in a review_finding
+    review_finding: str | None  # every finding in the issue, body first, joined by blank lines
     pe_prs: list[str]
     blocked: list[str] = field(default_factory=list)  # measured blockers only
     notes: list[str] = field(default_factory=list)  # blockers the issue text mentions
+    modules: list[str] = field(default_factory=list)  # modules the issue declares or tells the encoder to use
+    finding_blocks: int = 0  # how many separate findings were joined
+
+    @property
+    def documents(self) -> list[str]:
+        """The source documents the targets sit in. Each needs a signed run of its own."""
+        out: list[str] = []
+        for c in self.targets:
+            if document_of(c) not in out:
+                out.append(document_of(c))
+        return out
+
+    @property
+    def dispatchable(self) -> bool:
+        return bool(self.ready and self.review_finding and not self.blocked)
 
 
 @dataclass
 class Batch:
+    """One source document and every issue with a target in it.
+
+    The encoder takes a bundle only from one jurisdiction
+    (``prepare_signed_backfill.parse_source_bundle``), and the encoder owner
+    wants a document encoded whole, so the unit is the document. An issue whose
+    targets span several documents is in several batches and needs them all.
+    """
+
     document: str
     repo: str
     issues: list[IssueInputs]
 
     @property
     def citations(self) -> list[str]:
+        """The issues' targets that sit in this document."""
         out: list[str] = []
         for i in self.issues:
             for c in i.targets:
-                if c not in out:
+                if document_of(c) == self.document and c not in out:
                     out.append(c)
         return out
 
     @property
     def ready(self) -> bool:
         """Every issue passes the lint, has a review_finding to paste, and is in the pin."""
-        return all(i.ready and i.review_finding for i in self.issues) and not any(i.blocked for i in self.issues)
+        return all(i.dispatchable for i in self.issues)
 
 
 _PE_PR = re.compile(r"PolicyEngine/policyengine-(?:us|uk|canada|il|ng|nz)(?:/pull/|#)(\d+)")
@@ -96,30 +123,149 @@ def _explicit_targets(text: str, cites: list[str]) -> list[str]:
     out: list[str] = []
     for m in _EXPLICIT_TARGET.finditer(text):
         c = m.group("c").rstrip(".,;:)")
-        if not _ARTIFACT.search(c) and c not in out:
+        # A target is a corpus citation. "uk/regulations/…/75D.yaml" is a module path.
+        if _CORPUS_SINGULAR.fullmatch(c) and not c.endswith(".yaml") and not _ARTIFACT.search(c) and c not in out:
             out.append(c)
+    return out
+
+
+# A module named in running text: a path (with or without ".yaml") or a legal id.
+# The plural kind tells a module ("us/statutes/…") from a corpus citation ("us/statute/…").
+# A trailing slash makes it a directory ("at the matching uk/statutes/ukpga/2014/28/ paths").
+_MODULE_NAME = re.compile(
+    rf"(?<![\w/-])(?P<juris>{_JURIS})[/:](?P<kind>statutes|regulations|policies|legislation)/"
+    r"(?P<rest>[\w./:\-]*\w)(?P<dir>/)?"
+)
+# "Declare a deferred dependency on X", "do not import X": the finding names the
+# module to keep it out, so it is neither a target nor an import.
+_DEFERS = re.compile(
+    r"deferred dependenc|do(?:es)? not import|don't import|cannot be imported|can't be imported|must not import|"
+    r"not import\b|without importing|rather than import",
+    re.IGNORECASE,
+)
+# "Encode … as its own module at X", "re-encode X in place", "add a case to X": the
+# finding asks for work on X when a verb of that kind is in the sentence and X is
+# where the work goes. "mirroring X", "import X" and "that X currently …" name X
+# for another reason.
+_ASKS_FOR = re.compile(
+    r"\b(?:re-?encode|encode|create|write|add|repair|replace|extend|change|correct|update|new module)|"
+    r"^\W*(?:target |new )?modules?\s*:",  # a "Modules: a.yaml, b.yaml" line lists what to encode
+    re.IGNORECASE,
+)
+# "matching the existing England module X": X is a precedent to copy from.
+_PRECEDENT = re.compile(
+    r"\b(?:existing|matching|mirror(?:s|ing)?|like|precedents?|sibling|same as|as in|modelled on|follow(?:s|ing)?)\b"
+    r"[^,;:()]{0,40}$",
+    re.IGNORECASE,
+)
+# "uk/statutes/ukpga/1992/14/6.yaml, 9.yaml and 77.yaml": the short names are siblings of the first.
+_SIBLINGS = re.compile(
+    r"(?P<dir>(?<![\w/-])[a-z]{2}(?:-[a-z0-9]+)*/(?:statutes|regulations|policies|legislation)/(?:[\w.:\-]+/)*)"
+    r"(?P<first>[\w.:\-]+\.yaml)(?P<rest>(?:(?:\s*,\s*|\s+(?:and|or|to)\s+)[\w.:\-]+\.yaml\b(?!/))+)"
+)
+
+
+def expand_siblings(text: str) -> str:
+    """Spell out sibling module names given short after a full path."""
+
+    def spell(m: re.Match[str]) -> str:
+        rest = re.sub(r"(?<![\w/.:-])([\w.:\-]+\.yaml)", lambda n: m["dir"] + n.group(1), m["rest"])
+        return m["dir"] + m["first"] + rest
+
+    return _SIBLINGS.sub(spell, text)
+
+
+_WORK_GOES_TO = re.compile(
+    r"(?:\b(?:at|as|in|into|to|encode|re-?encode|repair|replace|extend|update|create|write|module|path|file)|[:(])"
+    r"\s*[`*_\"']*$",
+    re.IGNORECASE,
+)
+_LIST_GOES_ON = re.compile(r"(?:,|\band|\bor|&)\s*[`*_\"']*$", re.IGNORECASE)
+
+
+def normal_module(name: str) -> str:
+    """``us:statutes/26/1/c#x``, ``us/statutes/26/1/c`` and ``us/statutes/26/1/c.yaml`` are one module."""
+    stem = norm_dashes(name).split("#", 1)[0].rstrip(".")
+    for suffix in (".test.yaml", ".yaml"):
+        if stem.endswith(suffix):
+            stem = stem[: -len(suffix)]
+    juris, sep, rest = stem.partition(":")
+    if sep and "/" not in juris:
+        stem = f"{juris}/{rest}"
+    return stem + ".yaml"
+
+
+def citation_for_module(module: str) -> str | None:
+    """The corpus citation a statute or regulation module encodes, from its path.
+
+    ``us/statutes/26/32/e.yaml`` -> ``us/statute/26/32/e``;
+    ``us/regulations/7-cfr/273/9.yaml`` -> ``us/regulation/7/273/9``. Only
+    federal US and UK paths mirror their citations: a state module's path
+    respells the section (``47:44.1`` becomes ``47/44/1``), and a policy
+    module's path doesn't give its citation at all.
+    """
+    juris, kind, *rest = normal_module(module)[: -len(".yaml")].split("/")
+    singular = {"statutes": "statute", "regulations": "regulation"}.get(kind)
+    if not singular or not rest or juris not in ("us", "uk"):
+        return None
+    if juris == "us" and kind == "regulations" and rest[0].endswith("-cfr"):
+        rest = [rest[0][: -len("-cfr")], *rest[1:]]
+    return f"{juris}/{singular}/{'/'.join(rest)}"
+
+
+def _modules_in(text: str) -> list[tuple[str, bool]]:
+    """(module, is it where the finding asks for work) for each module named outside a deferring sentence."""
+    out: list[tuple[str, bool]] = []
+    for sentence in re.split(r"(?<=[.!?;])\s+|\n+", text):
+        if _DEFERS.search(sentence):
+            continue
+        asks = bool(_ASKS_FOR.search(sentence))
+        target = False
+        for m in _MODULE_NAME.finditer(sentence):
+            if m.group("dir"):
+                continue
+            before = sentence[: m.start()]
+            # A list carries on from the module before it: "repair a.yaml, b.yaml and c.yaml".
+            if _LIST_GOES_ON.search(before):
+                pass  # the list's first module decided it
+            else:
+                target = asks and bool(_WORK_GOES_TO.search(before)) and not _PRECEDENT.search(before)
+            out.append((normal_module(m.group(0)), target))
     return out
 
 
 def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]]) -> IssueInputs:
     texts = [issue.get("body") or ""] + [c.get("body") or "" for c in comments]
-    joined = "\n".join(texts)
+    joined = expand_braces("\n".join(texts))
     res = lint_issue(issue, comments)
     cites = []
     for m in _CORPUS_SINGULAR.finditer(joined):
         c = m.group(0).rstrip(".,;:)")
         if not _ARTIFACT.search(c) and c not in cites:
             cites.append(c)
-    finding = None
-    for t in reversed(texts):  # the latest addendum wins
-        finding = review_finding_text(t)
-        if finding:
-            break
+    # Comments add to the body's finding ("it adds to step 1's") more often than they
+    # replace it, so the dispatcher gets every block, in order, and decides.
+    findings = [f for t in texts for f in review_findings(t)]
+    finding = "\n\n".join(findings) if findings else None
     # Targets are what the issue labels as the citation to encode plus everything the
-    # finding names: an explicit target must not hide the finding's other requests.
+    # findings ask for: an explicit target must not hide the findings' other requests.
+    asked = expand_siblings(expand_braces(finding or ""))
     targets = _explicit_targets(joined, cites)
     for c in cites:
-        if finding and c not in targets and re.search(rf"(?<![\w/-]){re.escape(c)}(?![\w/-])", finding):
+        if asked and c not in targets and re.search(rf"(?<![\w/-]){re.escape(c)}(?![\w/-])", asked):
+            targets.append(c)
+    modules: list[str] = []
+    declared = res.found.get("module_path")
+    if declared:
+        modules.append(normal_module(declared))
+    witnessed = {normal_module(module_path_for(c)): c for c in reversed(cites)}
+    for module, is_target in _modules_in(asked):
+        if module not in modules:
+            modules.append(module)
+        # "Encode … at us/statutes/26/32/e.yaml" asks for a provision by its module name.
+        # Its citation is the one the issue gives for that module, else the path's own.
+        c = witnessed.get(module) or citation_for_module(module)
+        if c and is_target and c not in targets:
             targets.append(c)
     if not targets and cites:
         targets = cites[:1]
@@ -137,15 +283,33 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
         sorted(set(_PE_PR.findall(joined))),
         [],
         notes,
+        modules,
+        len(findings),
     )
 
 
-def in_pin(citation: str, corpus: set[str]) -> bool:
-    """The citation's own row, or rows below it, carry an operative body in the pin."""
+def in_pin(citation: str, corpus: set[str], repealed: set[str] | None = None) -> bool:
+    """The citation's own row, or rows below it, carry an operative body in the pin.
+
+    The encoder composes a row's text from its descendants when the row itself
+    has none, so text below the path counts. A row marked repealed does not:
+    the encoder refuses it outright.
+    """
+    if repealed and citation in repealed:
+        return False
     if citation in corpus:
         return True
     prefix = citation + "/"
     return any(c.startswith(prefix) for c in corpus)
+
+
+def load_pin_file(path: str) -> tuple[set[str], set[str]]:
+    """(readable citations, repealed citations) from a ``corpus-pin`` file; "!" marks repealed."""
+    present: set[str] = set()
+    repealed: set[str] = set()
+    for line in Path(path).read_text(encoding="utf-8").split():
+        (repealed if line.startswith("!") else present).add(line.lstrip("!"))
+    return present, repealed
 
 
 # One signed run can carry this many citations in ``source_bundle_json``
@@ -210,10 +374,29 @@ def load_blocked_citations(path: str) -> list[BlockedCitation]:
     ]
 
 
-def _legal_id(module_path: str) -> str:
-    stem = module_path[: -len(".yaml")] if module_path.endswith(".yaml") else module_path
-    juris, _, rest = stem.partition("/")
-    return f"{juris}:{rest}"
+def _path_ancestors(module: str) -> list[str]:
+    """``a/statutes/26/32/d/1.yaml`` -> itself, ``…/32/d.yaml``, ``…/32.yaml``, ``…/26.yaml``."""
+    segs = module[: -len(".yaml")].split("/")
+    return ["/".join(segs[:i]) + ".yaml" for i in range(len(segs), 2, -1)]
+
+
+def modules_at_stake(row: IssueInputs, owners: Callable[[str], Iterable[str]] | None = None) -> set[str]:
+    """Every module a run for this issue would write, extend or import.
+
+    That is: the modules the issue declares or its findings tell the encoder
+    to use; the module each target's path gives, and the modules above it (a
+    section module owns its subsections); and, when ``owners`` can look them
+    up, the modules on rulespec ``main`` that cite the target or a provision
+    above it.
+    """
+    out = set(row.modules)
+    for c in row.targets:
+        out.update(_path_ancestors(module_path_for(c)))
+        if owners:
+            segs = c.split("/")
+            for i in range(len(segs), 2, -1):
+                out.update(owners("/".join(segs[:i])))
+    return out
 
 
 def plan(
@@ -222,15 +405,16 @@ def plan(
     blocked_modules: set[str] | None = None,
     blocked_patterns: list[str] | None = None,
     blocked_citations: list[BlockedCitation] | None = None,
+    repealed: set[str] | None = None,
+    owners: Callable[[str], Iterable[str]] | None = None,
 ) -> list[Batch]:
-    """Group issues by the source document of their first citation."""
-    from .finder.draft import module_path_for
-
+    """Check each issue against the pin and the block lists, then group by source document."""
+    blocked_modules = {normal_module(m) for m in blocked_modules or ()}
     groups: dict[tuple[str, str], list[IssueInputs]] = {}
     for r in rows:
         if not r.targets:
             continue
-        if corpus is not None and not all(in_pin(c, corpus) for c in r.targets):
+        if corpus is not None and not all(in_pin(c, corpus, repealed) for c in r.targets):
             r.blocked.append("not in the pinned corpus release")
         hits = sorted({b.kind for b in blocked_citations or [] for c in r.targets if b.matches(c)})
         if hits:
@@ -239,16 +423,24 @@ def plan(
             # A class of source the encoder owner has paused, e.g. "/manual/".
             if any(re.search(pattern, c) for c in r.targets):
                 r.blocked.append(f"target matches the blocked pattern {pattern}")
-        if blocked_modules:
-            target_modules = {module_path_for(c) for c in r.targets}
-            finding = r.review_finding or ""
-            imports = {m for m in blocked_modules if m in finding or _legal_id(m) in finding}
-            if target_modules & blocked_modules or imports:
-                r.blocked.append("targets or imports a module the encoder owner has blocked")
-        groups.setdefault((r.repo, document_of(r.targets[0])), []).append(r)
+        if blocked_modules and modules_at_stake(r, owners) & blocked_modules:
+            r.blocked.append("targets or imports a module the encoder owner has blocked")
+        for doc in r.documents:
+            groups.setdefault((r.repo, doc), []).append(r)
     batches = [Batch(doc, repo, issues) for (repo, doc), issues in groups.items()]
     batches.sort(key=lambda b: (not b.ready, -len(b.issues), -sum(len(i.pe_prs) for i in b.issues), b.document))
     return batches
+
+
+def drainable(batches: list[Batch]) -> list[IssueInputs]:
+    """Issues every one of whose documents is ready: the ones a full wave would close."""
+    ready_docs = {(b.repo, b.document) for b in batches if b.ready}
+    out: list[IssueInputs] = []
+    for b in batches:
+        for i in b.issues:
+            if i not in out and all((i.repo, d) in ready_docs for d in i.documents):
+                out.append(i)
+    return out
 
 
 def load_issues(gh: GitHub, repo: str, label: str = "pe-parity") -> list[tuple[dict, list[dict]]]:
@@ -270,6 +462,7 @@ def runs_needed(batch: Batch) -> int:
 
 def to_json(batches: list[Batch], weekly_runs: int) -> dict[str, Any]:
     ready = [b for b in batches if b.ready]
+    issues = {(i.repo, i.number): i for b in batches for i in b.issues}
     return {
         "measured_cost": MEASURED,
         "weekly_runs": weekly_runs,
@@ -278,19 +471,21 @@ def to_json(batches: list[Batch], weekly_runs: int) -> dict[str, Any]:
                 "document": b.document,
                 "repo": b.repo,
                 "ready": b.ready,
+                "runs": runs_needed(b),
                 "citations": b.citations,
-                "issues": [i.__dict__ for i in b.issues],
+                "issues": [{**i.__dict__, "documents": i.documents} for i in b.issues],
             }
             for b in batches
         ],
         "summary": {
             "documents": len(batches),
+            "issues": len(issues),
             "ready_documents": len(ready),
-            "ready_issues": sum(len(b.issues) for b in ready),
+            "ready_issues": len(drainable(batches)),
             "ready_citations": sum(len(b.citations) for b in ready),
             "ready_runs": sum(runs_needed(b) for b in ready),
-            "blocked_issues": sum(1 for b in batches for i in b.issues if i.blocked),
-            "not_ready_issues": sum(1 for b in batches for i in b.issues if not i.ready),
+            "blocked_issues": sum(1 for i in issues.values() if i.blocked),
+            "not_ready_issues": sum(1 for i in issues.values() if not i.ready),
         },
     }
 
@@ -302,9 +497,12 @@ def markdown(batches: list[Batch], weekly_runs: int) -> str:
     out = [
         "## pe-parity drain plan",
         "",
-        f"{s['documents']} source documents. {s['ready_documents']} are ready to encode: {s['ready_issues']} issues, "
-        f"{s['ready_citations']} citations, {s['ready_runs']} signed runs at up to {MAX_BUNDLE_CITATIONS} citations a "
-        f"run. {s['blocked_issues']} issues are blocked, and {s['not_ready_issues']} fail the dispatch-ready lint.",
+        f"{s['issues']} issues with a target citation, across {s['documents']} source documents. "
+        f"{s['ready_documents']} documents are ready to encode: {s['ready_citations']} citations, "
+        f"{s['ready_runs']} signed runs (one document a run, up to {MAX_BUNDLE_CITATIONS} citations each). Those "
+        f"runs would complete {s['ready_issues']} issues. {s['blocked_issues']} issues are blocked, and "
+        f"{s['not_ready_issues']} fail the dispatch-ready lint. An issue whose targets span several documents is "
+        "listed under each and needs them all.",
         "",
         f"Cost basis, measured over {m['window']}: {m['runs']} signed runs of one citation each, {m['successes']} "
         f"succeeded, ${m['spend_usd']:.2f} model spend. That is ${m['mean_run_usd']:.3f} a citation on average, "

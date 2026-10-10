@@ -28,6 +28,9 @@ from .index import Index, sparse_clone
 from .propose import Proposal, collect_references, group_by_document, pe_test_cases, propose
 
 MARKER = "<!-- axiom-parity-finder -->"
+# The account a workflow's GITHUB_TOKEN comments as. A caller that passes another
+# token names that account with --comment-author.
+COMMENT_AUTHOR = "github-actions[bot]"
 
 
 def add_find_arguments(p: argparse.ArgumentParser) -> None:
@@ -47,6 +50,11 @@ def add_find_arguments(p: argparse.ArgumentParser) -> None:
     p.add_argument("--markdown", help="write the markdown here (default: stdout)")
     p.add_argument("--summary", help="append the markdown to this file (e.g. $GITHUB_STEP_SUMMARY)")
     p.add_argument("--comment", action="store_true", help="create or update the finder comment on the PR")
+    p.add_argument(
+        "--comment-author",
+        default=COMMENT_AUTHOR,
+        help="login the finder comment is written as; only that account's comment is ever updated",
+    )
     p.add_argument("--check-json", help="the check's JSON report; the comment says whether the check passes")
     p.add_argument(
         "--issues-file",
@@ -167,7 +175,7 @@ def run_find(args: argparse.Namespace) -> int:
     if not args.markdown and not args.summary:
         print(md)
     if args.comment and args.pr and policy:
-        upsert_comment(gh, args.repo, args.pr, md, check)
+        upsert_comment(gh, args.repo, args.pr, md, check, args.comment_author)
     return 0
 
 
@@ -262,20 +270,16 @@ def to_json(proposals: list[Proposal], unmapped, drafts: dict[str, str] | None =
     }
 
 
-def upsert_comment(gh: GitHub, repo: str, pr: int, body: str, check: dict | None) -> None:
+def upsert_comment(gh: GitHub, repo: str, pr: int, body: str, check: dict | None, author: str = COMMENT_AUTHOR) -> None:
     """Keep one finder comment: create it while the check fails, update it afterwards."""
     try:
         comments = gh.issue_comments(repo, pr)
     except (NotFound, GitHubError):
         return
-    # Ours means the marker *and* a bot author: a person who quotes the marker keeps their comment.
+    # Ours is a comment this workflow's own account wrote that opens with the marker.
+    # Anyone else who quotes the marker, a person or another bot, keeps their comment.
     mine = [
-        c
-        for c in comments
-        if MARKER in (c.get("body") or "")
-        and (
-            (c.get("user") or {}).get("type") == "Bot" or str((c.get("user") or {}).get("login", "")).endswith("[bot]")
-        )
+        c for c in comments if (c.get("body") or "").startswith(MARKER) and (c.get("user") or {}).get("login") == author
     ]
     failing = check is None or check.get("would_fail_enforced")
     try:

@@ -17,7 +17,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .. import pe_yaml
-from ..issue_lint import lint_issue
+from ..issue_lint import expand_braces, lint_issue
+from ..refs import norm_dashes
 from .citations import Citation, StateHint, map_url
 from .index import Index, Match
 from .references import Reference, references_for_file
@@ -117,8 +118,15 @@ _CORPUS_PATH = re.compile(
 )
 
 
-def _issue_mentions(issue: dict[str, Any], comments: list[dict[str, Any]], needles: list[str]) -> bool:
+def _issue_text(issue: dict[str, Any], comments: list[dict[str, Any]]) -> str:
+    """Body and comments as one text to search for citations: any dash is a hyphen, braces are expanded."""
     text = (issue.get("body") or "") + "\n" + "\n".join(c.get("body") or "" for c in comments)
+    return expand_braces(norm_dashes(text))
+
+
+def _issue_mentions(issue: dict[str, Any], comments: list[dict[str, Any]], needles: list[str]) -> bool:
+    text = _issue_text(issue, comments)
+    needles = [norm_dashes(n) for n in needles]
     # A needle is a whole path ("us/statute/26/3" doesn't match "us/statute/26/32"). The
     # first needle, the citation itself, also matches an issue about a part of it.
     if needles and re.search(rf"(?<![\w/-]){re.escape(needles[0])}/[\w.:-]", text):
@@ -176,12 +184,12 @@ def propose(
     by_doc: dict[tuple[str, str], list[tuple[dict[str, Any], list[dict[str, Any]]]]] = {}
     for repo, issues in open_issues.items():
         for issue, comments in issues:
-            text = (issue.get("body") or "") + "\n" + "\n".join(c.get("body") or "" for c in comments)
+            text = _issue_text(issue, comments)
             for doc in {document_of(m.group(0).rstrip(".,;:)")) for m in _CORPUS_PATH.finditer(text)}:
                 by_doc.setdefault((repo, doc), []).append((issue, comments))
     for p in proposals:
         if not p.modules and not p.issues and "/" in p.citation:
-            siblings = by_doc.get((_repo_for(p.citation), document_of(p.citation)), [])
+            siblings = by_doc.get((_repo_for(p.citation), document_of(norm_dashes(p.citation))), [])
             if siblings:
                 rows = sorted(
                     (_issue_row(i, c, _repo_for(p.citation)) for i, c in siblings),

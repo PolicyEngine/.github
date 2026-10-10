@@ -75,6 +75,21 @@ _INLINE = {
     ),
     "companion_tests": re.compile(r"companion (?:tests?|cases?)", re.IGNORECASE),
 }
+# Issues write several provisions of one document as "uk/regulation/uksi/2006/213/{2,19,13D}".
+_BRACES = re.compile(
+    r"(?P<head>(?<![\w/-])[a-z]{2}(?:-[a-z0-9]+)*[/:][\w.:\-]+(?:/[\w.:\-]+)*/)\{(?P<alts>[^{}\n]{1,200})\}"
+    r"(?P<tail>[^\s,;()`'\"]*)"
+)
+
+
+def expand_braces(text: str) -> str:
+    """``a/b/{1,2}.yaml`` -> ``a/b/1.yaml, a/b/2.yaml``, so each path is read as a path."""
+    return _BRACES.sub(
+        lambda m: ", ".join(f"{m['head']}{alt.strip()}{m['tail']}" for alt in m["alts"].split(",") if alt.strip()),
+        text,
+    )
+
+
 _HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(?P<title>.+?)\s*#*\s*$")
 _LABEL = re.compile(r"^\s{0,3}(?:[-*]\s+)?(?:\*\*|__)(?P<title>[^*_\n]{2,80}?)(?:\*\*|__)\s*[:.]?\s*(?P<after>.*)$")
 _QUOTE = re.compile(r"^\s{0,3}>\s?(.*)$")
@@ -135,10 +150,47 @@ _OUTCOME = re.compile(
     re.IGNORECASE,
 )
 _LIST_MARKER = re.compile(r"^\s*(?:>\s*)*(?:[-*+]|\d+[.)])\s+")
+# A case's input facts: an ``input:`` block, or an "input income: 0" clause that
+# runs until the result starts.
+_INPUT_BLOCK = re.compile(r"^\s*(?:[-*+]\s+)?(?:\*\*|`)?inputs?(?:\*\*|`)?\s*:\s*$", re.IGNORECASE)
+_INPUT_LABEL = re.compile(r"\binputs?\b", re.IGNORECASE)
+_RESULT_STARTS = re.compile(
+    r"→|=>|->|;|\b(?:expect\w*|outputs?|then|should|gives?|returns?|yields?|result\w*)\b", re.IGNORECASE
+)
+
+
+def _without_inputs(lines: list[str]) -> list[str]:
+    """The lines with input facts removed, so that only stated results are left.
+
+    "- input income: 0" gives a fact, not an expected outcome. So does every
+    line under an ``input:`` key, until the indentation comes back.
+    """
+    out: list[str] = []
+    block: int | None = None
+    for raw in lines:
+        indent = len(raw) - len(raw.lstrip())
+        if block is not None:
+            if not raw.strip() or indent > block:
+                continue
+            block = None
+        if _INPUT_BLOCK.match(raw):
+            block = indent
+            continue
+        line = _LIST_MARKER.sub("", raw)
+        pos = 0
+        while label := _INPUT_LABEL.search(line, pos):
+            end = _RESULT_STARTS.search(line, label.end())
+            if not end:
+                line = line[: label.start()]
+                break
+            line = line[: label.start()] + line[end.start() :]
+            pos = label.start() + len(end.group(0))
+        out.append(line)
+    return out
 
 
 def _states_outcome(lines: list[str]) -> bool:
-    return any(_OUTCOME.search(_LIST_MARKER.sub("", line)) for line in lines)
+    return any(_OUTCOME.search(line) for line in _without_inputs(lines))
 
 
 def _finished(lines: list[str]) -> list[str]:
@@ -228,7 +280,26 @@ def _snippet(text: str, n: int = 90) -> str:
 _YAML_KEY = re.compile(r"^(?P<indent>\s*)-?\s*review_finding:\s*(?P<style>[|>][-+]?)?\s*(?P<inline>.*)$")
 
 
-_FINDING_NEGATED = re.compile(r"\b(?:no|not|without|missing|lacks?|needs?|absent|n't)\b", re.IGNORECASE)
+_FINDING_NEGATED = re.compile(
+    r"\b(?:no|not|none|without|missing|lacks?|needs?|absent|empty|blank)\b|n't\b|\bn/a\b", re.IGNORECASE
+)
+# "review_finding will be supplied later:", "review_finding is unavailable:".
+_FINDING_DEFERRED = re.compile(
+    r"\b(?:later|pending|unavailable|forthcoming|awaiting|awaited|to follow|to come|to be|coming|soon|tbd|tbc|todo|"
+    r"placeholder|outstanding|omitted|withheld|when (?:it is |it's )?(?:written|ready|available|drafted|done))\b",
+    re.IGNORECASE,
+)
+_FINDING_HANDOFF = re.compile(
+    r"\bpaste(?:able)?\b|\buse (?:this|the following)\b|\bwith this\b|\bappend\b|\badd(?:ition|endum)?\b|\bpass it\b",
+    re.IGNORECASE,
+)
+# A verb after the field name makes the cue a statement about the finding
+# ("review_finding comes next week:"), not a label for it.
+_FINDING_STATEMENT = re.compile(
+    r"\b(?:is|are|was|were|will|shall|has|have|had|comes?|goes|remains?|must|should|can|cannot|may|might|follows?)\b",
+    re.IGNORECASE,
+)
+_FIELD = re.compile(r"review[_\s-]?finding", re.IGNORECASE)
 
 
 def _introduces_finding(line: str) -> bool:
@@ -238,100 +309,152 @@ def _introduces_finding(line: str) -> bool:
     earlier in a long paragraph doesn't cancel a cue at its end.
     """
     sentences = re.split(r"(?<=[.!?])\s+", line.strip())
-    cue = [s for s in sentences if re.search(r"review[_\s-]?finding", s, re.I)]
-    if not cue or _FINDING_NEGATED.search(cue[-1]):
+    cue = [s for s in sentences if _FIELD.search(s)]
+    if not cue or _FINDING_NEGATED.search(cue[-1]) or _FINDING_DEFERRED.search(cue[-1]):
         return False
-    ends_line = cue[-1] is sentences[-1] and cue[-1].rstrip().endswith(":")
-    return ends_line or bool(re.search(r"\bpaste\b|\buse (?:this|the following)\b", cue[-1], re.I))
+    if _FINDING_HANDOFF.search(cue[-1]):
+        return True
+    # A bare label: "`review_finding`:" or "Corrected item 2 for the review_finding:".
+    after = re.sub(r"\([^()]*\)", "", cue[-1][_FIELD.search(cue[-1]).end() :])
+    ends_line = cue[-1] is sentences[-1] and cue[-1].rstrip(" *_`").endswith(":")
+    return ends_line and not _FINDING_STATEMENT.search(after)
 
 
 _FINDING_FENCE = re.compile(r"^\s*(```|~~~)\s*review[_-]?finding\b", re.IGNORECASE)
 
 
-def review_finding_text(markdown: str) -> str | None:
-    """The pasteable review_finding, or None.
+def _yaml_value(lines: list[str], i: int) -> tuple[str, int]:
+    """The scalar under a ``review_finding:`` key at ``lines[i]``, and the index after it."""
+    y = _YAML_KEY.match(lines[i])
+    if not y.group("style"):
+        return y.group("inline").strip().strip("'\""), i + 1
+    indent = len(y.group("indent"))
+    block, end = [], i + 1
+    for n, nxt in enumerate(lines[i + 1 :], start=i + 1):
+        if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= indent:
+            break
+        block.append(nxt.strip())
+        end = n + 1
+    return " ".join(t for t in block if t).strip(), end
 
-    Found as, in order of preference: a quote or code block after a heading,
-    bold label or inline cue that names ``review_finding``; plain paragraphs
-    under such a heading or label; or the YAML form dispatch snippets use
-    (``review_finding: |-`` and an indented block). A finding with a TODO in it
-    is unfinished and doesn't count.
-    """
-    lines = markdown.splitlines()
-    for i, line in enumerate(lines):
-        fence = _FINDING_FENCE.match(line)
-        if fence:
-            # A code block tagged as the finding: ```review_finding
-            block = []
-            for nxt in lines[i + 1 :]:
-                if nxt.strip().startswith(fence.group(1)):
-                    break
-                block.append(nxt)
-            text = "\n".join(block).strip()
-            if len(text) >= 80 and not _TODO.search(text):
-                return text
-            continue
-        y = _YAML_KEY.match(line)
-        if y:
-            if y.group("style"):
-                indent = len(y.group("indent"))
-                block = []
-                for nxt in lines[i + 1 :]:
-                    if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= indent:
-                        break
-                    block.append(nxt.strip())
-                text = " ".join(t for t in block if t).strip()
-            else:
-                text = y.group("inline").strip().strip("'\"")
-            if len(text) >= 80 and not _TODO.search(text):
-                return text
-            continue
-        if not re.search(r"review[_\s-]?finding", line, re.I):
-            continue
-        heading = _HEADING.match(line)
-        label = _LABEL.match(line) if not heading else None
-        if heading and not re.search(r"review[_\s-]?finding", heading.group("title"), re.I):
-            continue
-        titled = bool(heading) or bool(label and re.search(r"review[_\s-]?finding", label.group("title"), re.I))
-        if not titled and not _introduces_finding(line):
-            continue  # "No review_finding is supplied." mentions the field; it doesn't give one
-        quoted, plain, fenced = [], [], False
-        if label and titled and label.group("after").strip():
-            plain.append(label.group("after").strip())
-        for nxt in lines[i + 1 : i + 80]:
-            if re.match(r"^\s*(```|~~~)", nxt):
-                if fenced:
-                    break
-                fenced = True
-                continue
+
+def _finding_at(lines: list[str], i: int) -> tuple[str | None, int]:
+    """The finding that ``lines[i]`` introduces, and the index after the lines it used."""
+    line = lines[i]
+    fence = _FINDING_FENCE.match(line)
+    if fence:
+        # A code block tagged as the finding: ```review_finding
+        block, end = [], i + 1
+        for n, nxt in enumerate(lines[i + 1 :], start=i + 1):
+            end = n + 1
+            if nxt.strip().startswith(fence.group(1)):
+                break
+            block.append(nxt)
+        text = "\n".join(block).strip()
+        return (text, end) if len(text) >= 80 and not _TODO.search(text) else (None, end)
+    if _YAML_KEY.match(line):
+        text, end = _yaml_value(lines, i)
+        return (text, end) if len(text) >= 80 and not _TODO.search(text) else (None, i + 1)
+    if not _FIELD.search(line):
+        return None, i + 1
+    heading = _HEADING.match(line)
+    label = _LABEL.match(line) if not heading else None
+    if heading and not _FIELD.search(heading.group("title")):
+        return None, i + 1
+    titled = bool(heading) or bool(label and _FIELD.search(label.group("title")))
+    if not titled and not _introduces_finding(line):
+        return None, i + 1  # "No review_finding is supplied." mentions the field; it doesn't give one
+    quoted, plain, fenced = [], [], False
+    quoted_end = plain_end = i + 1
+    if label and titled and label.group("after").strip():
+        plain.append(label.group("after").strip())
+    for n, nxt in enumerate(lines[i + 1 : i + 80], start=i + 1):
+        if re.match(r"^\s*(```|~~~)", nxt):
             if fenced:
-                quoted.append(nxt)
-                continue
-            q = _QUOTE.match(nxt)
-            if q:
-                quoted.append(q.group(1))
-                continue
-            if _HEADING.match(nxt):
+                quoted_end = n + 1
                 break
             if quoted:
-                if nxt.strip():
-                    break
-                quoted.append("")
-                continue
-            if titled and nxt.strip() and not _LABEL.match(nxt):
-                plain.append(nxt.strip())
-            elif titled and plain and not nxt.strip() and len(" ".join(plain)) >= 120:
+                break  # a second block is not part of the first
+            fenced = True
+            continue
+        if fenced:
+            quoted.append(nxt)
+            quoted_end = n + 1
+            continue
+        q = _QUOTE.match(nxt)
+        if q:
+            quoted.append(q.group(1))
+            quoted_end = n + 1
+            continue
+        if _HEADING.match(nxt):
+            break
+        if quoted:
+            if nxt.strip():
                 break
-        for candidate, minimum in (("\n".join(quoted).strip(), 80), (" ".join(plain).strip(), 120)):
-            if len(candidate) >= minimum and not _TODO.search(candidate):
-                return candidate
-    return None
+            quoted.append("")
+            continue
+        if titled and nxt.strip() and not _LABEL.match(nxt):
+            plain.append(nxt.strip())
+            plain_end = n + 1
+        elif titled and plain and not nxt.strip() and len(" ".join(plain)) >= 120:
+            break
+        elif not titled and nxt.strip():
+            break  # an inline cue hands over the block right below it, not one further down
+    block = [q for q in quoted]
+    while block and not block[0].strip():
+        block.pop(0)
+    if block and _YAML_KEY.match(block[0]):
+        # A dispatch snippet in the block: the finding is the value, not the key line.
+        value, _ = _yaml_value(block, 0)
+        if len(value) >= 80:
+            block = [value]
+    for candidate, minimum, end in (
+        ("\n".join(block).strip(), 80, quoted_end),
+        (" ".join(plain).strip(), 120, plain_end),
+    ):
+        if len(candidate) >= minimum and not _TODO.search(candidate):
+            return candidate, end
+    return None, i + 1
 
 
-# An output named in running text: a verb or noun of producing, then a rule-like identifier.
+def review_findings(markdown: str) -> list[str]:
+    """Every pasteable review_finding in the text, in order.
+
+    A finding is: a quote or code block after a heading, bold label or inline
+    cue that names ``review_finding``; plain paragraphs under such a heading or
+    label; a code block tagged ``review_finding``; or the YAML form dispatch
+    snippets use (``review_finding: |-`` and an indented block). A finding with
+    a TODO in it is unfinished and doesn't count. Lines one finding used are
+    not read again, so a YAML key inside a quoted block isn't a second finding.
+    """
+    lines = markdown.splitlines()
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        text, i = _finding_at(lines, i)
+        if text:
+            out.append(text)
+    return out
+
+
+def review_finding_text(markdown: str) -> str | None:
+    """The first pasteable review_finding in the text, or None."""
+    found = review_findings(markdown)
+    return found[0] if found else None
+
+
+# An output named in running text. The declaration must be about an output and tied
+# to the identifier: "Output Money x_y_z", "Add a Judgment x_y_z", "Add `x_y_z`",
+# "Name them x_y_z", "Add … to 9.yaml#x_y". "Add an input named a_b_c" declares an
+# input, and "derived from … imported from m#x_y_z" names another module's rule.
+_NOT_OUTPUT = r"(?!\b(?:inputs?|import\w*|from|tests?|cases?)\b)"
+_IDENT = r"`?\b[a-z][a-z0-9]*(?:_[a-z0-9]+){2,}\b`?(?!`?\s+(?:as\s+)?(?:an?\s+)?inputs?\b)"
 _NAMED_OUTPUT = re.compile(
-    r"\b(?:outputs?|Judge?ments?|rules?|deriv(?:e|es|ed)|comput(?:e|es|ed)|expos(?:e|es|ed)|publish(?:es|ed)?|"
-    r"add(?:s|ed)?)\b[^.\n]{0,80}?`?\b[a-z][a-z0-9]*(?:_[a-z0-9]+){2,}\b`?",
+    r"\b(?:outputs?|Judge?ments?|rules?|leaf|leaves|deriv(?:e|es|ed)|comput(?:e|es|ed)|expos(?:e|es|ed)|"
+    rf"publish(?:es|ed)?|name (?:it|them|each|the outputs?))\b(?:{_NOT_OUTPUT}[^.\n]){{0,80}}?{_IDENT}"
+    rf"|\badd(?:s|ed)?\s+(?:(?:an?|the|new|this|these)\s+)*{_IDENT}"
+    r"|\b(?:add|output|state|change|correct|repair|update|extend)(?:s|ed|es|d)?\b"
+    rf"(?:{_NOT_OUTPUT}[^.\n]){{0,120}}?(?:\.yaml|[a-z0-9])#[a-z][a-z0-9_]+",
     re.IGNORECASE,
 )
 
@@ -344,7 +467,7 @@ def lint_texts(texts: list[tuple[str, str]]) -> LintResult:
         sections.extend(_sections(text or "", source, labels=False))
     for source, text in texts:
         sections.extend(s for s in _sections(text or "", source) if s.title)
-    joined = "\n".join(t or "" for _, t in texts)
+    joined = expand_braces("\n".join(t or "" for _, t in texts))
 
     m = _MODULE.search(joined)
     if m:
@@ -402,8 +525,7 @@ def lint_texts(texts: list[tuple[str, str]]) -> LintResult:
         # The finding itself may name the outputs: "Add a Judgment x_holds_for_year",
         # "54.yaml outputs `person_earned_income`".
         for source, text in texts:
-            finding = review_finding_text(text or "")
-            m = _NAMED_OUTPUT.search(finding or "")
+            m = next((m for f in review_findings(text or "") if (m := _NAMED_OUTPUT.search(f))), None)
             if m:
                 result.found["required_outputs"] = f"{source}: review_finding names “{_snippet(m.group(0), 70)}”"
                 break

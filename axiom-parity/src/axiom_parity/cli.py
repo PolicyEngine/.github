@@ -118,7 +118,18 @@ def cmd_backlog(args: argparse.Namespace) -> int:
 
 
 def cmd_drain_plan(args: argparse.Namespace) -> int:
-    from .drain import issue_inputs, load_issues, load_saved, markdown, plan, to_json
+    from .drain import (
+        issue_inputs,
+        load_blocked_citations,
+        load_blocked_modules,
+        load_issues,
+        load_pin_file,
+        load_saved,
+        markdown,
+        plan,
+        to_json,
+    )
+    from .finder.index import Index
 
     gh = GitHub()
     saved = dict(item.split("=", 1) for item in args.issues_file)
@@ -126,14 +137,16 @@ def cmd_drain_plan(args: argparse.Namespace) -> int:
     for repo in args.repos:
         items = load_saved(saved[repo], repo) if repo in saved else load_issues(gh, repo, args.label)
         rows.extend(issue_inputs(repo, i, c) for i, c in items)
-    from .drain import load_blocked_modules
-
-    corpus = set(Path(args.corpus_citations).read_text().split()) if args.corpus_citations else None
+    corpus, repealed = load_pin_file(args.corpus_citations) if args.corpus_citations else (None, None)
     blocked = load_blocked_modules(args.blocked_modules) if args.blocked_modules else None
-    from .drain import load_blocked_citations
-
     listed = load_blocked_citations(args.blocked_citations) if args.blocked_citations else None
-    batches = plan(rows, corpus, blocked, args.blocked_citation_pattern, listed)
+    # With a rulespec checkout, a blocked module also blocks the citations it owns on main.
+    indexes = [Index.build(repo, path) for repo, path in (item.split("=", 1) for item in args.rulespec_dir)]
+
+    def owners(citation: str) -> list[str]:
+        return [m.path for idx in indexes for m in idx.by_citation.get(citation, [])]
+
+    batches = plan(rows, corpus, blocked, args.blocked_citation_pattern, listed, repealed, owners if indexes else None)
     if args.json:
         Path(args.json).write_text(json.dumps(to_json(batches, args.weekly_runs), indent=2), encoding="utf-8")
     text = markdown(batches, args.weekly_runs)
@@ -201,6 +214,13 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument(
         "--blocked-modules",
         help="module paths the encoder owner has ruled out as targets or imports (text list, or JSON of lists)",
+    )
+    d.add_argument(
+        "--rulespec-dir",
+        action="append",
+        default=[],
+        metavar="REPO=PATH",
+        help="rulespec checkout at main, to find the modules that own each target citation (repeatable)",
     )
     d.add_argument(
         "--blocked-citations",

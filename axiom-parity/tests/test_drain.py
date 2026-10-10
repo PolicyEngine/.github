@@ -6,7 +6,8 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from axiom_parity.corpus_pin import pinned_citations, read_pin
-from axiom_parity.drain import in_pin, issue_inputs, plan, review_finding_text
+from axiom_parity.drain import in_pin, issue_inputs, plan
+from axiom_parity.issue_lint import review_finding_text
 
 
 def test_review_finding_under_heading_and_after_cue():
@@ -254,10 +255,14 @@ def test_review_finding_in_a_tagged_fence_and_after_a_long_paragraph():
     assert review_finding_text(denied) is None
 
 
-def test_a_blocked_citation_pattern_blocks_matching_targets():
-    manual = issue_inputs(
-        "R", {"number": 1, "body": READY_ISSUE_BODY.replace("us/statute/26/32/d", "us-il/manual/dhs/pm-08-01")}, []
+def _manual_issue() -> str:
+    return READY_ISSUE_BODY.replace("us/statute/26/32/d", "us-il/manual/dhs/pm-08-01").replace(
+        "us/statutes/26/32/d.yaml", "us-il/policies/dhs/pm-08-01.yaml"
     )
+
+
+def test_a_blocked_citation_pattern_blocks_matching_targets():
+    manual = issue_inputs("R", {"number": 1, "body": _manual_issue()}, [])
     statute = issue_inputs("R", {"number": 2, "body": READY_ISSUE_BODY}, [])
     pin = {"us-il/manual/dhs/pm-08-01", "us/statute/26/32/d"}
     by = {b.issues[0].number: b for b in plan([manual, statute], corpus=pin, blocked_patterns=["/manual/"])}
@@ -294,3 +299,216 @@ def test_blocked_citations_block_exactly_or_with_descendants(tmp_path):
     assert not by[1].ready and "filing-status" in by[1].issues[0].blocked[0]
     assert by[2].ready  # 26/1 is blocked exactly; 26/1/h is a different path
     assert by[3].ready  # 26/320 is not below 26/32
+
+
+def test_a_repealed_row_blocks_even_when_rows_below_it_have_text(tmp_path):
+    from axiom_parity.drain import load_pin_file
+
+    f = tmp_path / "pin.txt"
+    f.write_text("us-mt/statute/15-30-2318/1\nus-mt/statute/15-30-2131/a\n!us-mt/statute/15-30-2131\n")
+    present, repealed = load_pin_file(str(f))
+    assert in_pin("us-mt/statute/15-30-2318", present, repealed)  # empty row, text below it
+    assert not in_pin("us-mt/statute/15-30-2131", present, repealed)  # repealed, whatever sits below
+
+
+def test_a_module_named_only_to_defer_it_is_not_an_import(tmp_path):
+    blocked = {"us/statutes/26/32.yaml"}
+    base = READY_ISSUE_BODY.replace("us/statute/26/32/d", "us-in/statute/6-3.1-21-6").replace(
+        "us/statutes/26/32/d.yaml", "us-in/statutes/6-3.1-21-6.yaml"
+    )
+    deferred = base.replace(
+        "The separated-spouse rule must be",
+        "Declare a deferred dependency on us:statutes/26/32 (#eitc). Do not import it now. The rule must be",
+    )
+    row = issue_inputs("R", {"number": 1, "body": deferred}, [])
+    (batch,) = plan([row], corpus={"us-in/statute/6-3.1-21-6"}, blocked_modules=blocked)
+    assert batch.ready
+    used = base.replace("The separated-spouse rule must be", "Import us:statutes/26/32#eitc. The rule must be")
+    row = issue_inputs("R", {"number": 2, "body": used}, [])
+    (batch,) = plan([row], corpus={"us-in/statute/6-3.1-21-6"}, blocked_modules=blocked)
+    assert not batch.ready
+
+
+def test_an_explicit_target_must_be_a_corpus_citation():
+    body = (
+        READY_ISSUE_BODY
+        + "\nAlso: corpus citation `uk/regulations/uksi/2006/213/75D.yaml` (a module path by mistake).\n"
+    )
+    row = issue_inputs("R", {"number": 1, "body": body}, [])
+    assert row.targets == ["us/statute/26/32/d"]
+
+
+COUNCILS = ["uk-kingston-upon-thames", "uk-merton", "uk-newham", "uk-westminster"]
+
+
+def _councils_issue(number: int = 401, councils=COUNCILS) -> dict:
+    cites = [f"{c}/manual/council-tax-reduction-scheme-2026-2027/page-{n}" for n, c in enumerate(councils, 45)]
+    finding = (
+        "> Encode the working-age taper for each council from "
+        + ", ".join(cites)
+        + ". State each rate with a proof excerpt."
+    )
+    body = READY_ISSUE_BODY.replace("us/statute/26/32/d", cites[0]).replace(
+        "us/statutes/26/32/d.yaml", f"{councils[0]}/policies/council-tax-reduction-scheme-2026-2027/page-45.yaml"
+    )
+    head, _, rest = body.partition("## review_finding (paste as-is)")
+    return {
+        "number": number,
+        "body": head
+        + "## review_finding (paste as-is)\n\n"
+        + finding
+        + "\n\n## Companion"
+        + rest.partition("## Companion")[2],
+    }
+
+
+def test_a_run_never_mixes_jurisdictions():
+    """The encoder refuses a bundle that leaves the primary citation's jurisdiction, so each document is its own run."""
+    from axiom_parity.drain import drainable, runs_needed, to_json
+
+    row = issue_inputs("R", _councils_issue(), [])
+    assert len(row.targets) == 4 and len(row.documents) == 4
+    batches = plan([row], corpus=set(row.targets))
+    assert len(batches) == 4 and all(b.ready and runs_needed(b) == 1 for b in batches)
+    for b in batches:
+        assert {c.split("/")[0] for c in b.citations} == {b.document.split("/")[0]}
+    summary = to_json(batches, 10)["summary"]
+    assert (summary["ready_documents"], summary["ready_runs"], summary["ready_issues"], summary["issues"]) == (
+        4,
+        4,
+        1,
+        1,
+    )
+    assert drainable(batches) == [row]
+
+
+def test_an_issue_is_drainable_only_when_all_its_documents_are():
+    from axiom_parity.drain import drainable
+
+    spans = issue_inputs("R", _councils_issue(1, COUNCILS[:2]), [])
+    unready = issue_inputs("R", _councils_issue(2, COUNCILS[1:2]), [])
+    unready.ready = False
+    batches = plan([spans, unready], corpus=set(spans.targets))
+    by_doc = {b.document.split("/")[0]: b for b in batches}
+    assert by_doc["uk-kingston-upon-thames"].ready and not by_doc["uk-merton"].ready
+    assert drainable(batches) == []
+
+
+@given(st.lists(st.sampled_from(COUNCILS + ["us", "uk"]), min_size=1, max_size=6), st.integers(1, 40))
+def test_property_every_batch_is_one_document_and_one_jurisdiction(jurisdictions, per):
+    from axiom_parity.drain import MAX_BUNDLE_CITATIONS, runs_needed
+    from axiom_parity.finder.propose import document_of
+
+    rows = []
+    for n, j in enumerate(jurisdictions, 1):
+        cites = [f"{j}/statute/9/{n}/{k}" for k in range(per)]
+        row = issue_inputs("R", {"number": n, "body": READY_ISSUE_BODY}, [])
+        row.targets = cites
+        rows.append(row)
+    batches = plan(rows)
+    assert sorted(c for b in batches for c in b.citations) == sorted({c for r in rows for c in r.targets})
+    for b in batches:
+        assert {document_of(c) for c in b.citations} == {b.document}
+        assert len({c.split("/")[0] for c in b.citations}) == 1
+        assert runs_needed(b) * MAX_BUNDLE_CITATIONS >= len(b.citations) > (runs_needed(b) - 1) * MAX_BUNDLE_CITATIONS
+
+
+def test_a_declared_target_module_is_checked_against_the_block_list():
+    body = READY_ISSUE_BODY.replace(
+        "corpus citation `us/statute/26/32/d`", "corpus citation `us/statute/26/32/d/1`"
+    ).replace(" at us/statutes/26/32/d.yaml", "")
+    row = issue_inputs("R", {"number": 1, "body": body}, [])
+    assert row.targets == ["us/statute/26/32/d/1"] and row.modules == ["us/statutes/26/32/d.yaml"]
+    (batch,) = plan([row], corpus={"us/statute/26/32/d/1"}, blocked_modules={"us/statutes/26/32/d.yaml"})
+    assert not batch.ready and "blocked" in batch.issues[0].blocked[0]
+
+
+def test_a_blocked_module_blocks_the_citations_it_owns():
+    body = READY_ISSUE_BODY.replace("us/statute/26/32/d", "us/guidance/irs/rev-proc-2025-32/page-10").replace(
+        "us/statutes/26/32/d.yaml", "us/policies/irs/rev-proc-2025-32/standard-deduction.yaml"
+    )
+    blocked = {"us/policies/irs/rev-proc-2025-32/income-tax-brackets.yaml"}
+    owners = {"us/guidance/irs/rev-proc-2025-32/page-10": ["us/policies/irs/rev-proc-2025-32/income-tax-brackets.yaml"]}
+    pin = {"us/guidance/irs/rev-proc-2025-32/page-10"}
+    (free,) = plan([issue_inputs("R", {"number": 1, "body": body}, [])], corpus=pin, blocked_modules=blocked)
+    assert free.ready
+    (held,) = plan(
+        [issue_inputs("R", {"number": 1, "body": body}, [])],
+        corpus=pin,
+        blocked_modules=blocked,
+        owners=lambda c: owners.get(c, []),
+    )
+    assert not held.ready
+
+
+def test_modules_the_finding_names_are_targets_or_imports_by_what_it_asks():
+    def row(extra: str):
+        body = READY_ISSUE_BODY.replace(
+            "stated from its statutory elements.", "stated from its statutory elements. " + extra
+        )
+        return issue_inputs("R", {"number": 1, "body": body}, [])
+
+    # Asked for by module name, in any spelling: a target.
+    assert row("Also encode us:statutes/26/32/e.").targets == ["us/statute/26/32/d", "us/statute/26/32/e"]
+    assert row("Re-encode us/statutes/26/32/e.yaml in place.").targets == ["us/statute/26/32/d", "us/statute/26/32/e"]
+    # Imported, mirrored or deferred: named, but not a target.
+    assert row("Import us/statutes/26/1/c for the rate.").targets == ["us/statute/26/32/d"]
+    assert row("Encode it mirroring us/statutes/26/24/d.yaml.").targets == ["us/statute/26/32/d"]
+    # An import blocks whichever way the module is spelled; a deferral doesn't.
+    blocked = {"us/statutes/26/1/c.yaml"}
+    for spelling in ("us/statutes/26/1/c", "us/statutes/26/1/c.yaml", "us:statutes/26/1/c#rate"):
+        (batch,) = plan([row(f"Import {spelling} for the rate.")], blocked_modules=blocked)
+        assert not batch.ready, spelling
+    (batch,) = plan([row("Declare a deferred dependency on us/statutes/26/1/c.yaml.")], blocked_modules=blocked)
+    assert batch.ready
+    # A state module's path respells its section, so the path alone gives no citation.
+    assert row("Also encode us-la/statutes/47/44/1.yaml.").targets == ["us/statute/26/32/d"]
+
+
+def test_findings_in_comments_add_to_the_body_s():
+    addendum = "`review_finding` (paste as-is; it adds to the body's):\n\n> " + (
+        "Also encode 26 USC 32(e) (corpus us/statute/26/32/e) and state its taxable-year rule with proof excerpts. "
+    )
+    row = issue_inputs("R", {"number": 1, "body": READY_ISSUE_BODY}, [{"id": 1, "body": addendum}])
+    assert row.finding_blocks == 2
+    assert row.review_finding.startswith("Encode 26 USC 32(d)") and "Also encode 26 USC 32(e)" in row.review_finding
+    assert row.targets == ["us/statute/26/32/d", "us/statute/26/32/e"]
+
+
+def test_braced_citations_are_all_targets():
+    body = READY_ISSUE_BODY.replace(
+        "corpus citation `us/statute/26/32/d`", "corpus citation `uk/regulation/uksi/2006/213/2`"
+    ).replace(
+        "Encode 26 USC 32(d) as its own module at us/statutes/26/32/d.yaml.",
+        "Encode regs 2, 19 and 13D from corpus uk/regulation/uksi/2006/213/{2,19,13D} at uk/regulations/uksi/2006/213/{2,19,13D}.yaml.",
+    )
+    row = issue_inputs("R", {"number": 1, "body": body}, [])
+    assert row.targets == [f"uk/regulation/uksi/2006/213/{n}" for n in ("2", "19", "13D")]
+    assert row.documents == ["uk/regulation/uksi/2006/213"]
+
+
+def test_a_modules_line_lists_targets_and_a_precedent_is_not_one():
+    finding = (
+        "Encode whose income counts in Scotland and Wales, matching the existing England module "
+        "uk/regulations/uksi/2012/2885/schedule/1/paragraph/11.yaml. Modules: uk/regulations/ssi/2012/319/21.yaml, "
+        "uk/regulations/ssi/2021/249/36.yaml and uk/regulations/wsi/2013/3029/schedule/1/paragraph/5.yaml."
+    )
+    body = READY_ISSUE_BODY.replace("corpus citation `us/statute/26/32/d`", "see the finding").replace(
+        "Encode 26 USC 32(d) as its own module at us/statutes/26/32/d.yaml.", finding
+    )
+    row = issue_inputs("R", {"number": 1, "body": body}, [])
+    assert row.targets == [
+        "uk/regulation/ssi/2012/319/21",
+        "uk/regulation/ssi/2021/249/36",
+        "uk/regulation/wsi/2013/3029/schedule/1/paragraph/5",
+    ]
+    assert "uk/regulations/uksi/2012/2885/schedule/1/paragraph/11.yaml" in row.modules  # still checked for a block
+
+
+def test_sibling_module_names_are_spelled_out():
+    from axiom_parity.drain import expand_siblings
+
+    assert expand_siblings("Modules: uk/statutes/ukpga/1992/14/6.yaml, 9.yaml and 77.yaml. Then 3.yaml.") == (
+        "Modules: uk/statutes/ukpga/1992/14/6.yaml, uk/statutes/ukpga/1992/14/9.yaml and "
+        "uk/statutes/ukpga/1992/14/77.yaml. Then 3.yaml."
+    )

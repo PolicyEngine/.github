@@ -24,6 +24,7 @@ A PR that changes no policy path needs no line.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -34,7 +35,7 @@ from .behaviour import changes_behaviour
 from .github import GitHub, GitHubError, NotFound
 from .issue_lint import HINTS, LintResult, lint_issue
 from .policy_paths import PolicyPaths
-from .refs import AXIOM_OWNER, RulespecRef
+from .refs import AXIOM_OWNER, RulespecRef, TestRef
 from .rulespec import GitHubSource, Resolver, Source, rulespec_repo_for_jurisdiction
 
 PE_PARITY_LABEL = "pe-parity"
@@ -145,6 +146,19 @@ class Context:
 
     def resolver(self) -> Resolver:
         return Resolver(self.source)
+
+
+_RULED_OUT = re.compile(r"\b(?:not|no|without|except|excluding|never|nor)\s+(?:\w+\s+){0,2}[`\"'“]?$", re.IGNORECASE)
+
+
+def _affirmed(claim: Claim) -> list[TestRef]:
+    """The claim's test references, less any it names right after a negation."""
+    out = []
+    for t in claim.test_refs:
+        at = claim.text.find(t.raw)
+        if at < 0 or not _RULED_OUT.search(claim.text[:at]):
+            out.append(t)
+    return out
 
 
 class Checker:
@@ -327,10 +341,11 @@ class Checker:
             return
         # Tests are looked for in the claim, then in the rest of its axiom line:
         # "X encoded-correct | Y queued (...). The companion test `t` exercises it."
-        test_refs = list(claim.test_refs)
+        # A test a claim names only to rule it out ("(not `other_case`)") is not evidence.
+        test_refs = _affirmed(claim)
         for other in all_claims:
             if other is not claim and other.line_no == claim.line_no:
-                test_refs.extend(t for t in other.test_refs if t not in test_refs)
+                test_refs.extend(t for t in _affirmed(other) if t not in test_refs)
         tests = self.resolver.resolve_tests(test_refs, modules, self.ctx.default_rulespec)
         exercising = [t for t in tests if t.exercises]
         for t in exercising[:5]:

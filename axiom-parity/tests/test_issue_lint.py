@@ -189,3 +189,121 @@ def test_outputs_named_inside_the_finding_count():
         "the tax year beginning 6 April 2026, using the leaf input tax_year_is_2026_27.\n"
     )
     assert lint_issue({"body": body}).ready
+
+
+def _without(section: str, body: str = READY_ISSUE_BODY) -> str:
+    """The ready body with one "## section" removed."""
+    head, _, rest = body.partition(f"## {section}")
+    tail = rest.partition("\n## ")[2]
+    return head + ("## " + tail if tail else "")
+
+
+@given(
+    st.integers(0, 1_000_000), st.sampled_from(["- input income: {n}", "- inputs: wages {n}", "input:\n  income: {n}"])
+)
+@settings(max_examples=40, deadline=None)
+def test_property_an_input_is_not_an_expected_outcome(n, case):
+    body = READY_ISSUE_BODY.split("## Companion tests")[0] + "## Companion tests\n\n" + case.format(n=n) + "\n"
+    assert "companion_tests" in lint_issue({"body": body}).missing
+
+
+def test_a_case_with_inputs_and_a_result_still_counts():
+    head = READY_ISSUE_BODY.split("## Companion tests")[0] + "## Companion tests\n\n"
+    for case in (
+        "- input income: 0; expect credit 250",
+        "- inputs: wages 10000, children 2 → credit: 4000",
+        "```yaml\n- name: a\n  input:\n    wages: 10000\n  output:\n    credit: 3400\n```",
+        "| Inputs | Expected |\n|---|---|\n| wages 10000 | 3400 |",
+    ):
+        assert lint_issue({"body": head + case + "\n"}).ready, case
+
+
+IDENT = st.from_regex(r"[a-z]{1,6}(_[a-z0-9]{1,6}){2,4}", fullmatch=True)
+
+
+@given(
+    IDENT,
+    st.sampled_from(
+        [
+            "Add an input named {x} to this module.",
+            "The rule takes {x} as an input.",
+            "Import {x} from us:statutes/26/1/h.",
+        ]
+    ),
+)
+@settings(max_examples=40, deadline=None)
+def test_property_a_named_input_is_not_a_required_output(ident, wording):
+    finding = wording.format(x=ident) + " Preserve the existing statutory text and its proof excerpts as they are."
+    body = _without("Required outputs").replace(
+        "> Encode 26 USC 32(d) as its own module at us/statutes/26/32/d.yaml. The separated-spouse rule must be\n"
+        "> stated from its statutory elements.",
+        "> " + finding,
+    )
+    assert "required_outputs" in lint_issue({"body": body}).missing
+
+
+def test_an_output_declared_in_the_finding_counts():
+    for finding in (
+        "Add `section_199a_net_capital_gain` and keep the proof excerpts for every amount it reads from the text.",
+        "Add the secondary percentage's history to uk/statutes/ukpga/1992/4/9.yaml#secondary_percentage, each with proof.",
+        "State the monthly figures. Name them secondary_threshold_monthly_equivalent and so on, with excerpts.",
+    ):
+        body = _without("Required outputs").replace(
+            "> Encode 26 USC 32(d) as its own module at us/statutes/26/32/d.yaml. The separated-spouse rule must be\n"
+            "> stated from its statutory elements.",
+            "> " + finding,
+        )
+        assert lint_issue({"body": body}).ready, finding
+
+
+@given(
+    st.sampled_from(
+        [
+            "Review_finding will be supplied later:",
+            "Review_finding is unavailable:",
+            "review_finding to follow:",
+            "`review_finding` comes next week:",
+            "review_finding (pending):",
+            "The review_finding is still to be written:",
+            "Review_finding (none):",
+            "Add the review_finding here when done:",
+        ]
+    )
+)
+def test_a_deferred_review_finding_cue_does_not_borrow_the_law(cue):
+    from axiom_parity.issue_lint import review_finding_text
+
+    body = _without("review_finding (paste as-is)").replace("## Law (verbatim)\n", f"## Law (verbatim)\n\n{cue}\n")
+    assert review_finding_text(body) is None
+    assert "review_finding" in lint_issue({"body": body}).missing
+
+
+def test_an_inline_cue_takes_the_block_right_below_it_only():
+    from axiom_parity.issue_lint import review_finding_text
+
+    quote = "> " + "Encode the rule from its statutory elements, with proof excerpts for each amount. " * 2
+    assert review_finding_text(f"`review_finding`:\n\n{quote}\n").startswith("Encode the rule")
+    assert review_finding_text(f"**`review_finding`:**\n\n{quote}\n").startswith("Encode the rule")
+    assert review_finding_text(f"`review_finding`:\n\nnot written yet\n\n**Law**\n\n{quote}\n") is None
+
+
+def test_every_finding_in_a_text_is_read_once():
+    from axiom_parity.issue_lint import review_findings
+
+    one = "> " + "Encode reg 3 as its own module and state each amount with a proof excerpt from the text. " * 2
+    two = "review_finding: >-\n  " + "Re-encode reg 4 in place and correct the taper rate it states today. " * 2
+    md = f"**Step 1.** `review_finding` (paste as-is):\n\n{one}\n\n**Step 2.** Paste this as `review_finding`:\n\n```yaml\n{two}\n```\n"
+    found = review_findings(md)
+    assert [f[:13] for f in found] == ["Encode reg 3 ", "Re-encode reg"]
+
+
+def test_braces_expand_to_paths():
+    from axiom_parity.issue_lint import expand_braces
+
+    assert expand_braces(
+        "corpus uk/regulation/uksi/2006/213/{2,19,13D} at uk/regulations/uksi/2006/213/{2,19}.yaml"
+    ) == (
+        "corpus uk/regulation/uksi/2006/213/2, uk/regulation/uksi/2006/213/19, uk/regulation/uksi/2006/213/13D at "
+        "uk/regulations/uksi/2006/213/2.yaml, uk/regulations/uksi/2006/213/19.yaml"
+    )
+    assert expand_braces("a set {x, y} of things") == "a set {x, y} of things"
