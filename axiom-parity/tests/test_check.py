@@ -164,6 +164,7 @@ def _hub():
 
     h.add_file(RS_US, "us/statutes/26/24/d.yaml", MODULE_D)
     h.add_file(RS_US, "us/statutes/26/24/d.test.yaml", TEST_D)
+    h.add_file(RS_US, "us/statutes/26/1/h.yaml", "rules:\n  - name: net_capital_gain\n")
     h.add_issue(RS_US, 1416)
     h.add_issue(RS_US, 2, labels=())
     h.add_pull(RS_US, 10, merged=True, state="closed")
@@ -180,7 +181,8 @@ BAD = [
     "rulespec-us#2 queued",
     "rulespec-us#12 encoded",
     "rulespec-us#999 queued",
-    "us:statutes/26/24/d encoded-correct",
+    # A module no cited test outputs, whatever else shares its line.
+    "us:statutes/26/1/h encoded-correct",
 ]
 BODIES = st.lists(st.sampled_from(GOOD + BAD), min_size=0, max_size=5)
 
@@ -304,3 +306,81 @@ def test_na_cannot_share_a_line_with_other_claims(hub):
 def test_prose_status_words_do_not_satisfy_the_check(hub):
     assert run(hub, "axiom: rulespec-us#1416 might be queued").would_fail
     assert run(hub, "axiom: rulespec-us#1416 is not actually currently ready to be queued").would_fail
+
+
+# Round 2 review regressions ------------------------------------------------
+
+
+def test_a_missing_module_blocks_however_it_is_written(hub):
+    for missing in ("us/statute/26/22", "us:statutes/26/22", "us/statutes/26/22.yaml", "/22"):
+        body = f"axiom: us:statutes/26/24/d and {missing} encoded-correct (`three_children_social_security_excess`)"
+        assert "module-not-found" in codes(run(hub, body)), missing
+
+
+def test_a_companion_named_later_on_the_line_counts(hub):
+    body = (
+        "axiom: us:statutes/26/24/d#ctc_social_security_tax encoded-correct | rulespec-us#1416 queued (blocked). "
+        "The companion test `three_children_social_security_excess` exercises it."
+    )
+    assert not run(hub, body).would_fail
+
+
+def test_same_test_file_name_in_two_directories(hub):
+    for sub in ("a", "b"):
+        hub.add_file(RS_US, f"us/statutes/1/{sub}/d.yaml", "rules:\n  - name: r\n")
+        hub.add_file(
+            RS_US,
+            f"us/statutes/1/{sub}/d.test.yaml",
+            f"- name: case_{sub}\n  output:\n    us:statutes/1/{sub}/d#r: 1\n",
+        )
+    body = (
+        "axiom: us:statutes/1/a/d and us:statutes/1/b/d encoded-correct (`d.test.yaml::case_a`, `d.test.yaml::case_b`)"
+    )
+    r = run(hub, body)
+    assert not r.would_fail, codes(r)
+
+
+def test_different_statuses_in_one_sentence_are_both_kept(hub):
+    r = run(hub, "axiom: queued: rulespec-us#1416 encoded")
+    assert r.would_fail and {"queued-no-issue", "encoded-no-pr"} <= codes(r)
+
+
+def test_negation_stops_at_its_clause(hub):
+    assert not run(hub, "axiom: rulespec-us#1416 is not encoded but is queued").would_fail
+
+
+def test_adjective_use_of_a_status_is_not_a_claim(hub):
+    body = "axiom: rulespec-us#1416 queued (extended). The queued federal rule explains the rest."
+    r = run(hub, body)
+    assert not r.would_fail and len(r.claims) == 1
+
+
+def test_na_after_and_or_a_full_stop_is_still_a_claim(hub):
+    for body in (
+        "axiom: rulespec-us#1416 queued and n/a: metadata: update labels",
+        "axiom: rulespec-us#1416 queued. n/a: metadata: update labels",
+    ):
+        assert "na-combined" in codes(run(hub, body)), body
+
+
+def test_en_dash_module_and_test_names_resolve(hub):
+    hub.add_file(RS_US, "us/statutes/42/1437c–1.yaml", "rules:\n  - name: r\n")
+    hub.add_file(
+        RS_US, "us/statutes/42/1437c–1.test.yaml", "- name: case_one\n  output:\n    us:statutes/42/1437c–1#r: 1\n"
+    )
+    for body in (
+        "axiom: us:statutes/42/1437c–1 encoded-correct (`1437c–1.test.yaml::case_one`)",
+        "axiom: us:statutes/42/1437c-1 encoded-correct (`1437c-1.test.yaml::case_one`)",
+    ):
+        r = run(hub, body)
+        assert not r.would_fail, (body, codes(r))
+
+
+def test_the_error_path_never_raises(monkeypatch, tmp_path):
+    from axiom_parity import cli
+
+    monkeypatch.setattr(cli, "_check", lambda args: (_ for _ in ()).throw(RuntimeError("API down")))
+    args = cli.build_parser().parse_args(
+        ["check", "--repo", "o/r", "--pr", "1", "--mode", "warn", "--summary", str(tmp_path / "no-such-dir" / "s.md")]
+    )
+    assert cli.cmd_check(args) == 0

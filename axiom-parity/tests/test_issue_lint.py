@@ -146,3 +146,46 @@ def test_property_a_finder_draft_is_never_ready(n, with_tests):
     res = lint_issue({"body": body})
     assert "TODO" in body and not res.ready
     assert "verbatim_law" in res.missing
+
+
+def test_placeholders_in_any_case_are_unfinished():
+    from axiom_parity.finder.draft import draft_issue
+    from axiom_parity.finder.propose import Proposal
+
+    body = draft_issue(
+        [Proposal("us/statute/26/32/" + c, True, []) for c in "defg"], "o/r", 1, "t", [], "main", fetch=False
+    )
+    assert not lint_issue({"body": body.replace("TODO", "todo")}).ready
+    assert not lint_issue({"body": body.replace("TODO", "Tbd")}).ready
+
+
+@given(st.integers(1, 1000))
+@settings(max_examples=30, deadline=None)
+def test_property_list_numbering_is_not_an_expected_outcome(n):
+    body = build(["module_and_corpus", "verbatim_law", "required_outputs", "review_finding"])
+    body += f"\n## Companion tests\n\n{n}. a joint filer\n"
+    assert "companion_tests" in lint_issue({"body": body}).missing
+
+
+def test_negative_judgment_outcomes_and_short_output_lists_count():
+    base = build(["module_and_corpus", "verbatim_law", "required_outputs", "review_finding"])
+    assert lint_issue({"body": base + "\n## Companion tests\n\n- a joint filer: does not hold\n"}).ready
+    base = build(["module_and_corpus", "verbatim_law", "review_finding", "companion_tests"])
+    assert lint_issue({"body": base + "\nRequired outputs: `a`, `b`\n"}).ready
+
+
+def test_a_denied_review_finding_is_not_one():
+    from axiom_parity.issue_lint import review_finding_text
+
+    body = build(["module_and_corpus", "required_outputs", "companion_tests"])
+    body += "\nNo review_finding is supplied.\n\n" + SECTIONS["verbatim_law"].split("\n\n", 1)[1]
+    assert review_finding_text(body) is None
+    assert "review_finding" in lint_issue({"body": body}).missing
+
+
+def test_outputs_named_inside_the_finding_count():
+    body = build(["module_and_corpus", "verbatim_law", "companion_tests"]) + (
+        "\n## review_finding\n\n> Add a Judgment regulation_10_specifies_amounts_for_tax_year that holds only for "
+        "the tax year beginning 6 April 2026, using the leaf input tax_year_is_2026_27.\n"
+    )
+    assert lint_issue({"body": body}).ready

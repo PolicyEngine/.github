@@ -136,7 +136,7 @@ class GitHub:
           pageInfo { hasNextPage endCursor }
           nodes {
             number title body url createdAt
-            comments(first: 100) { nodes { databaseId body } }
+            comments(first: 100) { totalCount nodes { databaseId body } }
           }
         }
       }
@@ -167,6 +167,12 @@ class GitHub:
             page = data["data"]["repository"]["issues"]
             for node in page["nodes"]:
                 comments = [{"id": c["databaseId"], "body": c["body"]} for c in node["comments"]["nodes"]]
+                if node["comments"].get("totalCount", len(comments)) > len(comments):
+                    # More than one page of comments: read them all over REST.
+                    comments = [
+                        {"id": c["id"], "body": c.get("body") or ""}
+                        for c in self.issue_comments(owner_repo, node["number"])
+                    ]
                 issue = {
                     "number": node["number"],
                     "title": node["title"],

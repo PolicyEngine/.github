@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .refs import LegalRef, RulespecRef, TestRef, parse_legal_refs, parse_rulespec_refs, parse_test_refs
+from .refs import LegalRef, RulespecRef, TestRef, norm_dashes, parse_legal_refs, parse_rulespec_refs, parse_test_refs
 
 ENCODED_CORRECT = "encoded-correct"
 ENCODED = "encoded"
@@ -162,16 +162,37 @@ _SEPARATOR = re.compile(r"\s*(?:;|\|\||\s\|\s)\s*")
 _SENTENCE = re.compile(r"(?<=[.)])\s+(?=[A-Z`*])")
 
 
+_CLAUSE_BREAK = re.compile(r"[,;:.()]|\b(?:but|and|though|although|however|while|whereas)\b", re.IGNORECASE)
+# "the queued federal rule", "an encoded module": the status word describes a noun.
+# The determiner must be a word of its own: the "A" ending "26/24/d/1/A" is a path segment.
+_ADJECTIVE = re.compile(
+    r"(?:^|(?<=\s))(?:the|a|an|this|that|these|those|its|their|each|every|any|no|other)\s+$", re.IGNORECASE
+)
+
+
 def _status_hits(text: str) -> list[re.Match[str]]:
     depths = _depth_map(text)
     hits = []
     for m in _STATUS_WORD.finditer(text):
         if depths[m.start()] != 0:
             continue
-        if _NEGATION.search(text[: m.start()]):
+        before = text[: m.start()]
+        # Negation reaches back only to the start of its own clause:
+        # "is not encoded but is queued" still claims queued.
+        breaks = [b.end() for b in _CLAUSE_BREAK.finditer(before)]
+        clause = before[breaks[-1] :] if breaks else before
+        if _NEGATION.search(clause) or _ADJECTIVE.search(before):
             continue
         hits.append(m)
     return hits
+
+
+def _first_status(text: str) -> str | None:
+    hits = _status_hits(text)
+    if not hits:
+        return None
+    word = hits[0].group(1).lower()
+    return LEGACY_ALIASES.get(word, word)
 
 
 def _merge_statusless(sentences: list[str]) -> list[str]:
@@ -190,10 +211,18 @@ def _merge_statusless(sentences: list[str]) -> list[str]:
     return out
 
 
+_NA_INLINE = re.compile(r"(?:\s*(?:\band\b|[.,])\s*|\s+)(?=n\s*/\s*a\s*[:(—–-])", re.IGNORECASE)
+
+
 def _segments(rest: str) -> list[str]:
     """Split a line into segments that each hold at most one status keyword."""
     out = []
+    # "X queued and n/a: metadata" and "X queued. n/a: metadata": an n/a that
+    # opens a clause is its own claim wherever it sits.
+    pieces = []
     for seg in _split_top(rest, _SEPARATOR):
+        pieces.extend(_split_top(seg, _NA_INLINE))
+    for seg in pieces:
         if len(_status_hits(seg)) <= 1:
             out.append(seg)
             continue
@@ -219,10 +248,13 @@ def _segments(rest: str) -> list[str]:
             # word that cites nothing joins the piece after it.
             merged: list[str] = []
             carry = ""
-            for piece in pieces:
+            for n, piece in enumerate(pieces):
                 piece = carry + piece
                 carry = ""
-                if not _has_refs(piece) and piece is not pieces[-1] and len(merged) + 1 < len(pieces):
+                nxt = pieces[n + 1] if n + 1 < len(pieces) else None
+                # Join only a repeat of the same status ("are queued: #415 queued").
+                # "queued: #1416 encoded" makes two different claims and keeps both.
+                if nxt is not None and not _has_refs(piece) and _first_status(piece) == _first_status(nxt):
                     carry = piece
                     continue
                 merged.append(piece)
@@ -278,6 +310,8 @@ def _has_refs(text: str) -> bool:
 
 def parse_line(rest: str, line_no: int = 0, items: list[str] | tuple[str, ...] = ()) -> AxiomLine:
     """Parse the text after ``axiom:`` (and any continuation bullets) into claims."""
+    rest = norm_dashes(rest)
+    items = [norm_dashes(i) for i in items]
     line = AxiomLine(raw=rest, line_no=line_no)
     if not rest.strip():
         line.problems.append("empty axiom line")

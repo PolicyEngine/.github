@@ -124,9 +124,21 @@ _INLINE_QUOTE = re.compile(r"[“\"]([^”\"]{12,600}?)[”\"]")
 
 
 # An unfinished element: the finder's drafts mark what a person must fill in.
-_TODO = re.compile(r"\bTODO\b|\bTBD\b|\bFIXME\b")
-# A companion case states what it expects: a number, a judgment or a comparison.
-_EXPECTATION = re.compile(r"\d|\bholds\b|\bnot_holds\b|expect|→|=>|=|\btrue\b|\bfalse\b|eligible|\bzero\b", re.I)
+_TODO = re.compile(r"\b(?:TODO|TBD|FIXME|TBC)\b|<\s*fill[^>]*>", re.IGNORECASE)
+# A companion case states its expected outcome. A list number, an input amount
+# or a section number is not one, so a bare digit doesn't count.
+_OUTCOME = re.compile(
+    r"\bnot_holds\b|\bholds?\b|\bdoes(?: not|n't) hold\b|\bexpect\w*|→|=>|"
+    r"(?:=|\bgives?|\breturns?|\byields?|\bequals?|\bis|\bare|\bto be|\bshould be|:)\s*[-–]?[£$€]?\d|"
+    r"\btrue\b|\bfalse\b|\b(?:in)?eligible\b|\bzero\b|\bnil\b|\bpass(?:es)?\b|\bfails?\b|"
+    r"\|\s*[-–]?[£$€]?\d[\d,.]*%?\s*\|",
+    re.IGNORECASE,
+)
+_LIST_MARKER = re.compile(r"^\s*(?:>\s*)*(?:[-*+]|\d+[.)])\s+")
+
+
+def _states_outcome(lines: list[str]) -> bool:
+    return any(_OUTCOME.search(_LIST_MARKER.sub("", line)) for line in lines)
 
 
 def _finished(lines: list[str]) -> list[str]:
@@ -164,8 +176,8 @@ def _items(lines: list[str]) -> int:
 def _has_content(element: str, lines: list[str]) -> bool:
     if any(_TODO.search(line) for line in lines):
         return False  # an unfinished element is missing, however long the rest is
-    if element == "companion_tests" and not any(_EXPECTATION.search(line) for line in lines):
-        return False  # cases without expected values are not companion tests
+    if element == "companion_tests" and not _states_outcome(lines):
+        return False  # cases without an expected outcome are not companion tests
     if element == "verbatim_law":
         return _quoted_chars(lines) >= 60 or _content_chars(lines) >= 300
     if element == "review_finding":
@@ -203,8 +215,9 @@ def _introduces_content(element: str, line: str, following: list[str]) -> bool:
         return False
     text = " ".join(b.strip() for b in block).strip()
     if element == "companion_tests":
-        return len(text) >= 40 and bool(_EXPECTATION.search(text))
-    return len(text) >= 20
+        return len(text) >= 40 and _states_outcome(block)
+    # Outputs: a named output ("`a`, `b`") or a sentence describing them.
+    return bool(re.search(r"`[^`\n]{2,}`", text)) or len(text) >= 20
 
 
 def _snippet(text: str, n: int = 90) -> str:
@@ -213,6 +226,26 @@ def _snippet(text: str, n: int = 90) -> str:
 
 
 _YAML_KEY = re.compile(r"^(?P<indent>\s*)-?\s*review_finding:\s*(?P<style>[|>][-+]?)?\s*(?P<inline>.*)$")
+
+
+_FINDING_NEGATED = re.compile(r"\b(?:no|not|without|missing|lacks?|needs?|absent|n't)\b", re.IGNORECASE)
+
+
+def _introduces_finding(line: str) -> bool:
+    """An inline cue that hands over a finding: "Paste this as `review_finding`:".
+
+    Only the sentence that names the field is judged, so a "not" or "need"
+    earlier in a long paragraph doesn't cancel a cue at its end.
+    """
+    sentences = re.split(r"(?<=[.!?])\s+", line.strip())
+    cue = [s for s in sentences if re.search(r"review[_\s-]?finding", s, re.I)]
+    if not cue or _FINDING_NEGATED.search(cue[-1]):
+        return False
+    ends_line = cue[-1] is sentences[-1] and cue[-1].rstrip().endswith(":")
+    return ends_line or bool(re.search(r"\bpaste\b|\buse (?:this|the following)\b", cue[-1], re.I))
+
+
+_FINDING_FENCE = re.compile(r"^\s*(```|~~~)\s*review[_-]?finding\b", re.IGNORECASE)
 
 
 def review_finding_text(markdown: str) -> str | None:
@@ -226,6 +259,18 @@ def review_finding_text(markdown: str) -> str | None:
     """
     lines = markdown.splitlines()
     for i, line in enumerate(lines):
+        fence = _FINDING_FENCE.match(line)
+        if fence:
+            # A code block tagged as the finding: ```review_finding
+            block = []
+            for nxt in lines[i + 1 :]:
+                if nxt.strip().startswith(fence.group(1)):
+                    break
+                block.append(nxt)
+            text = "\n".join(block).strip()
+            if len(text) >= 80 and not _TODO.search(text):
+                return text
+            continue
         y = _YAML_KEY.match(line)
         if y:
             if y.group("style"):
@@ -248,6 +293,8 @@ def review_finding_text(markdown: str) -> str | None:
         if heading and not re.search(r"review[_\s-]?finding", heading.group("title"), re.I):
             continue
         titled = bool(heading) or bool(label and re.search(r"review[_\s-]?finding", label.group("title"), re.I))
+        if not titled and not _introduces_finding(line):
+            continue  # "No review_finding is supplied." mentions the field; it doesn't give one
         quoted, plain, fenced = [], [], False
         if label and titled and label.group("after").strip():
             plain.append(label.group("after").strip())
@@ -279,6 +326,14 @@ def review_finding_text(markdown: str) -> str | None:
             if len(candidate) >= minimum and not _TODO.search(candidate):
                 return candidate
     return None
+
+
+# An output named in running text: a verb or noun of producing, then a rule-like identifier.
+_NAMED_OUTPUT = re.compile(
+    r"\b(?:outputs?|Judge?ments?|rules?|deriv(?:e|es|ed)|comput(?:e|es|ed)|expos(?:e|es|ed)|publish(?:es|ed)?|"
+    r"add(?:s|ed)?)\b[^.\n]{0,80}?`?\b[a-z][a-z0-9]*(?:_[a-z0-9]+){2,}\b`?",
+    re.IGNORECASE,
+)
 
 
 def lint_texts(texts: list[tuple[str, str]]) -> LintResult:
@@ -341,6 +396,16 @@ def lint_texts(texts: list[tuple[str, str]]) -> LintResult:
                     result.found[element] = f"{sec.source}: “{_snippet(line)}”"
                     break
             if element in result.found:
+                break
+
+    if "required_outputs" not in result.found:
+        # The finding itself may name the outputs: "Add a Judgment x_holds_for_year",
+        # "54.yaml outputs `person_earned_income`".
+        for source, text in texts:
+            finding = review_finding_text(text or "")
+            m = _NAMED_OUTPUT.search(finding or "")
+            if m:
+                result.found["required_outputs"] = f"{source}: review_finding names “{_snippet(m.group(0), 70)}”"
                 break
 
     result.missing = [e for e in ELEMENTS if e not in result.found]

@@ -293,16 +293,17 @@ class Checker:
                 )
             )
 
-    def _encoded_correct(self, claim: Claim, res: ClaimResult, *_: Any) -> None:
+    def _encoded_correct(self, claim: Claim, res: ClaimResult, all_claims: list[Claim], *_: Any) -> None:
         modules = []
         for ref in claim.legal_refs:
             repo = rulespec_repo_for_jurisdiction(ref.jurisdiction, self.ctx.default_rulespec)
             mod = self.resolver.resolve_module(ref, repo)
             if mod is None:
-                level = ERROR if ref.explicit else WARNING
+                # However the module is written (legal id, path, corpus citation,
+                # sibling), a reference that resolves to nothing fails the claim.
                 res.findings.append(
                     Finding(
-                        level,
+                        ERROR,
                         "module-not-found",
                         f"no module for {ref.raw} on {repo}@{self.ctx.rulespec_ref} (looked for {ref.module_path})",
                     )
@@ -324,7 +325,13 @@ class Checker:
                     )
                 )
             return
-        tests = self.resolver.resolve_tests(claim.test_refs, modules, self.ctx.default_rulespec)
+        # Tests are looked for in the claim, then in the rest of its axiom line:
+        # "X encoded-correct | Y queued (...). The companion test `t` exercises it."
+        test_refs = list(claim.test_refs)
+        for other in all_claims:
+            if other is not claim and other.line_no == claim.line_no:
+                test_refs.extend(t for t in other.test_refs if t not in test_refs)
+        tests = self.resolver.resolve_tests(test_refs, modules, self.ctx.default_rulespec)
         exercising = [t for t in tests if t.exercises]
         for t in exercising[:5]:
             label = f"{t.path}::{t.case}" if t.case else t.path

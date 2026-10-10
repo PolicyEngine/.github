@@ -89,7 +89,14 @@ def _open_issues(gh: GitHub, repo: str) -> list[tuple[dict, list[dict]]]:
         ]
     except (NotFound, GitHubError):
         return []
-    return [(i, []) for i in issues]
+    out = []
+    for i in issues:
+        try:
+            comments = gh.issue_comments(repo, i["number"]) if i.get("comments") else []
+        except (NotFound, GitHubError):
+            comments = []
+        out.append((i, comments))
+    return out
 
 
 def _saved_issues(path: str, repo: str) -> list[tuple[dict, list[dict]]]:

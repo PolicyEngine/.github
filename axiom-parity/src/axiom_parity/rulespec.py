@@ -277,20 +277,21 @@ class Resolver:
         src = self.source(repo)
         if src is None:
             return []
-        paths = src.paths()
-        cited = cited.strip("`")
+        # Compare with any dash as a hyphen, and return the repository's own spelling.
+        by_norm = {norm_dashes(p): p for p in src.paths()}
+        cited = norm_dashes(cited.strip("`"))
         if cited.startswith(".../"):
             tail = cited[3:]
-            hits = [p for p in paths if p.endswith(tail)]
+            hits = [real for p, real in by_norm.items() if p.endswith(tail)]
             return hits if len(hits) == 1 else []
         if "/" in cited:
-            return [cited] if cited in paths else []
+            return [by_norm[cited]] if cited in by_norm else []
         # A bare file name: look beside each resolved module first.
-        near = [f"{m.path.rsplit('/', 1)[0]}/{cited}" for r, m in modules if r == repo]
-        hits = [p for p in near if p in paths]
+        near = [norm_dashes(f"{m.path.rsplit('/', 1)[0]}/{cited}") for r, m in modules if r == repo]
+        hits = list(dict.fromkeys(by_norm[p] for p in near if p in by_norm))
         if hits:
-            return hits[:1]
-        hits = [p for p in paths if p.endswith("/" + cited)]
+            return hits  # every cited module's own file: the case may be in any of them
+        hits = [real for p, real in by_norm.items() if p.endswith("/" + cited)]
         return hits if len(hits) == 1 else []
 
 

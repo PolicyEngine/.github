@@ -115,10 +115,12 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
         finding = review_finding_text(t)
         if finding:
             break
+    # Targets are what the issue labels as the citation to encode plus everything the
+    # finding names: an explicit target must not hide the finding's other requests.
     targets = _explicit_targets(joined, cites)
-    if not targets:
-        # Every citation the finding names is a target: dropping one would let it skip the pin check.
-        targets = [c for c in cites if finding and re.search(rf"(?<![\w/-]){re.escape(c)}(?![\w/-])", finding)]
+    for c in cites:
+        if finding and c not in targets and re.search(rf"(?<![\w/-]){re.escape(c)}(?![\w/-])", finding):
+            targets.append(c)
     if not targets and cites:
         targets = cites[:1]
     notes = [k for k, pat in _BLOCKERS.items() if pat.search(joined)]

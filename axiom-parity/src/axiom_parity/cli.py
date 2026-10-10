@@ -31,7 +31,10 @@ def cmd_check(args: argparse.Namespace) -> int:
     except Exception as err:  # noqa: BLE001 - a tooling failure must not read as a rule violation
         level = "warning" if args.mode == "warn" else "error"
         print(f"::{level} title=Axiom parity::the check could not run: {type(err).__name__}: {err}")
-        _write(args.summary, f"## Axiom parity\n\nThe check could not run: `{type(err).__name__}: {err}`.\n")
+        try:
+            _write(args.summary, f"## Axiom parity\n\nThe check could not run: `{type(err).__name__}: {err}`.\n")
+        except OSError:
+            pass  # the annotation above already reports it
         return 0 if args.mode == "warn" else 2
 
 

@@ -7,18 +7,19 @@ The PR check stops new parity debt from slipping through. This document covers t
 | | rulespec-uk | rulespec-us |
 |---|---|---|
 | Open pe-parity issues (ever closed) | 83 (0) | 175 (0) |
-| Pass the dispatch-ready lint | 74 | 82 |
-| Lint-ready, and every target citation is in the pinned corpus release | 25 | 54 |
-| Also clear of the encoder owner's blocked-module list | 25 | 42 |
+| Pass the dispatch-ready lint | 78 | 82 |
+| Lint-ready, and every target citation is in the pinned corpus release | 25 | 51 |
+| Also clear of the encoder owner's blocked-module list | 25 | 38 |
 | Pinned corpus release | `uk-rulespec-2026-09-07` | `us-rulespec-2026-08-08-obbb-alien-snap` |
 
 The main lint failures:
 
 - 85 US issues have no pasteable `review_finding`. 60 of them are among the 71 issues filed on 2026-10-09 (#1554–#1625).
 - 21 US issues name no target module.
-- 8 US and 7 UK issues have no required outputs.
+- 8 US issues have no companion cases with an expected outcome.
+- 6 US and 3 UK issues have no required outputs.
 
-A source document is ready when every one of its issues is. That gives 29 ready documents today: 36 issues and 48 citations. At up to 16 citations a signed run, that is 29 runs. Examples are SI 2012/2885 (3 issues), IRC §62 (3), Ohio R.C. 5747.02 (2), IRC §1411 (2) and Va. Code title 58.1 (2).
+A source document is ready when every one of its issues is. That gives 25 ready documents today: 31 issues and 45 citations. At up to 16 citations a signed run, that is 25 runs. Examples are SI 2012/2885 (3 issues), IRC §62 (3), Ohio R.C. 5747.02 (2) and Va. Code title 58.1 (2).
 
 The lint checks that each element is present and finished. It cannot judge whether the law in an issue is settled: an independent read of 30 issues found 3 that pass the lint while leaving a legal question open (rulespec-uk#357, rulespec-us#1517 and #1358). The encoder owner still reads an issue before dispatching it.
 
@@ -45,8 +46,8 @@ No fresh model encode since 2026-09-25 has landed a manifest on `main`. rulespec
 1. **The encoder fails most runs.** The Axiom eng hub classified all 106 failures from 2026-09-24 to 10-10 (`~/reviews/axiom-hub/jobs/encode-throughput/work-a2/REPORT-A3.md`):
    - Source-completeness refusals explain 49.
    - Missing or repealed corpus text explains 10.
-   - In 82 of 83 observable runs, escalating from Luna to Sol hit the same gate family. A stronger model does not rescue a gate-blocked citation.
-   - A failed run waited a median of 86 minutes for the protected job to start, against 14 minutes of encoding.
+   - 82 failed runs escalated from Luna to Sol and still failed. The run ended at the same gate before and after escalation in 27 of them, and at a different one in 55.
+   - A failed run waited a median of 28 minutes for the protected job to start (86 minutes for runs since 2026-09-29), against 14 minutes of encoding.
 2. **The encoder pin lags.** The encoder runs at axiom-encode `main`, and rulespec CI requires each manifest's `validation_execution.axiom_encode` to equal the pin. The US pin, in `.axiom/workflow-toolchain.toml`, was 105 commits behind; the UK pin, hardcoded in `repository-checks.yml`, was 1,909 behind.
 3. **Every run waits on a human click.** The `production-signing` environment requires MaxGhenis or PavelMakarchuk as reviewer, including for queue-dispatched runs, and d350 bars agents from approving it.
 4. **Corpus pins.** About half the backlog cites provisions missing from the pinned release. d1176 (approved 2026-10-10) mirrors the W6 release and re-pins rulespec-us, which should clear many of them.
@@ -62,7 +63,7 @@ No fresh model encode since 2026-09-25 has landed a manifest on `main`. rulespec
    It takes about two seconds and makes no API calls.
 3. **Plan.** `axiom-parity drain-plan --corpus-citations pin.txt` lints every open issue and extracts its target citations and pasteable `review_finding`. It groups the issues by source document (an Act or SI, a US Code section, a CFR part, a state code), so related provisions are encoded together, as the encoder owner asked. A document is ready only if every issue passes the lint, has a `review_finding` the tool can paste, and has every target in the pin. The plan ranks the documents and prices the wave.
 
-   `--blocked-modules` takes the encoder owner's list of modules that must not be a target or an import. Its first use is the obsolete `source_verification.values` field: 17 modules on rulespec-us `main` at `16a6677` carry it under `module.source_verification`, and a target that imports one fails to compile. The encoder owner's list of those 17 plus the modules that reference them (35 directly, 64 transitively) blocks 18 issues, 12 of them otherwise ready, including the IRC §1 group.
+   `--blocked-modules` takes the encoder owner's list of modules that must not be a target or an import. Its first use is the obsolete `source_verification.values` field: 17 modules on rulespec-us `main` at `16a6677` carry it under `module.source_verification`, and a target that imports one fails to compile. The encoder owner's list of those 17 plus the modules that reference them (35 directly, 64 transitively) blocks 18 issues, 13 of them otherwise ready, including the IRC §1 group.
 
 Steps 1 to 3 are what the tooling does. Steps 4 to 10 are a procedure for the encoder owner; nothing in this package dispatches, approves, links or closes anything.
 
@@ -98,11 +99,11 @@ The plan's order is a starting point. On 2026-10-10 the encoder owner added thre
 
 The scarce resource is the signing approval, so the budget counts approvals. Ten approvals a week cover up to 160 citations. Every measured run so far encoded one citation, so the per-citation figures are:
 
-| | Per citation | 48 citations ready today | A full week (160 citations) |
+| | Per citation | 45 citations ready today | A full week (160 citations) |
 |---|---|---|---|
-| Mean | $0.058 | $2.78 | $9.28 |
-| p90 | $0.150 | $7.20 | $24.00 |
-| Most any run has cost | $0.496 | $23.81 | $79.36 |
+| Mean | $0.058 | $2.61 | $9.28 |
+| p90 | $0.150 | $6.75 | $24.00 |
+| Most any run has cost | $0.496 | $22.32 | $79.36 |
 
 Bundled runs have not been measured yet; the pilot will give the first figures. A hard cap of $40 a week sits above the p90 for a full week.
 

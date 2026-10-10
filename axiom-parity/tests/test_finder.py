@@ -371,3 +371,59 @@ def test_differential_url_mapper_agrees_with_corpus_verified_vectors():
             counts["match" if path == want else "deeper"] += 1
     # A floor, so a refactor that silently stops mapping a family fails here.
     assert counts["match"] >= 125 and counts["match"] + counts["deeper"] >= 135, counts
+
+
+# Round 2 review regressions ------------------------------------------------
+
+
+def test_a_sibling_issue_is_found_without_another_changed_reference(rs_tree):
+    """The PR references only s.228A; the open issue cites only s.227 of the same Act."""
+    idx = Index.build("TheAxiomFoundation/rulespec-uk", rs_tree, ["uk"])
+    refs = parameter_references(
+        "policyengine_uk/parameters/gov/x.yaml",
+        "metadata:\n  reference:\n    - href: https://www.legislation.gov.uk/ukpga/2004/12/section/228A\n",
+        "policyengine_uk",
+    )
+    issue = {"number": 444, "title": "AA", "html_url": "u", "body": "Encode uk/statute/ukpga/2004/12/227."}
+    proposals, _ = propose(
+        refs, {"TheAxiomFoundation/rulespec-uk": idx}, {"TheAxiomFoundation/rulespec-uk": [(issue, [])]}
+    )
+    (p,) = proposals
+    assert p.line == "TheAxiomFoundation/rulespec-uk#444 queued (extend it to cover uk/statute/ukpga/2004/12/228A)"
+
+
+def test_comments_past_the_first_page_are_read(monkeypatch):
+    from axiom_parity.github import GitHub
+
+    gh = GitHub(token="t", transport=lambda url, headers: (404, {}, b""))
+    page = {
+        "data": {
+            "repository": {
+                "issues": {
+                    "pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [
+                        {
+                            "number": 7,
+                            "title": "t",
+                            "body": "b",
+                            "url": "u",
+                            "createdAt": "",
+                            "comments": {
+                                "totalCount": 101,
+                                "nodes": [{"databaseId": i, "body": f"c{i}"} for i in range(100)],
+                            },
+                        }
+                    ],
+                }
+            }
+        }
+    }
+    monkeypatch.setattr(gh, "send_json", lambda method, path, data: page)
+    monkeypatch.setattr(gh, "issue_comments", lambda repo, n: [{"id": i, "body": f"c{i}"} for i in range(101)])
+    ((issue, comments),) = gh.open_issues_with_comments("o/r", "pe-parity")
+    assert len(comments) == 101 and comments[-1]["body"] == "c100" and issue["comments"] == 101
+
+
+def test_house_url_with_an_encoded_dash():
+    url = "https://uscode.house.gov/view.xhtml?req=granuleid:USC-prelim-title42-section1437c%2D1&num=0"
+    assert map_url(url).path == "us/statute/42/1437c-1"

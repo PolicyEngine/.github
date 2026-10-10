@@ -91,20 +91,23 @@ class _StripDescriptive(ast.NodeTransformer):
             return isinstance(stmt.target, ast.Name) and stmt.target.id in DESCRIPTIVE_ATTRS
         return False
 
-    @classmethod
-    def _is_inert(cls, node: ast.AST) -> bool:
-        """A literal, or a ``dict(...)`` of literals: evaluating it does nothing."""
+    def __init__(self, dict_is_builtin: bool = True) -> None:
+        self.dict_is_builtin = dict_is_builtin
+
+    def _is_inert(self, node: ast.AST) -> bool:
+        """A literal, or a builtin ``dict(...)`` of literals: evaluating it does nothing."""
         if isinstance(node, ast.Constant):
             return True
         if isinstance(node, ast.List | ast.Tuple | ast.Set):
-            return all(cls._is_inert(e) for e in node.elts)
+            return all(self._is_inert(e) for e in node.elts)
         if isinstance(node, ast.Dict):
             return all(
-                k is not None and cls._is_inert(k) and cls._is_inert(v)
+                k is not None and self._is_inert(k) and self._is_inert(v)
                 for k, v in zip(node.keys, node.values, strict=True)
             )
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "dict" and not node.args:
-            return all(kw.arg and cls._is_inert(kw.value) for kw in node.keywords)
+            # Only the builtin is known to do nothing; a module that binds the name could do anything.
+            return self.dict_is_builtin and all(kw.arg and self._is_inert(kw.value) for kw in node.keywords)
         return False
 
     def _strip(self, body: list[ast.stmt], class_body: bool) -> list[ast.stmt]:
@@ -139,8 +142,27 @@ class _StripDescriptive(ast.NodeTransformer):
     visit_AsyncFunctionDef = visit_FunctionDef
 
 
+def _binds(tree: ast.AST, name: str) -> bool:
+    """Does the module define, assign, take as an argument or import ``name``?
+
+    A star import could bind anything, so it counts.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) and node.name == name:
+            return True
+        if isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Store):
+            return True
+        if isinstance(node, ast.arg) and node.arg == name:
+            return True
+        if isinstance(node, ast.Import | ast.ImportFrom):
+            if any((a.asname or a.name).split(".")[0] == name for a in node.names):
+                return True
+    return False
+
+
 def python_behaviour(text: str) -> str:
-    tree = _StripDescriptive().visit(ast.parse(text))
+    tree = ast.parse(text)
+    tree = _StripDescriptive(dict_is_builtin=not _binds(tree, "dict")).visit(tree)
     return ast.dump(tree, annotate_fields=False, include_attributes=False)
 
 

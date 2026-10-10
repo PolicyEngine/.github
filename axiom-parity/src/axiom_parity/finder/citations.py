@@ -182,8 +182,10 @@ _GOVINFO_CFR = re.compile(r"CFR-\d{4}-title(\d+)-vol\d+-sec(\d+[-.]?[0-9A-Za-z-]
 
 def map_url(url: str) -> Citation | StateHint | None:
     """Map one reference URL; None when the URL names no corpus source."""
+    # One normalized form (percent-decoded, any dash as a hyphen) feeds every rule below.
+    url = norm_dashes(urllib.parse.unquote(url.strip()))
     try:
-        parsed = urllib.parse.urlparse(norm_dashes(urllib.parse.unquote(url.strip())))
+        parsed = urllib.parse.urlparse(url)
     except ValueError:
         return None
     host = (parsed.netloc or "").lower().removeprefix("www.")

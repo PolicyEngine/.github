@@ -112,6 +112,11 @@ def collect_references(files: list[str], read: Any, package: str) -> list[Refere
     return refs
 
 
+_CORPUS_PATH = re.compile(
+    r"(?<![\w/-])[a-z]{2}(?:-[a-z0-9]+)*/(?:statute|regulation|guidance|policy|manual|form)/[\w./:\-]*\w"
+)
+
+
 def _issue_mentions(issue: dict[str, Any], comments: list[dict[str, Any]], needles: list[str]) -> bool:
     text = (issue.get("body") or "") + "\n" + "\n".join(c.get("body") or "" for c in comments)
     # A needle is a whole path ("us/statute/26/3" doesn't match "us/statute/26/32"). The
@@ -166,16 +171,23 @@ def propose(
         proposals.append(p)
     # A citation with no module and no issue of its own, in a document that
     # already has an open issue, extends that issue rather than starting one.
-    by_doc: dict[str, list[dict[str, Any]]] = {}
-    for p in proposals:
-        if "/" in p.citation:
-            for i in p.issues:
-                by_doc.setdefault(document_of(p.citation), []).append(i)
+    # The index comes from every open issue's own citations, not from which
+    # other references this PR happens to touch.
+    by_doc: dict[tuple[str, str], list[tuple[dict[str, Any], list[dict[str, Any]]]]] = {}
+    for repo, issues in open_issues.items():
+        for issue, comments in issues:
+            text = (issue.get("body") or "") + "\n" + "\n".join(c.get("body") or "" for c in comments)
+            for doc in {document_of(m.group(0).rstrip(".,;:)")) for m in _CORPUS_PATH.finditer(text)}:
+                by_doc.setdefault((repo, doc), []).append((issue, comments))
     for p in proposals:
         if not p.modules and not p.issues and "/" in p.citation:
-            siblings = by_doc.get(document_of(p.citation), [])
+            siblings = by_doc.get((_repo_for(p.citation), document_of(p.citation)), [])
             if siblings:
-                p.issues = [{**siblings[0], "extend": True}]
+                rows = sorted(
+                    (_issue_row(i, c, _repo_for(p.citation)) for i, c in siblings),
+                    key=lambda r: (not r["ready"], r["number"]),
+                )
+                p.issues = [{**rows[0], "extend": True}]
     if pe_pr:
         # An open issue that already names this PE PR is the best queued candidate.
         for repo, issues in open_issues.items():

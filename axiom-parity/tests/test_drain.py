@@ -228,3 +228,27 @@ def test_blocked_modules_block_targets_and_imports(tmp_path):
     clean = issue_inputs("R", {"number": 3, "body": READY_ISSUE_BODY.replace("32/d", "32/e")}, [])
     (batch,) = plan([clean], corpus={"us/statute/26/32/e"}, blocked_modules=blocked)
     assert batch.ready and runs_needed(batch) == 1
+
+
+def test_an_explicit_target_does_not_hide_what_the_finding_asks_for():
+    body = READY_ISSUE_BODY.replace(
+        "The separated-spouse rule must be", "Also encode us/statute/26/32/e. The separated-spouse rule must be"
+    )
+    row = issue_inputs("R", {"number": 1, "body": body}, [])
+    assert row.targets == ["us/statute/26/32/d", "us/statute/26/32/e"]
+    (batch,) = plan([row], corpus={"us/statute/26/32/d"})
+    assert not batch.ready
+
+
+def test_review_finding_in_a_tagged_fence_and_after_a_long_paragraph():
+    fenced = (
+        "```review_finding\n" + "Encode reg 43 saving and the first-child row from the regulation. " * 2 + "\n```\n"
+    )
+    assert review_finding_text(fenced).startswith("Encode reg 43")
+    para = (
+        "**Step 1. Re-encode ARS 43-1072** with a targeted signed run (signed runs need Max's approval, so this is "
+        "not dispatched here). Paste this as `review_finding`:\n\n> " + "Encode the household income rule. " * 4
+    )
+    assert review_finding_text(para).startswith("Encode the household income")
+    denied = "This issue does not carry a `review_finding`:\n\n> " + "Some quoted law text that is long enough. " * 3
+    assert review_finding_text(denied) is None

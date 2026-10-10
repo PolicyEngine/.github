@@ -164,3 +164,14 @@ def test_a_bare_reference_dict_in_a_class_body_is_inert():
     assert not changes_behaviour("p/variables/x.py", before, after)
     # A call that could do something still counts.
     assert changes_behaviour("p/variables/x.py", before, before.replace('dict(title="t", href="h")', "register(v)"))
+
+
+def test_a_rebound_dict_is_not_assumed_inert():
+    def source(n):
+        return (
+            "v = 0\n"
+            "def dict(**kw):\n    global v\n    v = kw['n']\n"
+            f"class benefit:\n    dict(n={n})\n    def formula():\n        return v\n"
+        )
+
+    assert changes_behaviour("p/variables/x.py", source(0), source(1))
