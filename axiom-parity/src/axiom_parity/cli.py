@@ -123,8 +123,11 @@ def cmd_drain_plan(args: argparse.Namespace) -> int:
     for repo in args.repos:
         items = load_saved(saved[repo], repo) if repo in saved else load_issues(gh, repo, args.label)
         rows.extend(issue_inputs(repo, i, c) for i, c in items)
+    from .drain import load_blocked_modules
+
     corpus = set(Path(args.corpus_citations).read_text().split()) if args.corpus_citations else None
-    batches = plan(rows, corpus)
+    blocked = load_blocked_modules(args.blocked_modules) if args.blocked_modules else None
+    batches = plan(rows, corpus, blocked)
     if args.json:
         Path(args.json).write_text(json.dumps(to_json(batches, args.weekly_runs), indent=2), encoding="utf-8")
     text = markdown(batches, args.weekly_runs)
@@ -189,7 +192,11 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--label", default="pe-parity")
     d.add_argument("--issues-file", action="append", default=[], metavar="REPO=PATH")
     d.add_argument("--corpus-citations", help="file of citation paths in the pinned corpus release, one per line")
-    d.add_argument("--weekly-runs", type=int, default=40)
+    d.add_argument(
+        "--blocked-modules",
+        help="module paths the encoder owner has ruled out as targets or imports (text list, or JSON of lists)",
+    )
+    d.add_argument("--weekly-runs", type=int, default=10, help="signed runs (signing approvals) a week")
     d.add_argument("--json")
     d.add_argument("--summary")
     d.set_defaults(func=cmd_drain_plan)

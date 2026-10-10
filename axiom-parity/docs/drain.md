@@ -9,6 +9,7 @@ The PR check stops new parity debt from slipping through. This document covers t
 | Open pe-parity issues (ever closed) | 83 (0) | 175 (0) |
 | Pass the dispatch-ready lint | 74 | 82 |
 | Lint-ready, and every target citation is in the pinned corpus release | 25 | 54 |
+| Also clear of the encoder owner's blocked-module list | 25 | 42 |
 | Pinned corpus release | `uk-rulespec-2026-09-07` | `us-rulespec-2026-08-08-obbb-alien-snap` |
 
 The main lint failures:
@@ -17,7 +18,7 @@ The main lint failures:
 - 21 US issues name no target module.
 - 8 US and 7 UK issues have no required outputs.
 
-Grouped by source document, the issues that are ready and in the pin make 36 encodable documents (49 issues). Examples are IRC §1 (5 issues), D.C. Code title 47 (3), SI 2012/2885 (3), IRC §62 (3), Ohio R.C. 5747.02 (2) and IRC §1411 (2).
+A source document is ready when every one of its issues is. That gives 29 ready documents today: 36 issues and 48 citations. At up to 16 citations a signed run, that is 29 runs. Examples are SI 2012/2885 (3 issues), IRC §62 (3), Ohio R.C. 5747.02 (2), IRC §1411 (2) and Va. Code title 58.1 (2).
 
 The lint checks that each element is present and finished. It cannot judge whether the law in an issue is settled: an independent read of 30 issues found 3 that pass the lint while leaving a legal question open (rulespec-uk#357, rulespec-us#1517 and #1358). The encoder owner still reads an issue before dispatching it.
 
@@ -61,12 +62,20 @@ No fresh model encode since 2026-09-25 has landed a manifest on `main`. rulespec
    It takes about two seconds and makes no API calls.
 3. **Plan.** `axiom-parity drain-plan --corpus-citations pin.txt` lints every open issue and extracts its target citations and pasteable `review_finding`. It groups the issues by source document (an Act or SI, a US Code section, a CFR part, a state code), so related provisions are encoded together, as the encoder owner asked. A document is ready only if every issue passes the lint, has a `review_finding` the tool can paste, and has every target in the pin. The plan ranks the documents and prices the wave.
 
-Steps 1 to 3 are what the tooling does. Steps 4 to 10 are a procedure for the encoder owner; nothing in this package dispatches, approves, links or closes anything. Before dispatch the encoder owner also drops any target whose imports still carry the obsolete `source_verification.values` field, which the taxonomy found breaks the compile. On rulespec-us `main` at `16a6677`, 12 modules have `values` under `module.source_verification`; the encoder owner's own list is the authority.
+   `--blocked-modules` takes the encoder owner's list of modules that must not be a target or an import. Its first use is the obsolete `source_verification.values` field: 17 modules on rulespec-us `main` at `16a6677` carry it under `module.source_verification`, and a target that imports one fails to compile. The encoder owner's list of those 17 plus the modules that reference them (35 directly, 64 transitively) blocks 18 issues, 12 of them otherwise ready, including the IRC §1 group.
+
+Steps 1 to 3 are what the tooling does. Steps 4 to 10 are a procedure for the encoder owner; nothing in this package dispatches, approves, links or closes anything.
+
+The plan's order is a starting point. On 2026-10-10 the encoder owner added three constraints the tooling does not see:
+
+- hold the pilot until axiom-encode#1819 merges, because a signed run is locked to the encoder at its dispatch commit;
+- treat status-selecting Title 26 provisions as blocked until the filing-status chain (26 USC 2, 7703, 6013, 152, 151) is encoded;
+- encode Ohio R.C. 5747.02 before the W6 corpus re-pin or wait for a successor release (d1251).
 4. **Pin-bump gate.** Before each wave, the rulespec repo's encoder pin must equal axiom-encode `main`. If it doesn't, the encoder owner lands a pin bump first. Moving the UK pin into `.axiom/workflow-toolchain.toml`, as US already does, makes that a one-file PR in both repos.
 5. **Pilot.** Encode 5 ready documents, chosen by the encoder owner from the top of the plan once the failure taxonomy's fixes are in. The drain proceeds only if at least 3 of the 5 produce a rulespec PR that:
    - passes the required `validate` gate (generated-guard, proofs, companion tests);
    - carries the issue's companion cases.
-6. **Weekly waves.** The encoder owner dispatches up to the weekly cap of `targeted-signed-reencode.yml` runs. Each run uses the issue's citation, `country`, `rulespec_ref` (rulespec `main` HEAD), the `corpus_ref` and `rules_engine_ref` from `workflow-toolchain.toml`, the issue's `review_finding`, and `open_pr: true`. Keep at most 4 in flight. The attempt budget (3 consecutive failures per citation in 7 days, `scripts/enforce_attempt_budget.py`) still applies.
+6. **Weekly waves.** The encoder owner dispatches up to the weekly cap of `targeted-signed-reencode.yml` runs, one per source document. A run can carry up to 16 citations in `source_bundle_json` (`MAX_SOURCE_BUNDLE_CITATIONS` in axiom-encode's `prepare_signed_backfill.py`), so a document's provisions share one run and one signing approval. Each run uses the citations, `country`, `rulespec_ref` (rulespec `main` HEAD), the `corpus_ref` and `rules_engine_ref` from `workflow-toolchain.toml`, the issues' `review_finding`, and `open_pr: true`. Keep at most 4 in flight. The attempt budget (3 consecutive failures per citation in 7 days, `scripts/enforce_attempt_budget.py`) still applies.
 7. **Signing gate.** Max or Pavel approves the week's waiting runs in one pass:
 
    ```bash
@@ -87,9 +96,17 @@ Steps 1 to 3 are what the tooling does. Steps 4 to 10 are a procedure for the en
 
 ## Costing a wave
 
-At the measured GPT-6-era cost, 40 runs a week costs about $2.32 (mean), $6.00 (if every run cost the p90) and at most $19.84. So a hard cap of $25 a week covers 40 runs even if every one costs the most any run has cost so far.
+The scarce resource is the signing approval, so the budget counts approvals. Ten approvals a week cover up to 160 citations. Every measured run so far encoded one citation, so the per-citation figures are:
 
-The measured spend per successful run is $0.64. Spend per *merged* module is not yet measurable: since 2026-09-25, no success has landed a manifest on `main`.
+| | Per citation | 48 citations ready today | A full week (160 citations) |
+|---|---|---|---|
+| Mean | $0.058 | $2.78 | $9.28 |
+| p90 | $0.150 | $7.20 | $24.00 |
+| Most any run has cost | $0.496 | $23.81 | $79.36 |
+
+Bundled runs have not been measured yet; the pilot will give the first figures. A hard cap of $40 a week sits above the p90 for a full week.
+
+The measured spend per successful run is $0.64. Spend per *merged* module is not yet measurable: no fresh model encode since 2026-09-25 has landed a manifest on `main`.
 
 ## Commands
 
@@ -97,6 +114,7 @@ The measured spend per successful run is $0.64. Spend per *merged* module is not
 uv run axiom-parity corpus-pin --rulespec-dir ../rulespec-us --corpus-dir ../axiom-corpus --out pin-us.txt
 uv run axiom-parity corpus-pin --rulespec-dir ../rulespec-uk --corpus-dir ../axiom-corpus --out pin-uk.txt
 cat pin-us.txt pin-uk.txt > pin.txt
-uv run axiom-parity drain-plan --corpus-citations pin.txt --weekly-runs 40 --json plan.json --summary plan.md
+uv run axiom-parity drain-plan --corpus-citations pin.txt --blocked-modules blocked.json --weekly-runs 10 \
+  --json plan.json --summary plan.md
 uv run axiom-parity backlog --json backlog.json
 ```

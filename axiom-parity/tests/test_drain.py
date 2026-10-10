@@ -198,3 +198,33 @@ def test_uk_style_pin_is_read_from_the_checks_workflow(tmp_path):
     _git(rules, "commit", "-qm", "r")
     pin = read_pin(rules, "HEAD")
     assert (pin.release, pin.corpus_ref, pin.ref_source) == ("uk-rel", sha, "repository-checks.yml")
+
+
+def test_blocked_modules_block_targets_and_imports(tmp_path):
+    from axiom_parity.drain import load_blocked_modules, runs_needed
+
+    listing = tmp_path / "importers.json"
+    listing.write_text(
+        json.dumps({"affected": ["us/statutes/26/25A.yaml"], "direct_importers": ["us/statutes/26/32/d.yaml"]})
+    )
+    blocked = load_blocked_modules(str(listing))
+    assert blocked == {"us/statutes/26/25A.yaml", "us/statutes/26/32/d.yaml"}
+    target = issue_inputs("R", {"number": 1, "body": READY_ISSUE_BODY}, [])
+    (batch,) = plan([target], corpus={"us/statute/26/32/d"}, blocked_modules=blocked)
+    assert not batch.ready and "blocked" in batch.issues[0].blocked[0]
+    importer = issue_inputs(
+        "R",
+        {
+            "number": 2,
+            "body": READY_ISSUE_BODY.replace("32/d", "32/c").replace(
+                "stated from its statutory elements",
+                "stated by importing us:statutes/26/25A#credit, from its statutory elements",
+            ),
+        },
+        [],
+    )
+    (batch,) = plan([importer], corpus={"us/statute/26/32/c"}, blocked_modules=blocked)
+    assert not batch.ready
+    clean = issue_inputs("R", {"number": 3, "body": READY_ISSUE_BODY.replace("32/d", "32/e")}, [])
+    (batch,) = plan([clean], corpus={"us/statute/26/32/e"}, blocked_modules=blocked)
+    assert batch.ready and runs_needed(batch) == 1

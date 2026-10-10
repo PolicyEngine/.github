@@ -146,14 +146,55 @@ def in_pin(citation: str, corpus: set[str]) -> bool:
     return any(c.startswith(prefix) for c in corpus)
 
 
-def plan(rows: list[IssueInputs], corpus: set[str] | None = None) -> list[Batch]:
+# One signed run can carry this many citations in ``source_bundle_json``
+# (axiom-encode ``prepare_signed_backfill.MAX_SOURCE_BUNDLE_CITATIONS``), so a
+# document's provisions can share one run and one signing approval.
+MAX_BUNDLE_CITATIONS = 16
+
+
+def load_blocked_modules(path: str) -> set[str]:
+    """Module paths the encoder owner has ruled out, from a text list or a JSON of lists.
+
+    The first use is modules that carry, or import a module that carries, the
+    obsolete ``source_verification.values`` field: a target importing one
+    fails to compile.
+    """
+    text = Path(path).read_text(encoding="utf-8")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return {line.strip() for line in text.splitlines() if line.strip()}
+    out: set[str] = set()
+    for value in data.values() if isinstance(data, dict) else [data]:
+        if isinstance(value, list):
+            out.update(str(v) for v in value)
+    return out
+
+
+def _legal_id(module_path: str) -> str:
+    stem = module_path[: -len(".yaml")] if module_path.endswith(".yaml") else module_path
+    juris, _, rest = stem.partition("/")
+    return f"{juris}:{rest}"
+
+
+def plan(
+    rows: list[IssueInputs], corpus: set[str] | None = None, blocked_modules: set[str] | None = None
+) -> list[Batch]:
     """Group issues by the source document of their first citation."""
+    from .finder.draft import module_path_for
+
     groups: dict[tuple[str, str], list[IssueInputs]] = {}
     for r in rows:
         if not r.targets:
             continue
         if corpus is not None and not all(in_pin(c, corpus) for c in r.targets):
             r.blocked.append("not in the pinned corpus release")
+        if blocked_modules:
+            target_modules = {module_path_for(c) for c in r.targets}
+            finding = r.review_finding or ""
+            imports = {m for m in blocked_modules if m in finding or _legal_id(m) in finding}
+            if target_modules & blocked_modules or imports:
+                r.blocked.append("targets or imports a module the encoder owner has blocked")
         groups.setdefault((r.repo, document_of(r.targets[0])), []).append(r)
     batches = [Batch(doc, repo, issues) for (repo, doc), issues in groups.items()]
     batches.sort(key=lambda b: (not b.ready, -len(b.issues), -sum(len(i.pe_prs) for i in b.issues), b.document))
@@ -170,6 +211,11 @@ def load_saved(path: str, repo: str) -> list[tuple[dict, list[dict]]]:
         i.setdefault("html_url", f"https://github.com/{repo}/issues/{i['number']}")
         out.append((i, i.get("comments") if isinstance(i.get("comments"), list) else []))
     return out
+
+
+def runs_needed(batch: Batch) -> int:
+    """Signed runs, and so signing approvals, a document needs: 16 citations a run."""
+    return max(1, -(-len(batch.citations) // MAX_BUNDLE_CITATIONS))
 
 
 def to_json(batches: list[Batch], weekly_runs: int) -> dict[str, Any]:
@@ -191,6 +237,8 @@ def to_json(batches: list[Batch], weekly_runs: int) -> dict[str, Any]:
             "documents": len(batches),
             "ready_documents": len(ready),
             "ready_issues": sum(len(b.issues) for b in ready),
+            "ready_citations": sum(len(b.citations) for b in ready),
+            "ready_runs": sum(runs_needed(b) for b in ready),
             "blocked_issues": sum(1 for b in batches for i in b.issues if i.blocked),
             "not_ready_issues": sum(1 for b in batches for i in b.issues if not i.ready),
         },
@@ -200,17 +248,20 @@ def to_json(batches: list[Batch], weekly_runs: int) -> dict[str, Any]:
 def markdown(batches: list[Batch], weekly_runs: int) -> str:
     s = to_json(batches, weekly_runs)["summary"]
     m = MEASURED
+    units = weekly_runs * MAX_BUNDLE_CITATIONS
     out = [
         "## pe-parity drain plan",
         "",
-        f"{s['documents']} source documents. {s['ready_documents']} are ready to encode ({s['ready_issues']} issues). "
-        f"{s['blocked_issues']} issues record a blocker, and {s['not_ready_issues']} fail the dispatch-ready lint.",
+        f"{s['documents']} source documents. {s['ready_documents']} are ready to encode: {s['ready_issues']} issues, "
+        f"{s['ready_citations']} citations, {s['ready_runs']} signed runs at up to {MAX_BUNDLE_CITATIONS} citations a "
+        f"run. {s['blocked_issues']} issues are blocked, and {s['not_ready_issues']} fail the dispatch-ready lint.",
         "",
-        f"Cost basis, measured over {m['window']}: {m['runs']} signed runs, {m['successes']} succeeded, "
-        f"${m['spend_usd']:.2f} model spend. That is ${m['mean_run_usd']:.3f} per run on average, "
-        f"${m['p90_run_usd']:.3f} at p90 and ${m['max_run_usd']:.3f} at most. A week of {weekly_runs} runs costs "
-        f"about ${weekly_runs * m['mean_run_usd']:.2f} (mean), ${weekly_runs * m['p90_run_usd']:.2f} (p90) "
-        f"and at most ${weekly_runs * m['max_run_usd']:.2f}.",
+        f"Cost basis, measured over {m['window']}: {m['runs']} signed runs of one citation each, {m['successes']} "
+        f"succeeded, ${m['spend_usd']:.2f} model spend. That is ${m['mean_run_usd']:.3f} a citation on average, "
+        f"${m['p90_run_usd']:.3f} at p90 and ${m['max_run_usd']:.3f} at most. A week of {weekly_runs} signing "
+        f"approvals covers up to {units} citations: about ${units * m['mean_run_usd']:.2f} at the mean, "
+        f"${units * m['p90_run_usd']:.2f} at p90 and at most ${units * m['max_run_usd']:.2f}. Bundled runs have not "
+        "been measured yet.",
         "",
         "| # | Document | Repo | Issues | Citations | Ready | Blockers or missing |",
         "|---|---|---|---|---|---|---|",
