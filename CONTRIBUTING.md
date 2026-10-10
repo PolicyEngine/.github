@@ -63,20 +63,42 @@ Fragment `<type>` drives the [SemVer](http://semver.org/) bump:
 PolicyEngine rules are also encoded as Axiom RuleSpec, in `TheAxiomFoundation/rulespec-<country>` (for example [rulespec-us](https://github.com/TheAxiomFoundation/rulespec-us) and [rulespec-uk](https://github.com/TheAxiomFoundation/rulespec-uk)). Some country-model PRs change policy: a new program, a parameter or threshold update, an eligibility rule, a bug fix. Those PRs must also leave the same provision correct in the matching rulespec repo. Say how in one line of the PR description:
 
 ```text
-axiom: <legal id> encoded-correct   # an existing Axiom module already handles the case; cite the companion test that shows it
-axiom: <rulespec PR> encoded        # the provision was encoded or repaired alongside this PR
-axiom: <rulespec issue> queued      # the signed encoder is blocked; a dispatch-ready encoding issue, labelled pe-parity
-axiom: n/a: <reason>                # infrastructure, data, UI, microsimulation-only or emulator-mapping changes
+axiom: <legal id> encoded-correct (<companion test>)   # an existing Axiom module already handles the case
+axiom: <rulespec PR> encoded                           # the provision was encoded or repaired alongside this PR
+axiom: <rulespec issue> queued                         # the signed encoder is blocked; a dispatch-ready pe-parity issue
+axiom: n/a: <category>: <reason>                       # the change touches no provision of law
 ```
+
+A PR that touches several provisions can make several claims, separated by `;` or on separate `axiom:` lines. For example:
+
+```text
+axiom: uk:statutes/ukpga/2004/12/190 encoded-correct (`190.test.yaml::earnings_above_basic_amount`); TheAxiomFoundation/rulespec-uk#367 queued
+```
+
+The n/a categories are:
+
+- `infra`: CI, build, caching or simulation plumbing;
+- `data`: datasets, calibration or uprating of survey data;
+- `ui`;
+- `microsim-only`: model structure, inputs, aggregates or behavioural responses;
+- `emulator-mapping`;
+- `docs-tests`;
+- `metadata`: labels, references or units;
+- `not-law`: contributed reforms, proposals, or announcements not yet legislated.
+
+"Axiom doesn't encode this yet" is not an n/a reason. That is what `queued` is for.
 
 Use `queued` only when the signed encoder is blocked; record the blocker in the issue. Each billed encoder run requires separate approval. A `queued` issue must be ready for the encoder to run without further research:
 
-- the module path and corpus citation;
+- the module path and corpus citation (a citation path such as `us/statute/26/32/d`, not a corpus release file);
 - the operative law, quoted verbatim;
 - the required outputs;
+- a `review_finding` that can be pasted into the encoder's input as is;
 - companion tests whose expected values come from the same external source as the PolicyEngine tests (statute, official form or worksheet, official calculator).
 
-[rulespec-us#1416](https://github.com/TheAxiomFoundation/rulespec-us/issues/1416) is an example. RuleSpec modules come from the signed encoder and are never written by hand. If you are an external contributor and can't do this, write `axiom: needed` and a maintainer will follow up.
+Put each element under its own heading: `## Law (verbatim)`, `## Required outputs`, `## review_finding (paste as-is)` and `## Companion tests`. [rulespec-us#1416](https://github.com/TheAxiomFoundation/rulespec-us/issues/1416) is an example. RuleSpec modules come from the signed encoder and are never written by hand. If you are an external contributor and can't do this, write `axiom: needed` and a maintainer will follow up.
+
+The [Axiom parity workflow](.github/workflows/axiom-parity.yml) checks the line on every PR that changes parameters, variables or reforms. It confirms that each cited issue, PR, module and companion test exists and that queued issues are dispatch-ready. It also comments with suggested lines, found by mapping the changed files' `reference` URLs to Axiom modules and open issues, and drafts a dispatch-ready issue when nothing covers a provision. Run it locally with `uvx --from "git+https://github.com/PolicyEngine/.github#subdirectory=axiom-parity" axiom-parity find --help`.
 
 ## Peer review
 

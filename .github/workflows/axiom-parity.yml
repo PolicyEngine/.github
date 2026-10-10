@@ -1,0 +1,118 @@
+# Reusable check: does a policy PR carry a well-formed, verifiable `axiom:` line?
+#
+# Call it from a country-model repo:
+#
+#   on:
+#     pull_request:
+#       types: [opened, edited, synchronize, reopened, ready_for_review]
+#   jobs:
+#     axiom-parity:
+#       uses: PolicyEngine/.github/.github/workflows/axiom-parity.yml@main
+#       with:
+#         mode: warn        # warn-only rollout; switch to enforce later
+#       permissions:
+#         contents: read
+#         pull-requests: write   # for the finder comment; read-only on fork PRs
+#
+# What it does is documented in CONTRIBUTING.md ("Mirror policy changes in
+# Axiom") and axiom-parity/README.md.
+
+name: Axiom parity
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "warn (never fails the job) or enforce (fails on a missing or unverifiable axiom line)"
+        type: string
+        default: warn
+      package:
+        description: "Policy package directory; default is the repo name with - replaced by _"
+        type: string
+        default: ""
+      rulespec:
+        description: "Default rulespec repo; default TheAxiomFoundation/rulespec-<country>"
+        type: string
+        default: ""
+      comment:
+        description: "Keep a finder comment on the PR with suggested axiom lines"
+        type: boolean
+        default: true
+      tooling-ref:
+        description: "Ref of PolicyEngine/.github whose axiom-parity package runs"
+        type: string
+        default: main
+
+jobs:
+  axiom-parity:
+    name: Axiom parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+    steps:
+      # The PR and the tool go in separate directories, so nothing in the PR
+      # can stand in for the tool's code.
+      - name: Check out the PR merge commit
+        uses: actions/checkout@v6
+        with:
+          path: pr
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Check out the axiom-parity tool
+        uses: actions/checkout@v6
+        with:
+          repository: PolicyEngine/.github
+          ref: ${{ inputs.tooling-ref }}
+          path: tool
+          sparse-checkout: axiom-parity
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+
+      - name: Check the axiom line
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          MODE: ${{ inputs.mode }}
+          PACKAGE: ${{ inputs.package }}
+          RULESPEC: ${{ inputs.rulespec }}
+        run: |
+          set +e
+          args=(--repo "$REPO" --pr "$PR" --local-repo pr --base HEAD^1 --head HEAD
+                --mode "$MODE" --summary "$GITHUB_STEP_SUMMARY" --json "$RUNNER_TEMP/axiom-parity.json" --annotations)
+          [ -n "$PACKAGE" ] && args+=(--package "$PACKAGE")
+          [ -n "$RULESPEC" ] && args+=(--rulespec "$RULESPEC")
+          uv run --quiet --project tool/axiom-parity axiom-parity check "${args[@]}"
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Suggest axiom lines
+        if: always() && steps.check.outcome == 'success'
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          TITLE: ${{ github.event.pull_request.title }}
+          PACKAGE: ${{ inputs.package }}
+          COMMENT: ${{ inputs.comment && github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          args=(--repo "$REPO" --pr "$PR" --title "$TITLE" --local-repo pr --base HEAD^1 --head HEAD
+                --check-json "$RUNNER_TEMP/axiom-parity.json" --summary "$GITHUB_STEP_SUMMARY")
+          [ -n "$PACKAGE" ] && args+=(--package "$PACKAGE")
+          [ "$COMMENT" = "true" ] && args+=(--comment)
+          uv run --quiet --project tool/axiom-parity axiom-parity find "${args[@]}"
+
+      - name: Verdict
+        env:
+          STATUS: ${{ steps.check.outputs.status }}
+        run: |
+          if [ "$STATUS" != "0" ]; then
+            echo "::error title=Axiom parity::the axiom line is missing or does not verify; see the job summary"
+            exit 1
+          fi
