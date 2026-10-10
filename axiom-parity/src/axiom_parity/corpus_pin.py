@@ -11,7 +11,8 @@ check follows the Axiom encoder owner's procedure:
    lists the selected scopes ``(jurisdiction, document_class, version)``;
 3. read each scope's ``data/corpus/provisions/<jur>/<class>/<version>.jsonl``
    at that ref. A citation is in the pin only if a selected scope carries
-   its row with an operative body; bodyless container rows don't count.
+   its row with an operative body; bodyless container rows and rows marked
+   repealed don't count.
 
 Everything is read from local clones with ``git``, never the GitHub API.
 """
@@ -64,6 +65,14 @@ def read_pin(
         found = None
     if found:
         return Pin(release, found)
+    # rulespec-uk pins the corpus commit in its checks workflow instead.
+    try:
+        wf = _show(rulespec, ref, ".github/workflows/repository-checks.yml")
+        m = re.search(r"^\s*axiom-corpus-ref:\s*([0-9a-f]{40})\s*$", wf, re.MULTILINE)
+    except FileNotFoundError:
+        m = None
+    if m:
+        return Pin(release, m.group(1), "repository-checks.yml")
     if corpus is None:
         raise ValueError(f"{rulespec}: no axiom_corpus_ref pin; pass --corpus-ref")
     res = subprocess.run(
@@ -132,6 +141,10 @@ def _take(line: bytes, out: set[str]) -> None:
     except json.JSONDecodeError:
         return
     body = row.get("body")
+    meta = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+    # The encoder refuses a repealed source (corpus_resolver: "Active corpus source ... is repealed").
+    if meta.get("status") == "repealed":
+        return
     if row.get("citation_path") and isinstance(body, str) and body.strip():
         out.add(row["citation_path"])
 

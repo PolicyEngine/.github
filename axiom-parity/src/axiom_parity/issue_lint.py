@@ -70,7 +70,8 @@ _INLINE = {
     "verbatim_law": re.compile(r"verbatim", re.IGNORECASE),
     "review_finding": re.compile(r"review_finding|review finding", re.IGNORECASE),
     "required_outputs": re.compile(
-        r"required outputs?|outputs? required|must (?:output|produce|expose)", re.IGNORECASE
+        r"required (?:[\w-]+ ){0,2}outputs?\b|outputs? (?:required|needed)\b|must (?:output|produce|expose)\b",
+        re.IGNORECASE,
     ),
     "companion_tests": re.compile(r"companion (?:tests?|cases?)", re.IGNORECASE),
 }
@@ -122,6 +123,17 @@ def _sections(text: str, source: str, labels: bool = True) -> list[Section]:
 _INLINE_QUOTE = re.compile(r"[“\"]([^”\"]{12,600}?)[”\"]")
 
 
+# An unfinished element: the finder's drafts mark what a person must fill in.
+_TODO = re.compile(r"\bTODO\b|\bTBD\b|\bFIXME\b")
+# A companion case states what it expects: a number, a judgment or a comparison.
+_EXPECTATION = re.compile(r"\d|\bholds\b|\bnot_holds\b|expect|→|=>|=|\btrue\b|\bfalse\b|eligible|\bzero\b", re.I)
+
+
+def _finished(lines: list[str]) -> list[str]:
+    """Drop TODO lines, which carry no content."""
+    return [line for line in lines if not _TODO.search(line)]
+
+
 def _quoted_chars(lines: list[str]) -> int:
     """Characters of quoted material: blockquotes, fenced blocks and “inline quotes”."""
     n, fenced, plain = 0, False, []
@@ -150,6 +162,10 @@ def _items(lines: list[str]) -> int:
 
 
 def _has_content(element: str, lines: list[str]) -> bool:
+    if any(_TODO.search(line) for line in lines):
+        return False  # an unfinished element is missing, however long the rest is
+    if element == "companion_tests" and not any(_EXPECTATION.search(line) for line in lines):
+        return False  # cases without expected values are not companion tests
     if element == "verbatim_law":
         return _quoted_chars(lines) >= 60 or _content_chars(lines) >= 300
     if element == "review_finding":
@@ -161,6 +177,36 @@ def _has_content(element: str, lines: list[str]) -> bool:
     return False
 
 
+def _introduces_content(element: str, line: str, following: list[str]) -> bool:
+    """Does an inline cue introduce the element, on its own line or just below?
+
+    "Required outputs: `a`, `b`" and "Companion cases:" followed by a list do.
+    A back-reference in running prose ("state each required output below")
+    doesn't.
+    """
+    if _TODO.search(line):
+        return False
+    m = _INLINE[element].search(line)
+    rest = line[m.end() :]
+    if re.match(r"\s*(?:below|above|listed|in the)\b", rest, re.I):
+        return False
+    block = [rest.lstrip(" \t:,;—–-(*`_")]
+    for nxt in following:
+        if _HEADING.match(nxt):
+            break
+        if not nxt.strip():
+            if any(b.strip() for b in block[1:]):
+                break
+            continue
+        block.append(nxt)
+    if any(_TODO.search(b) for b in block):
+        return False
+    text = " ".join(b.strip() for b in block).strip()
+    if element == "companion_tests":
+        return len(text) >= 40 and bool(_EXPECTATION.search(text))
+    return len(text) >= 20
+
+
 def _snippet(text: str, n: int = 90) -> str:
     text = " ".join(text.split())
     return text if len(text) <= n else text[: n - 1] + "…"
@@ -170,10 +216,13 @@ _YAML_KEY = re.compile(r"^(?P<indent>\s*)-?\s*review_finding:\s*(?P<style>[|>][-
 
 
 def review_finding_text(markdown: str) -> str | None:
-    """The pasteable review_finding: the quote or code block under its heading or cue.
+    """The pasteable review_finding, or None.
 
-    Also reads the YAML form dispatch snippets use (``review_finding: |-`` and
-    an indented block).
+    Found as, in order of preference: a quote or code block after a heading,
+    bold label or inline cue that names ``review_finding``; plain paragraphs
+    under such a heading or label; or the YAML form dispatch snippets use
+    (``review_finding: |-`` and an indented block). A finding with a TODO in it
+    is unfinished and doesn't count.
     """
     lines = markdown.splitlines()
     for i, line in enumerate(lines):
@@ -189,15 +238,19 @@ def review_finding_text(markdown: str) -> str | None:
                 text = " ".join(t for t in block if t).strip()
             else:
                 text = y.group("inline").strip().strip("'\"")
-            if len(text) >= 80:
+            if len(text) >= 80 and not _TODO.search(text):
                 return text
             continue
         if not re.search(r"review[_\s-]?finding", line, re.I):
             continue
         heading = _HEADING.match(line)
+        label = _LABEL.match(line) if not heading else None
         if heading and not re.search(r"review[_\s-]?finding", heading.group("title"), re.I):
             continue
-        quoted, fenced = [], False
+        titled = bool(heading) or bool(label and re.search(r"review[_\s-]?finding", label.group("title"), re.I))
+        quoted, plain, fenced = [], [], False
+        if label and titled and label.group("after").strip():
+            plain.append(label.group("after").strip())
         for nxt in lines[i + 1 : i + 80]:
             if re.match(r"^\s*(```|~~~)", nxt):
                 if fenced:
@@ -210,13 +263,21 @@ def review_finding_text(markdown: str) -> str | None:
             q = _QUOTE.match(nxt)
             if q:
                 quoted.append(q.group(1))
-            elif quoted and not nxt.strip():
-                quoted.append("")
-            elif quoted or _HEADING.match(nxt):
+                continue
+            if _HEADING.match(nxt):
                 break
-        text = "\n".join(quoted).strip()
-        if len(text) >= 80:
-            return text
+            if quoted:
+                if nxt.strip():
+                    break
+                quoted.append("")
+                continue
+            if titled and nxt.strip() and not _LABEL.match(nxt):
+                plain.append(nxt.strip())
+            elif titled and plain and not nxt.strip() and len(" ".join(plain)) >= 120:
+                break
+        for candidate, minimum in (("\n".join(quoted).strip(), 80), (" ".join(plain).strip(), 120)):
+            if len(candidate) >= minimum and not _TODO.search(candidate):
+                return candidate
     return None
 
 
@@ -238,7 +299,15 @@ def lint_texts(texts: list[tuple[str, str]]) -> LintResult:
             result.found["corpus_citation"] = m.group(0)
             break
 
-    for element in ("verbatim_law", "review_finding", "required_outputs", "companion_tests"):
+    # The review_finding element is whatever the drain could paste: one extractor
+    # decides both, so a lint-ready issue always has dispatch input.
+    for source, text in texts:
+        finding = review_finding_text(text or "")
+        if finding:
+            result.found["review_finding"] = f"{source}: “{_snippet(finding, 70)}”"
+            break
+
+    for element in ("verbatim_law", "required_outputs", "companion_tests"):
         title_re = _TITLES[element]
         for sec in sections:
             if not sec.title or not title_re.search(sec.title):
@@ -264,19 +333,14 @@ def lint_texts(texts: list[tuple[str, str]]) -> LintResult:
                 if element == "verbatim_law" and re.search(r"proof|review_finding", line, re.I):
                     continue
                 window = [line, *lines[i + 1 : i + 16]]
-                ok = _quoted_chars(window) >= 60 if element == "verbatim_law" else _has_content(element, window)
+                if element == "verbatim_law":
+                    ok = _quoted_chars(_finished(window)) >= 60 and not any(_TODO.search(w) for w in window)
+                else:
+                    ok = _introduces_content(element, line, lines[i + 1 : i + 16])
                 if ok:
                     result.found[element] = f"{sec.source}: “{_snippet(line)}”"
                     break
             if element in result.found:
-                break
-
-    if "review_finding" not in result.found:
-        # The same extractor the drain uses to paste the finding: anything it
-        # can paste counts here too.
-        for source, text in texts:
-            if review_finding_text(text or ""):
-                result.found["review_finding"] = f"{source}: pasteable review_finding"
                 break
 
     result.missing = [e for e in ELEMENTS if e not in result.found]

@@ -76,8 +76,25 @@ def test_urls_with_no_corpus_source(url):
 
 
 def test_state_hint():
-    c = map_url("https://www.nysenate.gov/legislation/laws/TAX/606")
-    assert c == StateHint("us-ny", "606", "nysenate.gov")
+    c = map_url("https://www.azleg.gov/ars/43/01072.htm")
+    assert c == StateHint("us-az", "01072", "azleg.gov")
+
+
+def test_state_sites_with_exact_rules():
+    assert map_url("https://www.nysenate.gov/legislation/laws/TAX/606").path == "us-ny/statute/TAX/606"
+    assert (
+        map_url("https://law.lis.virginia.gov/vacode/title58.1/chapter3/section58.1-320/").path
+        == "us-va/statute/58.1/58.1-320"
+    )
+    assert (
+        map_url("https://www.ilga.gov/legislation/ilcs/fulltext.asp?DocName=003500050K201").path
+        == "us-il/statute/35/5/201"
+    )
+    assert map_url("https://www.irs.gov/pub/irs-drop/rp-25-32.pdf").path == "us/guidance/irs/rev-proc-2025-32"
+    assert map_url("https://www.legislation.gov.uk/id/ukpga/2007/3/section/10").path == "uk/statute/ukpga/2007/3/10"
+    assert map_url("https://www.legislation.gov.uk/ukpga/2004/12/section/190/2").path == "uk/statute/ukpga/2004/12/190"
+    assert map_url("https://www.legislation.gov.uk/ukpga/2007/3/part/3/chapter/3A") is None
+    assert map_url("https://www.legislation.gov.uk/uksi/2025/162/pdfs/uksiem_20250162_en_001.pdf") is None
 
 
 @given(st.integers(1, 54), st.from_regex(r"[1-9][0-9]{0,4}[a-z]?", fullmatch=True))
@@ -225,7 +242,7 @@ def test_sibling_citation_extends_the_documents_open_issue(rs_tree):
     refs = parameter_references(
         "policyengine_uk/parameters/gov/x.yaml",
         "metadata:\n  reference:\n    - href: https://www.legislation.gov.uk/ukpga/2004/12/section/227\n"
-        "    - href: https://www.legislation.gov.uk/ukpga/2004/12/section/228A/2\n",
+        "    - href: https://www.legislation.gov.uk/ukpga/2004/12/section/228A\n",
         "policyengine_uk",
     )
     issue = {"number": 444, "title": "AA", "html_url": "u", "body": "Encode uk/statute/ukpga/2004/12/227."}
@@ -234,8 +251,8 @@ def test_sibling_citation_extends_the_documents_open_issue(rs_tree):
     )
     by = {p.citation: p for p in proposals}
     assert by["uk/statute/ukpga/2004/12/227"].line == "TheAxiomFoundation/rulespec-uk#444 queued"
-    assert by["uk/statute/ukpga/2004/12/228A/2"].line == (
-        "TheAxiomFoundation/rulespec-uk#444 queued (extend it to cover uk/statute/ukpga/2004/12/228A/2)"
+    assert by["uk/statute/ukpga/2004/12/228A"].line == (
+        "TheAxiomFoundation/rulespec-uk#444 queued (extend it to cover uk/statute/ukpga/2004/12/228A)"
     )
     from axiom_parity.finder.propose import group_by_document
 
@@ -247,3 +264,110 @@ def test_issue_mentioning_a_parent_citation_matches():
 
     assert _ancestors("us/regulation/20/416/1202/a") == ["us/regulation/20/416/1202/a", "us/regulation/20/416/1202"]
     assert _ancestors("us/statute/26/32") == ["us/statute/26/32"]
+
+
+def test_dated_value_references_are_read():
+    text = (
+        "values:\n  2025-01-01:\n    value: 10\n    metadata:\n      reference:\n"
+        "        href: https://www.law.cornell.edu/uscode/text/26/32\n"
+        "  2026-01-01:\n    value: 11\n    reference:\n      - href: https://www.law.cornell.edu/uscode/text/26/24\n"
+    )
+    refs = parameter_references("policyengine_us/parameters/gov/x.yaml", text, "policyengine_us")
+    assert [r.url for r in refs] == [
+        "https://www.law.cornell.edu/uscode/text/26/32",
+        "https://www.law.cornell.edu/uscode/text/26/24",
+    ]
+
+
+def test_dash_variants_match(tmp_path):
+    root = tmp_path / "rulespec-us"
+    (root / "us/statutes/42").mkdir(parents=True)
+    (root / "us/statutes/42/1437c\u20131.yaml").write_text(
+        "module:\n  source_verification:\n    corpus_citation_path: us/statute/42/1437c\u20131\nrules:\n  - name: r\n"
+    )
+    idx = Index.build("TheAxiomFoundation/rulespec-us", root, ["us"])
+    for url in (
+        "https://www.law.cornell.edu/uscode/text/42/1437c-1",
+        "https://www.law.cornell.edu/uscode/text/42/1437c%E2%80%931",
+    ):
+        c = map_url(url)
+        assert c.path == "us/statute/42/1437c-1"
+        assert idx.match(c.path)[0].module.path.endswith("1437c\u20131.yaml")
+
+
+def test_finder_never_overwrites_a_person_s_comment():
+    from axiom_parity.finder.cli import MARKER, upsert_comment
+
+    class Hub:
+        def __init__(self, comments):
+            self.comments, self.sent = comments, []
+
+        def issue_comments(self, repo, pr):
+            return self.comments
+
+        def send_json(self, method, path, data):
+            self.sent.append((method, path))
+
+    human = Hub([{"id": 123, "body": MARKER + " quoting the bot", "user": {"login": "human-reviewer", "type": "User"}}])
+    upsert_comment(human, "o/r", 1, MARKER + "\nnew", {"would_fail_enforced": True})
+    assert human.sent == [("POST", "/repos/o/r/issues/1/comments")]
+    bot = Hub([{"id": 9, "body": MARKER + " old", "user": {"login": "github-actions[bot]", "type": "Bot"}}])
+    upsert_comment(bot, "o/r", 1, MARKER + "\nnew", {"would_fail_enforced": True})
+    assert bot.sent == [("PATCH", "/repos/o/r/issues/comments/9")]
+
+
+def test_open_issues_come_with_their_comments(monkeypatch):
+    from axiom_parity.finder.cli import _open_issues
+    from axiom_parity.github import GitHub
+
+    gh = GitHub(token="t", transport=lambda url, headers: (404, {}, b""))
+    issue = {"number": 108, "title": "t", "body": "see comment", "html_url": "u", "created_at": "", "comments": 1}
+    monkeypatch.setattr(
+        gh,
+        "open_issues_with_comments",
+        lambda repo, label: [(issue, [{"id": 1, "body": "uk/statute/ukpga/2004/12/227"}])],
+    )
+    ((got, comments),) = _open_issues(gh, "TheAxiomFoundation/rulespec-uk")
+    assert got["number"] == 108 and comments[0]["body"].startswith("uk/statute")
+
+
+def _url_vectors():
+    import json
+    from pathlib import Path
+
+    data = json.loads((Path(__file__).parent / "fixtures" / "url_vectors.json").read_text())
+    return data if isinstance(data, list) else data["vectors"]
+
+
+# Corpus quirks no rule reproduces: a date read as a schedule number, and a page filed under another slug.
+_KNOWN_QUIRKS = {
+    "https://www.legislation.gov.uk/wsi/2018/128/schedule/2026-06-30",
+    "https://www.gov.uk/new-state-pension/your-national-insurance-record-and-your-state-pension",
+    "https://www.gov.uk/tax-free-childcare?step-by-step-nav=d78aeaf6-1747-4d72-9619-f16efb4dd89d",
+}
+
+
+def test_differential_url_mapper_agrees_with_corpus_verified_vectors():
+    """The mapper never contradicts a URL→citation pair verified against the corpus.
+
+    The vectors come from an independent pass over axiom-corpus (427 pairs, 248
+    of them verified rows). For each, the mapper must return the expected path,
+    a path below it (a subsection of the verified row), or nothing. It must
+    return nothing where the vector says the URL names no corpus source.
+    """
+    counts = {"match": 0, "deeper": 0, "none": 0}
+    for v in _url_vectors():
+        if v["url"] in _KNOWN_QUIRKS:
+            continue
+        got = map_url(v["url"])
+        path = got.path if isinstance(got, Citation) else None
+        want = v.get("expected_citation_path")
+        if want is None:
+            assert path is None, (v["url"], path)
+        elif path is None:
+            counts["none"] += 1
+        else:
+            assert path == want or path.startswith(want + "/"), (v["url"], want, path)
+            counts["match" if path == want else "deeper"] += 1
+    # A floor, so a refactor that silently stops mapping a family fails here.
+    assert counts["match"] >= 125 and counts["match"] + counts["deeper"] >= 135, counts

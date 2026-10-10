@@ -99,3 +99,50 @@ def test_property_lint_total(text):
 def test_found_evidence_points_at_text():
     res = lint_issue({"body": READY_ISSUE_BODY})
     assert re.search(r"us/statute/26/32/d", res.found["corpus_citation"])
+
+
+def test_unfinished_elements_do_not_count():
+    body = build(["module_and_corpus", "verbatim_law", "review_finding"]) + (
+        "\n## Required outputs\n\n1. TODO\n\n## Companion tests\n\n- TODO: companion cases with expected values.\n"
+    )
+    assert set(lint_issue({"body": body}).missing) == {"required_outputs", "companion_tests"}
+
+
+def test_companion_tests_need_expected_values():
+    body = build(["module_and_corpus", "verbatim_law", "required_outputs", "review_finding"]) + (
+        "\n## Companion tests\n\n- a separated spouse with a qualifying child\n- a joint filer\n"
+    )
+    assert lint_issue({"body": body}).missing == ["companion_tests"]
+
+
+def test_prose_back_reference_is_not_the_element():
+    body = build(["module_and_corpus", "verbatim_law", "companion_tests"]) + (
+        "\n## review_finding\n\n> Encode 26 USC 32(d). The module must state each required output below from the "
+        "provision's own terms, each with a proof excerpt, and pass the companion cases below.\n"
+    )
+    assert lint_issue({"body": body}).missing == ["required_outputs"]
+
+
+def test_natural_output_wording_counts():
+    body = build(["module_and_corpus", "verbatim_law", "companion_tests"]) + (
+        "\n## review_finding\n\n> Encode 26 USC 32(d). Required statutory outputs are `separated_spouse_not_married` "
+        "and `joint_return_required`, each with a verbatim excerpt.\n"
+    )
+    assert lint_issue({"body": body}).ready
+
+
+@given(st.integers(1, 12), st.booleans())
+@settings(max_examples=24, deadline=None)
+def test_property_a_finder_draft_is_never_ready(n, with_tests):
+    """Draft → lint: whatever the finder drafts without law text needs a person before it is dispatch-ready."""
+    from axiom_parity.finder.draft import draft_issue
+    from axiom_parity.finder.propose import Proposal, TestCase
+    from axiom_parity.finder.references import Reference
+
+    ref = Reference("f.yaml", "gov.x.rate", "parameter", "https://www.law.cornell.edu/uscode/text/26/32")
+    group = [Proposal(f"us/statute/26/32/{chr(100 + i)}", True, [ref] if i % 2 else []) for i in range(n)]
+    cases = [TestCase("t.yaml", "case_a", 2026, {"income": 1}, {"credit": 2})] if with_tests else []
+    body = draft_issue(group, "PolicyEngine/policyengine-us", 1, "Policy change", cases, "main", fetch=False)
+    res = lint_issue({"body": body})
+    assert "TODO" in body and not res.ready
+    assert "verbatim_law" in res.missing

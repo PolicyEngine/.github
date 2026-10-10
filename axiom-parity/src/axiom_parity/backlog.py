@@ -12,14 +12,8 @@ from .issue_lint import ELEMENTS, lint_issue
 def backlog_report(gh: GitHub, repos: list[str], label: str = "pe-parity") -> dict[str, Any]:
     out: dict[str, Any] = {"label": label, "repos": {}}
     for repo in repos:
-        issues = [
-            i
-            for i in gh.paginate(f"/repos/{repo}/issues", {"labels": label, "state": "open"})
-            if "pull_request" not in i
-        ]
         rows = []
-        for issue in issues:
-            comments = gh.issue_comments(repo, issue["number"]) if issue.get("comments") else []
+        for issue, comments in gh.open_issues_with_comments(repo, label):
             res = lint_issue(issue, comments)
             rows.append(
                 {

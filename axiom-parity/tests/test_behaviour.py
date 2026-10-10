@@ -126,3 +126,41 @@ def test_only_the_value_of_a_dated_entry_counts():
     after = "values:\n  2024-08-01:\n    value: 20_600\n    metadata:\n      reference:\n        - href: a\n"
     assert not changes_behaviour("p/parameters/x.yaml", before, after)
     assert changes_behaviour("p/parameters/x.yaml", before, before.replace("20_600", "20_700"))
+
+
+def test_a_formula_local_named_label_is_code_not_metadata():
+    def source(value):
+        return f"class benefit:\n    def formula(person, period, parameters):\n        label = {value}\n        return label\n"
+
+    assert changes_behaviour("p/variables/gov/x.py", source(0), source(1))
+    # The class attribute of the same name is still descriptive.
+    cls = 'class benefit:\n    label = "{}"\n    def formula(person, period, parameters):\n        return 1\n'
+    assert not changes_behaviour("p/variables/gov/x.py", cls.format("a"), cls.format("b"))
+
+
+@given(st.integers(-100, 100), st.integers(1, 100), st.sampled_from(["label", "documentation", "reference"]))
+def test_property_changed_formula_local_always_counts(n, bump, name):
+    def source(value):
+        return f"class benefit:\n def formula(person, period, parameters):\n  {name} = {value}\n  return {name}\n"
+
+    assert changes_behaviour("p/variables/gov/x.py", source(n), source(n + bump))
+
+
+def test_bracket_thresholds_keyed_by_date():
+    before = "brackets:\n  - threshold:\n      2024-08-01:\n        value: 20_600\n        refrence:\n          - href: a\n    rate:\n      2024-08-01: 0.22\n"
+    after = before.replace(
+        "        refrence:\n          - href: a\n", "        metadata:\n          reference:\n            - href: a\n"
+    )
+    assert not changes_behaviour("p/parameters/x.yaml", before, after)
+    assert changes_behaviour("p/parameters/x.yaml", before, before.replace("0.22", "0.25"))
+    assert changes_behaviour("p/parameters/x.yaml", before, before.replace("20_600", "20_700"))
+
+
+def test_a_bare_reference_dict_in_a_class_body_is_inert():
+    before = (
+        'class v(Variable):\n    value_type = float\n    dict(title="t", href="h")\n    defined_for = StateCode.NY\n'
+    )
+    after = before.replace("    dict(", "    reference = dict(")
+    assert not changes_behaviour("p/variables/x.py", before, after)
+    # A call that could do something still counts.
+    assert changes_behaviour("p/variables/x.py", before, before.replace('dict(title="t", href="h")', "register(v)"))

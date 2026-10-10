@@ -108,8 +108,8 @@ class LegalRef:
 
     @property
     def explicit(self) -> bool:
-        """True when the author wrote the module's own id or file path."""
-        return self.form in ("legal-id", "module-path")
+        """True when the author wrote the module's own id, file path, or a sibling of one (``/22``)."""
+        return self.form in ("legal-id", "module-path", "relative")
 
 
 @dataclass(frozen=True)
@@ -119,6 +119,14 @@ class TestRef:
     raw: str
     path: str | None
     case: str | None
+
+
+_DASHES = str.maketrans({"\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-", "\u2212": "-"})
+
+
+def norm_dashes(text: str) -> str:
+    """Corpus paths sometimes carry an en dash (``42/1437c–1``); URLs and people write a hyphen."""
+    return text.translate(_DASHES)
 
 
 def _strip_trailing(text: str) -> str:

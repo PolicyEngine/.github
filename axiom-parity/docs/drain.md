@@ -7,17 +7,19 @@ The PR check stops new parity debt from slipping through. This document covers t
 | | rulespec-uk | rulespec-us |
 |---|---|---|
 | Open pe-parity issues (ever closed) | 83 (0) | 175 (0) |
-| Pass the dispatch-ready lint | 74 | 80 |
-| Lint-ready, and every target citation is in the pinned corpus release | 24 | 56 |
+| Pass the dispatch-ready lint | 74 | 82 |
+| Lint-ready, and every target citation is in the pinned corpus release | 25 | 54 |
 | Pinned corpus release | `uk-rulespec-2026-09-07` | `us-rulespec-2026-08-08-obbb-alien-snap` |
 
 The main lint failures:
 
-- 85 US issues have no pasteable `review_finding`, including all 58 filed on 2026-10-09 (#1554–#1624);
-- 21 US issues name no target module;
-- 7 UK issues have no required outputs.
+- 85 US issues have no pasteable `review_finding`. 60 of them are among the 71 issues filed on 2026-10-09 (#1554–#1625).
+- 21 US issues name no target module.
+- 8 US and 7 UK issues have no required outputs.
 
-Grouped by source document, the issues that are ready and in the pin make 37 encodable documents (47 issues). Examples are IRC §1 (5 issues), D.C. Code title 47 (3), IRC §62 (3), Ohio R.C. 5747.02 (2) and IRC §1411 (2).
+Grouped by source document, the issues that are ready and in the pin make 36 encodable documents (49 issues). Examples are IRC §1 (5 issues), D.C. Code title 47 (3), SI 2012/2885 (3), IRC §62 (3), Ohio R.C. 5747.02 (2) and IRC §1411 (2).
+
+The lint checks that each element is present and finished. It cannot judge whether the law in an issue is settled: an independent read of 30 issues found 3 that pass the lint while leaving a legal question open (rulespec-uk#357, rulespec-us#1517 and #1358). The encoder owner still reads an issue before dispatching it.
 
 ### The signed encoder today
 
@@ -30,16 +32,20 @@ Model spend is taken from the "Model spend for this run" summary that every `tar
 
 A run with no spend summary stopped before the model step; it counts as $0 in the mean.
 
-Only 2 of those successes have a manifest on rulespec-us `main`:
+Only 2 citations from those runs have a manifest on rulespec-us `main`:
 
 - `us/statute/7/2015/f`, after 28 attempts costing $4.77;
-- `us/regulation/7/273/4`, after 88 attempts costing $38.12.
+- `us/regulation/7/273/4`, after 88 attempts costing $38.12. Its manifest comes from run 36166100091 on 2026-09-25, which promoted an already reviewed candidate without a model call.
 
-rulespec-uk `main` has no encoding manifests. Draft PRs from the signed backfill merged in 14 of 68 cases in rulespec-us and 0 of 35 in rulespec-uk.
+No fresh model encode since 2026-09-25 has landed a manifest on `main`. rulespec-uk `main` has no encoding manifests. Draft PRs from the signed backfill merged in 14 of 68 cases in rulespec-us and 0 of 35 in rulespec-uk.
 
 **Money is not what limits the drain.** These are:
 
-1. **The encoder fails most runs.** The Axiom eng hub is classifying the failures.
+1. **The encoder fails most runs.** The Axiom eng hub classified all 106 failures from 2026-09-24 to 10-10 (`~/reviews/axiom-hub/jobs/encode-throughput/work-a2/REPORT-A3.md`):
+   - Source-completeness refusals explain 49.
+   - Missing or repealed corpus text explains 10.
+   - In 82 of 83 observable runs, escalating from Luna to Sol hit the same gate family. A stronger model does not rescue a gate-blocked citation.
+   - A failed run waited a median of 86 minutes for the protected job to start, against 14 minutes of encoding.
 2. **The encoder pin lags.** The encoder runs at axiom-encode `main`, and rulespec CI requires each manifest's `validation_execution.axiom_encode` to equal the pin. The US pin, in `.axiom/workflow-toolchain.toml`, was 105 commits behind; the UK pin, hardcoded in `repository-checks.yml`, was 1,909 behind.
 3. **Every run waits on a human click.** The `production-signing` environment requires MaxGhenis or PavelMakarchuk as reviewer, including for queue-dispatched runs, and d350 bars agents from approving it.
 4. **Corpus pins.** About half the backlog cites provisions missing from the pinned release. d1176 (approved 2026-10-10) mirrors the W6 release and re-pins rulespec-us, which should clear many of them.
@@ -48,12 +54,14 @@ rulespec-uk `main` has no encoding manifests. Draft PRs from the signed backfill
 ## The drain
 
 1. **Intake.** The PR check rejects a `queued` claim unless its issue exists, carries `pe-parity`, and passes the dispatch-ready lint. New debt therefore arrives ready to dispatch.
-2. **Corpus pin.** `axiom-parity corpus-pin` lists every citation that has an operative body in the release a rulespec clone pins. It follows the encoder owner's procedure:
-   - read the release from `.axiom/toolchain.toml` and the corpus commit from `.axiom/workflow-toolchain.toml`;
+2. **Corpus pin.** `axiom-parity corpus-pin` lists every citation the encoder could read in the release a rulespec clone pins. It follows the encoder owner's procedure:
+   - read the release from `.axiom/toolchain.toml`, and the corpus commit from `.axiom/workflow-toolchain.toml` (rulespec-us) or `repository-checks.yml` (rulespec-uk);
    - read the release manifest's selected scopes;
-   - read those scopes' provision rows from `axiom-corpus` with `git`.
+   - read those scopes' provision rows from `axiom-corpus` with `git`, keeping rows that have an operative body and are not marked repealed (the encoder refuses a repealed source).
    It takes about two seconds and makes no API calls.
-3. **Plan.** `axiom-parity drain-plan --corpus-citations pin.txt` lints every open issue and extracts its target citations and pasteable `review_finding`. It groups the issues by source document (an Act or SI, a US Code section, a CFR part, a state code), so related provisions are encoded together, as the encoder owner asked. It marks a document ready only if every issue passes the lint and every target is in the pin, ranks the documents, and prices the wave.
+3. **Plan.** `axiom-parity drain-plan --corpus-citations pin.txt` lints every open issue and extracts its target citations and pasteable `review_finding`. It groups the issues by source document (an Act or SI, a US Code section, a CFR part, a state code), so related provisions are encoded together, as the encoder owner asked. A document is ready only if every issue passes the lint, has a `review_finding` the tool can paste, and has every target in the pin. The plan ranks the documents and prices the wave.
+
+Steps 1 to 3 are what the tooling does. Steps 4 to 10 are a procedure for the encoder owner; nothing in this package dispatches, approves, links or closes anything. Before dispatch the encoder owner also drops any target whose imports still carry the obsolete `source_verification.values` field, which the taxonomy found breaks the compile. On rulespec-us `main` at `16a6677`, 12 modules have `values` under `module.source_verification`; the encoder owner's own list is the authority.
 4. **Pin-bump gate.** Before each wave, the rulespec repo's encoder pin must equal axiom-encode `main`. If it doesn't, the encoder owner lands a pin bump first. Moving the UK pin into `.axiom/workflow-toolchain.toml`, as US already does, makes that a one-file PR in both repos.
 5. **Pilot.** Encode 5 ready documents, chosen by the encoder owner from the top of the plan once the failure taxonomy's fixes are in. The drain proceeds only if at least 3 of the 5 produce a rulespec PR that:
    - passes the required `validate` gate (generated-guard, proofs, companion tests);

@@ -128,6 +128,59 @@ class GitHub:
         except urllib.error.HTTPError as err:
             raise GitHubError(f"{method} {url} -> {err.code}: {err.read()[:300]!r}") from err
 
+    _ISSUES_QUERY = """
+    query($owner: String!, $name: String!, $label: String!, $cursor: String) {
+      repository(owner: $owner, name: $name) {
+        issues(first: 50, after: $cursor, states: OPEN, labels: [$label],
+               orderBy: {field: CREATED_AT, direction: DESC}) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            number title body url createdAt
+            comments(first: 100) { nodes { databaseId body } }
+          }
+        }
+      }
+    }"""
+
+    def open_issues_with_comments(
+        self, owner_repo: str, label: str
+    ) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
+        """Open issues carrying ``label``, each with its comments, in one query per 50 issues.
+
+        A queued issue's dispatch contract often lives in its comments, so
+        lint and search read them too.
+        """
+        owner, name = owner_repo.split("/", 1)
+        out: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+        cursor = None
+        for _ in range(40):
+            data = self.send_json(
+                "POST",
+                "/graphql",
+                {
+                    "query": self._ISSUES_QUERY,
+                    "variables": {"owner": owner, "name": name, "label": label, "cursor": cursor},
+                },
+            )
+            if data.get("errors"):
+                raise GitHubError(f"GraphQL: {data['errors'][:1]}")
+            page = data["data"]["repository"]["issues"]
+            for node in page["nodes"]:
+                comments = [{"id": c["databaseId"], "body": c["body"]} for c in node["comments"]["nodes"]]
+                issue = {
+                    "number": node["number"],
+                    "title": node["title"],
+                    "body": node["body"],
+                    "html_url": node["url"],
+                    "created_at": node["createdAt"],
+                    "comments": len(comments),
+                }
+                out.append((issue, comments))
+            if not page["pageInfo"]["hasNextPage"]:
+                break
+            cursor = page["pageInfo"]["endCursor"]
+        return out
+
     # Convenience reads -------------------------------------------------
 
     def issue(self, owner_repo: str, number: int) -> dict[str, Any]:

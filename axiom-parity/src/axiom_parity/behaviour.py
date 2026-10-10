@@ -15,6 +15,7 @@ changed. This module checks that claim file by file:
 from __future__ import annotations
 
 import ast
+import re
 from typing import Any
 
 from . import pe_yaml
@@ -33,7 +34,8 @@ def _strip_yaml(node: Any, in_metadata: bool = False) -> Any:
                 continue
             if in_metadata and key in PRESENTATION_METADATA:
                 continue
-            if key == "values" and isinstance(v, dict):
+            if isinstance(v, dict) and (key == "values" or _is_dated(v)):
+                # "values:" or a bracket's threshold/amount/rate keyed by date.
                 out[key] = {str(d): _dated_value(e) for d, e in v.items()}
                 continue
             stripped = _strip_yaml(v, in_metadata or key == "metadata")
@@ -44,6 +46,13 @@ def _strip_yaml(node: Any, in_metadata: bool = False) -> Any:
     if isinstance(node, list):
         return [_strip_yaml(v, in_metadata) for v in node]
     return node
+
+
+_DATE_KEY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _is_dated(node: dict) -> bool:
+    return bool(node) and all(_DATE_KEY.match(str(k)) for k in node)
 
 
 def _dated_value(entry: Any) -> Any:
@@ -59,41 +68,71 @@ def yaml_behaviour(text: str) -> Any:
 
 
 class _StripDescriptive(ast.NodeTransformer):
-    def _strip_body(self, body: list[ast.stmt]) -> list[ast.stmt]:
+    """Remove docstrings everywhere, and descriptive attributes from class bodies only.
+
+    ``label = 0`` inside a formula is an executable local, not metadata, so it
+    is kept.
+    """
+
+    @staticmethod
+    def _is_docstring(i: int, stmt: ast.stmt) -> bool:
+        return (
+            i == 0
+            and isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Constant)
+            and isinstance(stmt.value.value, str)
+        )
+
+    @staticmethod
+    def _is_descriptive(stmt: ast.stmt) -> bool:
+        if isinstance(stmt, ast.Assign):
+            return all(isinstance(t, ast.Name) and t.id in DESCRIPTIVE_ATTRS for t in stmt.targets)
+        if isinstance(stmt, ast.AnnAssign):
+            return isinstance(stmt.target, ast.Name) and stmt.target.id in DESCRIPTIVE_ATTRS
+        return False
+
+    @classmethod
+    def _is_inert(cls, node: ast.AST) -> bool:
+        """A literal, or a ``dict(...)`` of literals: evaluating it does nothing."""
+        if isinstance(node, ast.Constant):
+            return True
+        if isinstance(node, ast.List | ast.Tuple | ast.Set):
+            return all(cls._is_inert(e) for e in node.elts)
+        if isinstance(node, ast.Dict):
+            return all(
+                k is not None and cls._is_inert(k) and cls._is_inert(v)
+                for k, v in zip(node.keys, node.values, strict=True)
+            )
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "dict" and not node.args:
+            return all(kw.arg and cls._is_inert(kw.value) for kw in node.keywords)
+        return False
+
+    def _strip(self, body: list[ast.stmt], class_body: bool) -> list[ast.stmt]:
         out = []
         for i, stmt in enumerate(body):
-            if (
-                i == 0
-                and isinstance(stmt, ast.Expr)
-                and isinstance(stmt.value, ast.Constant)
-                and isinstance(stmt.value.value, str)
-            ):
-                continue  # docstring
-            if isinstance(stmt, ast.Assign) and all(
-                isinstance(t, ast.Name) and t.id in DESCRIPTIVE_ATTRS for t in stmt.targets
-            ):
+            if self._is_docstring(i, stmt):
                 continue
-            if (
-                isinstance(stmt, ast.AnnAssign)
-                and isinstance(stmt.target, ast.Name)
-                and stmt.target.id in DESCRIPTIVE_ATTRS
-            ):
+            if class_body and self._is_descriptive(stmt):
+                continue
+            # A bare ``dict(title=..., href=...)`` in a class body (a reference
+            # missing its ``reference =``) computes nothing.
+            if class_body and isinstance(stmt, ast.Expr) and self._is_inert(stmt.value):
                 continue
             out.append(stmt)
         return out or [ast.Pass()]
 
     def visit_Module(self, node: ast.Module) -> ast.AST:
-        node.body = self._strip_body(node.body)
+        node.body = self._strip(node.body, class_body=False)
         self.generic_visit(node)
         return node
 
     def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
-        node.body = self._strip_body(node.body)
+        node.body = self._strip(node.body, class_body=True)
         self.generic_visit(node)
         return node
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
-        node.body = self._strip_body(node.body)
+        node.body = self._strip(node.body, class_body=False)
         self.generic_visit(node)
         return node
 

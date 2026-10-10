@@ -76,6 +76,11 @@ def _indexes(repos_juris: dict[str, set[str]], args: argparse.Namespace) -> tupl
 
 
 def _open_issues(gh: GitHub, repo: str) -> list[tuple[dict, list[dict]]]:
+    """Open pe-parity issues with their comments (a citation is often named only in a comment)."""
+    try:
+        return gh.open_issues_with_comments(repo, "pe-parity")
+    except (NotFound, GitHubError, KeyError, TypeError):
+        pass
     try:
         issues = [
             i
@@ -84,7 +89,6 @@ def _open_issues(gh: GitHub, repo: str) -> list[tuple[dict, list[dict]]]:
         ]
     except (NotFound, GitHubError):
         return []
-    # Comments are read only for issues the proposals end up citing (see propose).
     return [(i, []) for i in issues]
 
 
@@ -257,7 +261,15 @@ def upsert_comment(gh: GitHub, repo: str, pr: int, body: str, check: dict | None
         comments = gh.issue_comments(repo, pr)
     except (NotFound, GitHubError):
         return
-    mine = [c for c in comments if MARKER in (c.get("body") or "")]
+    # Ours means the marker *and* a bot author: a person who quotes the marker keeps their comment.
+    mine = [
+        c
+        for c in comments
+        if MARKER in (c.get("body") or "")
+        and (
+            (c.get("user") or {}).get("type") == "Bot" or str((c.get("user") or {}).get("login", "")).endswith("[bot]")
+        )
+    ]
     failing = check is None or check.get("would_fail_enforced")
     try:
         if mine:

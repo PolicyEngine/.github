@@ -117,7 +117,8 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
             break
     targets = _explicit_targets(joined, cites)
     if not targets:
-        targets = [c for c in cites if finding and re.search(rf"(?<![\w/-]){re.escape(c)}(?![\w-])", finding)][:3]
+        # Every citation the finding names is a target: dropping one would let it skip the pin check.
+        targets = [c for c in cites if finding and re.search(rf"(?<![\w/-]){re.escape(c)}(?![\w/-])", finding)]
     if not targets and cites:
         targets = cites[:1]
     notes = [k for k, pat in _BLOCKERS.items() if pat.search(joined)]
@@ -160,10 +161,7 @@ def plan(rows: list[IssueInputs], corpus: set[str] | None = None) -> list[Batch]
 
 
 def load_issues(gh: GitHub, repo: str, label: str = "pe-parity") -> list[tuple[dict, list[dict]]]:
-    issues = [
-        i for i in gh.paginate(f"/repos/{repo}/issues", {"labels": label, "state": "open"}) if "pull_request" not in i
-    ]
-    return [(i, gh.issue_comments(repo, i["number"]) if i.get("comments") else []) for i in issues]
+    return gh.open_issues_with_comments(repo, label)
 
 
 def load_saved(path: str, repo: str) -> list[tuple[dict, list[dict]]]:

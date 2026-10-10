@@ -1,10 +1,11 @@
 # axiom-parity
 
-Tooling for PolicyEngine's rule that every policy change in a country model is mirrored in Axiom RuleSpec ([CONTRIBUTING, Mirror policy changes in Axiom](../CONTRIBUTING.md#mirror-policy-changes-in-axiom)). It has three commands:
+Tooling for PolicyEngine's rule that every policy change in a country model is mirrored in Axiom RuleSpec ([CONTRIBUTING, Mirror policy changes in Axiom](../CONTRIBUTING.md#mirror-policy-changes-in-axiom)). Its commands:
 
 - **`check`** reads a PR's `axiom:` line and verifies what it cites against GitHub. The reusable workflow [`axiom-parity.yml`](../.github/workflows/axiom-parity.yml) runs it on every country-model PR.
 - **`find`** suggests the line. It maps the changed parameters' and variables' `reference` URLs to corpus citations, looks up RuleSpec modules and open `pe-parity` issues, and drafts a dispatch-ready issue when nothing covers a citation.
 - **`lint-issue`** and **`backlog`** say whether `pe-parity` issues are dispatch-ready, one issue at a time or across the whole backlog.
+- **`corpus-pin`** and **`drain-plan`** plan a drain of that backlog through the signed encoder ([docs/drain.md](docs/drain.md)). They plan; they dispatch nothing.
 
 ## What `check` enforces
 
@@ -14,11 +15,15 @@ A PR needs a line only when it changes a file under `<package>/parameters/`, `<p
 |---|---|
 | `axiom: <rulespec issue> queued` | The issue exists in a `TheAxiomFoundation/rulespec-*` repo, has the `pe-parity` label, is open (or closed as completed), and is dispatch-ready (see below). |
 | `axiom: <rulespec PR> encoded` | The PR exists and is open or merged. A warning is raised if it carries no encoder manifest under `.axiom/`. |
-| `axiom: <legal id> encoded-correct (<test>)` | The module exists on rulespec `main`, and so does any `#rule` cited. A cited companion test case or file exists and outputs a rule of that module. |
-| `axiom: n/a: <category>: <reason>` | The claim stands alone, and the category is allowed. For `metadata` and `docs-tests`, the diff must also change no parameter value or formula. |
+| `axiom: <legal id> encoded-correct (<test>)` | Every module named exists on rulespec `main`, and so does any `#rule` cited. For each module, a cited companion test case or file exists and outputs a rule of that module. |
+| `axiom: n/a: <category>: <reason>` | It is the PR's only claim, and the category is allowed. For `metadata` and `docs-tests`, no changed policy file may change a parameter value or formula; every changed file is checked. |
 | `axiom: needed` | Never passes. It is a placeholder for a maintainer to replace. |
 
 A line can hold several claims separated by `;` or `|`, or there can be several `axiom:` lines. Every claim must pass. Notes in parentheses after a status are fine. A line ending in a colon continues in the bullet list below it.
+
+A status word only counts as a claim when it is stated, not discussed: "is not yet encoded", "might be queued" and "ready to be queued" are prose. Put each claim in the canonical form, `<reference> <status>`.
+
+**What the check does not do.** It verifies the claims a PR makes. It cannot tell that every provision the PR changes has a claim: a PR that changes two provisions and claims one passes. The finder comment lists every citation the changed files reference, so a reviewer can compare. The n/a categories other than `metadata` and `docs-tests` are the author's statement and a reviewer's to check.
 
 Modules can be named in any of these ways:
 
@@ -49,7 +54,13 @@ A queued issue must let the signed encoder run without further research. Its bod
 - a pasteable `review_finding`;
 - companion tests.
 
-Each element is found either under a heading that names it (`## Law (verbatim)`, `## Required outputs`, `## review_finding (paste as-is)`, `## Companion tests`) with real content below, or after an inline cue such as "Paste this as `review_finding`:". The lint reports where it found each element.
+Each element is found under a heading that names it (`## Law (verbatim)`, `## Required outputs`, `## review_finding (paste as-is)`, `## Companion tests`), or after an inline cue that introduces it, such as "Required outputs: `a`, `b`" or "Paste this as `review_finding`:". The lint reports where it found each element. Three rules keep it honest:
+
+- An element with a `TODO` in it is unfinished and counts as missing. The finder's drafts therefore never pass until a person completes them.
+- Companion tests must state expected values.
+- The `review_finding` is whatever `drain-plan` could paste into the encoder. One extractor decides both, so a lint-ready issue always has dispatch input.
+
+The lint checks presence, not legal completeness. An issue that leaves a question of interpretation open can still pass.
 
 ## Rollout
 
@@ -80,9 +91,13 @@ The tests use an in-memory GitHub. Besides example cases, they include property 
 - rendered claims and references round-trip through the parser;
 - the parser never raises and is deterministic;
 - for every subset of sections removed, the lint reports exactly that subset missing;
-- descriptive edits never count as behaviour changes, and value edits always do;
+- a draft the finder writes is never dispatch-ready;
+- anything the drain can paste as a `review_finding`, the lint counts (differential);
+- descriptive edits never count as behaviour changes; value edits and changed formula locals always do;
 - a PR passes if and only if every claim passes;
-- warn and enforce modes block on exactly the same findings;
-- adding a passing claim never breaks a passing PR.
+- warn and enforce modes block on exactly the same findings (differential);
+- adding a passing claim never breaks a passing PR;
+- a drain batch is ready if and only if every issue is lint-ready and every target is in the pin;
+- the URL mapper never contradicts 427 URL-to-citation pairs checked against the corpus (differential; `tests/fixtures/url_vectors.json`).
 
 `scripts/replay_history.py` replays the check over merged PRs to measure compliance and calibrate the parser.

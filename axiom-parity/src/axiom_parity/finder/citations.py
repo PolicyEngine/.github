@@ -23,6 +23,9 @@ from __future__ import annotations
 import re
 import urllib.parse
 from dataclasses import dataclass
+from typing import Any
+
+from ..refs import norm_dashes
 
 UK_PRIMARY = {
     "ukpga",
@@ -103,6 +106,8 @@ def _cfr(title: str, section: str, fragment: str = "") -> Citation | None:
 
 def _legislation_gov_uk(path: str) -> Citation | None:
     segs = [s for s in path.strip("/").split("/") if s]
+    if segs and segs[0] == "id":  # the identifier form of the same URL
+        segs = segs[1:]
     if len(segs) < 3:
         return None
     kind, year, number = segs[0], segs[1], segs[2]
@@ -115,45 +120,56 @@ def _legislation_gov_uk(path: str) -> Citation | None:
     if not re.fullmatch(r"\d{4}|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*", year) or not re.fullmatch(r"\d+", number):
         return None
     rest = segs[3:]
+    doc = "/".join([root, kind, year, number])
+    if rest and rest[0] == "pdfs":
+        # The instrument's own PDF is the document; explanatory notes and memoranda are not.
+        name = rest[1] if len(rest) > 1 else ""
+        return Citation(doc, "legislation.gov.uk") if re.fullmatch(rf"{kind}_\d+_en(?:_\d+)?\.pdf", name) else None
+    # Parts, chapters and cross-headings are groupings, not provisions.
+    if rest and rest[0] in ("part", "chapter", "crossheading"):
+        return None
     # Drop version and format suffixes: /2024-04-06, /enacted, /made, /data.xml, /contents.
     clean: list[str] = []
     for s in rest:
-        if re.fullmatch(
-            r"\d{4}-\d{2}-\d{2}|enacted|made|contents|data\.(?:xml|htm|html|pdf)|\w+\.pdf|prospective|crossheading|crossheading-.*",
-            s,
-        ):
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}|enacted|made|contents|data\.(?:xml|htm|html|pdf)|\w+\.pdf|prospective", s):
             break
         clean.append(s)
-    out = [root, kind, year, number]
+    out = [doc]
+    units = ("schedule", "appendix", "article", "paragraph", "part")
     i = 0
     while i < len(clean):
         key = clean[i]
         val = clean[i + 1] if i + 1 < len(clean) else None
         if key in ("section", "regulation", "rule") and val:
-            out.append(val)
-            out.extend(clean[i + 2 :])
+            out.append(val)  # corpus rows are whole sections; /section/190/2 is still section 190
             break
-        if key in ("schedule", "article", "paragraph", "part", "chapter") and val:
+        if key in units and val in units:
+            # An unnumbered schedule: /schedule/paragraph/16
+            out.append(key)
+            i += 1
+            continue
+        if key in units and val:
             out.extend([key, val])
             i += 2
             continue
-        if key == "schedule" and val is None:
-            out.append("schedule")
-            break
-        out.append(key)
-        i += 1
+        break  # a bare /schedule, or anything unrecognised, is the document so far
     return Citation("/".join(out), "legislation.gov.uk")
+
+
+# GOV.UK pages whose corpus slug differs from the URL slug.
+_GOVUK_ALIASES = {"repaying-your-student-loan": "student-loan-repayments"}
 
 
 def _gov_uk(path: str) -> Citation | None:
     segs = [s for s in path.strip("/").split("/") if s]
-    if not segs or segs[0] in ("government", "guidance") and len(segs) < 2:
-        return None
-    if segs[0] in ("government", "search", "browse"):
-        # Publications and policy papers are not corpus guidance pages.
+    if not segs or segs[0] in ("government", "search", "browse"):
+        # Publications and policy papers have no rule-derivable corpus path.
         return None
     if segs[0] == "guidance":
         segs = segs[1:]
+    if not segs:
+        return None
+    segs[0] = _GOVUK_ALIASES.get(segs[0], segs[0])
     return Citation("uk/guidance/govuk/" + "/".join(segs), "gov.uk")
 
 
@@ -167,7 +183,7 @@ _GOVINFO_CFR = re.compile(r"CFR-\d{4}-title(\d+)-vol\d+-sec(\d+[-.]?[0-9A-Za-z-]
 def map_url(url: str) -> Citation | StateHint | None:
     """Map one reference URL; None when the URL names no corpus source."""
     try:
-        parsed = urllib.parse.urlparse(url.strip())
+        parsed = urllib.parse.urlparse(norm_dashes(urllib.parse.unquote(url.strip())))
     except ValueError:
         return None
     host = (parsed.netloc or "").lower().removeprefix("www.")
@@ -194,9 +210,17 @@ def map_url(url: str) -> Citation | StateHint | None:
             return _usc(m.group(1), m.group(2), frag)
         return None
     if host == "govinfo.gov":
-        m = _USC_GRANULE.search(url) or _GOVINFO_USC.search(url)
+        m = (
+            _USC_GRANULE.search(url)
+            or _GOVINFO_USC.search(url)
+            or re.search(r"/link/uscode/(\d+)/([0-9A-Za-z-]+)", path)
+            or re.search(r"USCODE-\d{4}-title(\d+)-.*?-sec([0-9A-Za-z-]+)\.htm", path)
+        )
         if m:
             return _usc(m.group(1), m.group(2), frag)
+        m = re.search(r"PLAW-(\d+)publ(\d+)", path)
+        if m:
+            return Citation(f"us/statute/public-law/{m.group(1)}-{m.group(2)}", "govinfo-plaw")
         m = _GOVINFO_CFR.search(url)
         if m:
             return _cfr(m.group(1), m.group(2).replace("-", ".", 1) if "." not in m.group(2) else m.group(2), frag)
@@ -208,6 +232,19 @@ def map_url(url: str) -> Citation | StateHint | None:
         m = re.search(r"/title-(\d+)/(?:.*/)?part-(\d+)(?:/|$)", path)
         if m and "section" in query:
             return _cfr(m.group(1), query["section"][0], frag)
+        if m:
+            # A part URL: #p-273.9(d)(5) names the section; otherwise the part itself.
+            sec = re.match(rf"p-({m.group(2)}\.[0-9A-Za-z-]+)", frag)
+            if sec:
+                return _cfr(m.group(1), sec.group(1), frag)
+            return Citation(f"us/regulation/{m.group(1)}/{m.group(2)}", "cfr")
+        return None
+    if host == "irs.gov":
+        # Revenue procedures and notices: /pub/irs-drop/rp-25-32.pdf, n-25-67.pdf
+        m = re.search(r"/pub/irs-drop/(rp|n)-(\d{2})-(\d+)\.pdf$", path)
+        if m:
+            kind = "rev-proc" if m.group(1) == "rp" else "notice"
+            return Citation(f"us/guidance/irs/{kind}-20{m.group(2)}-{int(m.group(3))}", "irs-drop")
         return None
 
     # California codes: codes_displaySection.xhtml?lawCode=RTC&sectionNum=17041
@@ -231,11 +268,86 @@ def map_url(url: str) -> Citation | StateHint | None:
             return Citation(f"us-oh/statute/{m.group(1)}", "oh-codes")
         return None
 
+    exact = _state_exact(host, path, query, frag)
+    if exact:
+        return exact
+
     state = _STATE_HOSTS.get(host)
     if state:
         section = _section_token(path, query)
         if section:
             return StateHint(state, section, host)
+    return None
+
+
+def _state_exact(host: str, path: str, query: dict[str, list[str]], frag: str) -> Citation | None:
+    """State code sites whose URL gives the corpus path exactly."""
+
+    def q(key: str) -> str:
+        return (query.get(key) or [""])[0]
+
+    rules: list[tuple[str, str, Any]] = [
+        (
+            "nysenate.gov",
+            r"^/legislation/laws/([A-Za-z]+)/([0-9A-Za-z.\-]+)$",
+            lambda m: f"us-ny/statute/{m[1].upper()}/{m[2]}",
+        ),
+        (
+            "malegislature.gov",
+            r"/Laws/GeneralLaws/.*?/Chapter(\w+)/Section(\w+)$",
+            lambda m: f"us-ma/statute/{m[1]}/{m[2]}",
+        ),
+        (
+            "legislature.maine.gov",
+            r"^/statutes/(\w+)/title\w+sec([0-9A-Za-z-]+)\.html$",
+            lambda m: f"us-me/statute/{m[1]}/{m[2]}",
+        ),
+        ("revisor.mn.gov", r"^/statutes/cite/([0-9A-Za-z.]+)$", lambda m: f"us-mn/statute/{m[1]}"),
+        (
+            "legislature.vermont.gov",
+            r"^/statutes/section/(\d+)/\d+/0*(\d+\w*)$",
+            lambda m: f"us-vt/statute/{int(m[1])}-{m[2]}",
+        ),
+        ("legis.iowa.gov", r"^/docs/code/(?:\d{4}/)?([0-9A-Za-z.]+)\.pdf$", lambda m: f"us-ia/statute/{m[1]}"),
+        (
+            "law.lis.virginia.gov",
+            r"^/vacode/(?:title[\d.]+/chapter[\d.]+/section)?((\d+(?:\.\d+)?)-[0-9A-Za-z.:]+)/?$",
+            lambda m: f"us-va/statute/{m[2]}/{m[1]}",
+        ),
+        ("docs.legis.wisconsin.gov", r"^/statutes/statutes/(\d+)/\w+/(\w+)$", lambda m: f"us-wi/statute/{m[1]}.{m[2]}"),
+    ]
+    for rule_host, pattern, build in rules:
+        if host == rule_host:
+            m = re.search(pattern, path)
+            if m:
+                return Citation(build(m), rule_host)
+    if host == "cga.ct.gov":
+        m = re.fullmatch(r"sec_([0-9A-Za-z-]+)", frag)
+        if m:
+            return Citation(f"us-ct/statute/{m[1]}", host)
+    if host == "ilga.gov" and q("DocName"):
+        m = re.fullmatch(r"(\d{4})(\d{4})0K([0-9A-Za-z.\-]+)", q("DocName"))
+        if m:
+            return Citation(f"us-il/statute/{int(m[1])}/{int(m[2])}/{m[3]}", host)
+    if host == "legislature.mi.gov" and q("objectName"):
+        m = re.fullmatch(r"mcl-(\d+)-([0-9A-Za-z]+)", q("objectName"), re.I)
+        if m:
+            return Citation(f"us-mi/statute/{m[1]}.{m[2]}", host)
+    if host == "revisor.mo.gov" and q("section"):
+        return Citation(f"us-mo/statute/{q('section')}", host)
+    if host == "oregonlegislature.gov":
+        m = re.fullmatch(r"(\d+[A-Z]?\.\d+)", frag)
+        if m and re.search(r"/ors/ors\w+\.html$", path):
+            return Citation(f"us-or/statute/{m[1]}", host)
+    if host == "app.leg.wa.gov" and q("cite"):
+        cite = q("cite")
+        parts = cite.split(".")
+        if len(parts) == 3:
+            return Citation(f"us-wa/statute/{parts[0]}/{parts[0]}.{parts[1]}/{cite}", host)
+    if host == "mygov.scot":
+        segs = [s for s in path.strip("/").split("/") if s]
+        if segs:
+            return Citation("uk/guidance/mygovscot/" + "/".join(segs), host)
     return None
 
 

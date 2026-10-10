@@ -134,3 +134,67 @@ def test_corpus_pin_reads_release_scopes(tmp_path):
     pin = read_pin(rules, "HEAD")
     assert (pin.release, pin.corpus_ref) == ("rel-1", sha)
     assert pinned_citations(corpus, pin) == {"us/statute/26/32/d"}
+
+
+def test_plain_paragraph_review_finding_is_extracted_and_linted_alike():
+    from axiom_parity.issue_lint import lint_issue
+
+    body = "## review_finding\n\n" + (
+        "Encode the eligibility conditions from the statute and derive externally sourced companion tests. " * 2
+    )
+    assert review_finding_text(body).startswith("Encode the eligibility")
+    assert "review_finding" in lint_issue({"body": body}).found
+    assert (
+        review_finding_text("## review_finding\n\nTODO: write the finding for the encoder to paste in, " + "x" * 120)
+        is None
+    )
+
+
+def test_every_citation_in_the_finding_is_a_target():
+    paths = [f"us/statute/26/32/{s}" for s in "abcd"]
+    finding = "> Encode " + ", ".join(paths) + " as four modules, each stated from the statute's own terms with proof."
+    body = READY_ISSUE_BODY.split("## review_finding")[0].replace("corpus citation `us/statute/26/32/d`", "see below")
+    body += "## review_finding (paste as-is)\n\n" + finding + "\n\n## Companion tests\n\n- case one: holds\n"
+    row = issue_inputs("R", {"number": 1, "body": body}, [])
+    assert set(paths) <= set(row.targets)
+    (batch,) = plan([row], corpus=set(paths[:3]))
+    assert not batch.ready  # the fourth citation is not in the pin
+
+
+def test_a_batch_without_pasteable_finding_is_not_ready():
+    row = issue_inputs("R", {"number": 1, "body": READY_ISSUE_BODY}, [])
+    row.review_finding = None
+    (batch,) = plan([row], corpus={"us/statute/26/32/d"})
+    assert not batch.ready
+
+
+def test_repealed_rows_are_not_in_the_pin():
+    from axiom_parity.corpus_pin import _take
+
+    out: set[str] = set()
+    _take(
+        json.dumps(
+            {"citation_path": "us-ok/statute/68-2355", "body": "A tax is imposed", "metadata": {"status": "repealed"}}
+        ).encode(),
+        out,
+    )
+    _take(json.dumps({"citation_path": "us-ok/statute/68-2906", "body": "Any person", "metadata": {}}).encode(), out)
+    assert out == {"us-ok/statute/68-2906"}
+
+
+def test_uk_style_pin_is_read_from_the_checks_workflow(tmp_path):
+    rules = tmp_path / "rulespec-uk"
+    (rules / ".axiom").mkdir(parents=True)
+    (rules / ".github/workflows").mkdir(parents=True)
+    _git(rules, "init", "-q", "-b", "main")
+    _git(rules, "config", "user.email", "t@example.com")
+    _git(rules, "config", "user.name", "t")
+    (rules / ".axiom/toolchain.toml").write_text('[toolchain]\naxiom_corpus_release = "uk-rel"\n')
+    sha = "4" * 40
+    (rules / ".github/workflows/repository-checks.yml").write_text(
+        f"jobs:\n  v:\n    with:\n      axiom-corpus-ref: {sha}\n"
+    )
+    _git(rules, "add", "-A")
+    _git(rules, "commit", "-qm", "r")
+    pin = read_pin(rules, "HEAD")
+    assert (pin.release, pin.corpus_ref, pin.ref_source) == ("uk-rel", sha, "repository-checks.yml")

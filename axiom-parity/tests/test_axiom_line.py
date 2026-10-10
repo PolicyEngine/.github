@@ -97,13 +97,30 @@ def test_legacy_debt_means_queued():
     assert claim.status == QUEUED and claim.legacy_keyword == "debt"
 
 
-def test_na_with_a_queued_part_checks_the_queued_claim():
+def test_na_with_a_queued_part_keeps_both_claims():
     line = parse_line(
         "n/a for the published rates themselves (inputs). The determination rules are queued: "
         "TheAxiomFoundation/rulespec-uk#415 queued"
     )
-    assert [c.status for c in line.claims] == [QUEUED]
-    assert line.notes
+    assert [c.status for c in line.claims] == [NA, QUEUED]
+    assert line.claims[1].rulespec_refs[0].number == 415
+
+
+def test_na_is_a_claim_wherever_it_sits():
+    assert [c.status for c in parse_line("n/a: metadata; rulespec-us#1416 queued").claims] == [NA, QUEUED]
+    assert [c.status for c in parse_line("rulespec-us#1416 queued; n/a: metadata").claims] == [QUEUED, NA]
+    assert [c.status for c in parse_line("rulespec-us#1416 queued | n/a: data: targets").claims] == [QUEUED, NA]
+
+
+def test_modal_and_future_status_words_are_prose():
+    for prose in (
+        "rulespec-us#1 is not actually currently ready to be queued",
+        "rulespec-us#1 might be queued",
+        "rulespec-us#1 will be queued once the corpus lands",
+        "us:statutes/26/1 should be encoded-correct",
+    ):
+        assert parse_line(prose).claims == [], prose
+    assert [c.status for c in parse_line("rulespec-us#1 is queued").claims] == [QUEUED]
 
 
 def test_na_reason_extracted():

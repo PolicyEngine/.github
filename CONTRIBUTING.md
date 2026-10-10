@@ -86,7 +86,9 @@ The n/a categories are:
 - `metadata`: labels, references or units;
 - `not-law`: contributed reforms, proposals, or announcements not yet legislated.
 
-"Axiom doesn't encode this yet" is not an n/a reason. That is what `queued` is for.
+"Axiom doesn't encode this yet" is not an n/a reason. That is what `queued` is for. An n/a claim must be the PR's only claim; if part of a PR needs Axiom work, claim that part and leave the rest to the description.
+
+An `encoded-correct` claim that names several modules needs a companion test for each one.
 
 Use `queued` only when the signed encoder is blocked; record the blocker in the issue. Each billed encoder run requires separate approval. A `queued` issue must be ready for the encoder to run without further research:
 

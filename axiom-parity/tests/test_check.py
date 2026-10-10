@@ -254,3 +254,53 @@ def test_cli_crash_is_a_warning_in_warn_mode(monkeypatch, tmp_path, capsys):
     assert "::warning" in capsys.readouterr().out
     args.mode = "enforce"
     assert cli.cmd_check(args) == 2
+
+
+def test_every_policy_file_is_checked_for_behaviour(hub):
+    """No cap: a value change in the 201st file still fails `n/a: metadata`."""
+    files = [f"policyengine_us/parameters/gov/p{i}.yaml" for i in range(201)]
+
+    def diff(path, side):
+        changed = path.endswith("p200.yaml") and side == "head"
+        return "values:\n  2026-01-01: 2\n" if changed else "values:\n  2026-01-01: 1\n"
+
+    r = run(hub, "axiom: n/a: metadata: update labels", files=files, diff=diff)
+    assert codes(r) == {"na-changes-behaviour"}
+
+
+def test_changed_formula_requires_parity(hub):
+    def diff(path, side):
+        v = 0 if side == "base" else 1
+        return f"class benefit:\n def formula(person, period, parameters):\n  label = {v}\n  return label\n"
+
+    r = run(hub, "axiom: n/a: metadata: update a reference", files=["policyengine_us/variables/gov/test.py"], diff=diff)
+    assert r.would_fail
+
+
+def test_every_claimed_module_needs_its_own_test(hub):
+    body = "axiom: us:statutes/26/24/d and us:statutes/26/1/h encoded-correct (`three_children_social_security_excess`)"
+    r = run(hub, body)
+    assert codes(r) == {"test-does-not-exercise"}
+    assert any("us:statutes/26/1/h" in f.message for c in r.claims for f in c.findings)
+    hub.add_file(
+        RS_US,
+        "us/statutes/26/1/h.test.yaml",
+        "- name: gain_case\n  output:\n    us:statutes/26/1/h#net_capital_gain: 1\n",
+    )
+    ok = "axiom: us:statutes/26/24/d and us:statutes/26/1/h encoded-correct (`three_children_social_security_excess`, `gain_case`)"
+    assert not run(hub, ok).would_fail
+
+
+def test_unresolved_relative_module_blocks(hub):
+    body = "axiom: `us/statutes/26/24/d`, `/zz` encoded-correct (`three_children_social_security_excess`)"
+    assert "module-not-found" in codes(run(hub, body))
+
+
+def test_na_cannot_share_a_line_with_other_claims(hub):
+    for body in ("axiom: n/a: metadata; rulespec-us#1416 queued", "axiom: rulespec-us#1416 queued; n/a: metadata"):
+        assert "na-combined" in codes(run(hub, body)), body
+
+
+def test_prose_status_words_do_not_satisfy_the_check(hub):
+    assert run(hub, "axiom: rulespec-us#1416 might be queued").would_fail
+    assert run(hub, "axiom: rulespec-us#1416 is not actually currently ready to be queued").would_fail

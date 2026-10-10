@@ -15,7 +15,7 @@ from typing import Any, Protocol
 
 from . import pe_yaml
 from .github import GitHub, NotFound
-from .refs import AXIOM_OWNER, LegalRef, TestRef
+from .refs import AXIOM_OWNER, LegalRef, TestRef, norm_dashes
 
 # PolicyEngine repo name suffix -> rulespec repo suffix.
 COUNTRY_TO_RULESPEC = {
@@ -228,11 +228,13 @@ class Resolver:
         src = self.source(repo)
         if src is None:
             return None
-        paths = src.paths()
+        # Compare with any dash written as a hyphen: the module may be "1437c–1.yaml".
+        by_norm = {norm_dashes(p): p for p in src.paths()}
         for path, match in candidate_paths(ref):
-            if path in paths:
-                rules = module_rules(self.doc(repo, path))
-                return ResolvedModule(ref, path, match, rules, legal_id_for_path(path))
+            real = by_norm.get(norm_dashes(path))
+            if real:
+                rules = module_rules(self.doc(repo, real))
+                return ResolvedModule(ref, real, match, rules, legal_id_for_path(real))
         return None
 
     def resolve_tests(

@@ -38,7 +38,6 @@ from .refs import AXIOM_OWNER, RulespecRef
 from .rulespec import GitHubSource, Resolver, Source, rulespec_repo_for_jurisdiction
 
 PE_PARITY_LABEL = "pe-parity"
-BEHAVIOUR_FILE_CAP = 200
 
 ERROR, WARNING, NOTICE = "error", "warning", "notice"
 
@@ -327,25 +326,32 @@ class Checker:
             return
         tests = self.resolver.resolve_tests(claim.test_refs, modules, self.ctx.default_rulespec)
         exercising = [t for t in tests if t.exercises]
-        if exercising:
-            for t in exercising[:5]:
-                label = f"{t.path}::{t.case}" if t.case else t.path
-                res.evidence.append(f"companion test {label} outputs {', '.join(t.exercises)}")
-        elif tests:
-            labels = ", ".join(f"{t.path}::{t.case}" if t.case else t.path for t in tests[:3])
-            res.findings.append(
-                Finding(
-                    ERROR, "test-does-not-exercise", f"the cited test ({labels}) outputs no rule of the cited module"
-                )
-            )
-        else:
+        for t in exercising[:5]:
+            label = f"{t.path}::{t.case}" if t.case else t.path
+            res.evidence.append(f"companion test {label} outputs {', '.join(t.exercises)}")
+        if not tests:
             res.findings.append(
                 Finding(
                     ERROR,
                     "encoded-correct-no-test",
-                    "`encoded-correct` must cite a companion test case that exercises the module, e.g. `32.test.yaml::case_name` or the case name in backticks",
+                    "`encoded-correct` must cite a companion test case that exercises the module, e.g. "
+                    "`32.test.yaml::case_name` or the case name in backticks",
                 )
             )
+            return
+        # Every module the claim names needs a cited test that outputs it: one
+        # exercised module doesn't vouch for the others.
+        covered = {mid for t in exercising for mid in t.exercises}
+        for mid in dict.fromkeys(m.legal_id for _, m in modules):
+            if mid not in covered:
+                labels = ", ".join(f"{t.path}::{t.case}" if t.case else t.path for t in tests[:3])
+                res.findings.append(
+                    Finding(
+                        ERROR,
+                        "test-does-not-exercise",
+                        f"no cited companion test outputs a rule of `{mid}` (cited: {labels})",
+                    )
+                )
 
     def _na(self, claim: Claim, res: ClaimResult, all_claims: list[Claim], policy_files: list[str]) -> None:
         if len(all_claims) > 1:
@@ -356,19 +362,12 @@ class Checker:
             return
         res.evidence.append(verdict.message)
         if verdict.category in na.NO_BEHAVIOUR_CATEGORIES and self.ctx.read_diff is not None:
+            # Every file is checked: an unchecked file could hide a value change.
             changed = []
-            checked = policy_files[:BEHAVIOUR_FILE_CAP]
+            checked = policy_files
             for path in checked:
                 if changes_behaviour(path, self.ctx.read_diff(path, "base"), self.ctx.read_diff(path, "head")):
                     changed.append(path)
-            if len(policy_files) > BEHAVIOUR_FILE_CAP:
-                res.findings.append(
-                    Finding(
-                        WARNING,
-                        "behaviour-cap",
-                        f"checked {BEHAVIOUR_FILE_CAP} of {len(policy_files)} policy files for value changes",
-                    )
-                )
             if changed:
                 shown = ", ".join(changed[:5]) + (f" and {len(changed) - 5} more" if len(changed) > 5 else "")
                 res.findings.append(

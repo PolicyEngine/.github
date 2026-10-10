@@ -40,8 +40,13 @@ _LINE = re.compile(
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _PLACEHOLDER = re.compile(r"<\s*(legal id|rulespec[^>]*|reason|category)\s*>", re.IGNORECASE)
 _STATUS_WORD = re.compile(r"(?<![\w/-])(encoded-correct|encoded|queued|debt)(?![\w-])", re.IGNORECASE)
-# "is not yet encoded", "until it is encoded": prose, not a claim.
-_NEGATION = re.compile(r"\b(?:not|n't|never|no longer|yet to be|once|until|if)\s+(?:\w+\s+){0,2}$", re.IGNORECASE)
+# "is not yet encoded", "until it is encoded", "might be queued", "ready to be
+# queued": prose about a status, not a claim of it.
+_NEGATION = re.compile(
+    r"(?:\b(?:not|never|no longer|once|until|if|unless|might|may|could|would|should|will|shall|cannot|to be|"
+    r"yet to be|needs? to be|must be)|n't)\s+(?:\w+\s+){0,4}$",
+    re.IGNORECASE,
+)
 _NA_START = re.compile(r"^\s*(?:\*\*|`)?n\s*/\s*a(?:\*\*|`)?(?![\w])\s*(?P<reason>.*)$", re.IGNORECASE | re.DOTALL)
 _NEEDED_START = re.compile(r"^\s*(?:\*\*|`)?needed(?:\*\*|`)?(?![\w-])\s*(?P<note>.*)$", re.IGNORECASE | re.DOTALL)
 
@@ -200,15 +205,30 @@ def _segments(rest: str) -> list[str]:
             # Several claims in one sentence: each runs up to and including
             # its status keyword and any parenthetical note right after it.
             start = 0
+            pieces = []
             for h in hits[:-1]:
                 end = h.end()
                 tail = sentence[end:]
                 note = re.match(r"\s*\([^()]*(?:\([^()]*\)[^()]*)*\)", tail)
                 if note:
                     end += note.end()
-                out.append(sentence[start:end])
+                pieces.append(sentence[start:end])
                 start = end
-            out.append(sentence[start:])
+            pieces.append(sentence[start:])
+            # "The rules are queued: rulespec-uk#415 queued" is one claim: a status
+            # word that cites nothing joins the piece after it.
+            merged: list[str] = []
+            carry = ""
+            for piece in pieces:
+                piece = carry + piece
+                carry = ""
+                if not _has_refs(piece) and piece is not pieces[-1] and len(merged) + 1 < len(pieces):
+                    carry = piece
+                    continue
+                merged.append(piece)
+            if carry:
+                merged.append(carry)
+            out.extend(merged)
     return out
 
 
@@ -224,9 +244,25 @@ def _claim(status: str, text: str, line_no: int, legacy: str | None = None) -> C
     )
 
 
+def _na_claim(text: str, line_no: int) -> Claim | None:
+    m = _NA_START.match(text)
+    if not m:
+        return None
+    claim = _claim(NA, text, line_no)
+    claim.na_reason = re.sub(r"^[\s:\-—–]+", "", m.group("reason").strip()).strip()
+    return claim
+
+
 def _claims_from(text: str, line_no: int) -> list[Claim]:
     claims = []
     for seg in _segments(text):
+        na = _na_claim(seg, line_no)
+        if na:
+            # "n/a: metadata; rulespec-us#1 queued" keeps both claims, and so
+            # does an n/a whose own sentence goes on to queue something.
+            claims.append(na)
+            claims.extend(c for c in _claims_from(_NA_START.match(seg).group("reason"), line_no) if c.status != NA)
+            continue
         hits = _status_hits(seg)
         if not hits:
             continue
@@ -249,28 +285,14 @@ def parse_line(rest: str, line_no: int = 0, items: list[str] | tuple[str, ...] =
     if _PLACEHOLDER.search(rest):
         line.problems.append("the template placeholder is still there; replace it with one real claim")
         return line
-    m = _NA_START.match(rest)
-    if m:
-        # "n/a for the published rates; the rules are queued: rulespec-uk#415
-        # queued" is a queued claim with an n/a note.
-        others = [c for c in _claims_from(m.group("reason"), line_no) if c.rulespec_refs or c.legal_refs]
-        if others:
-            line.claims.extend(others)
-            line.notes.append("the n/a part of this line is read as a note; the other claims are checked")
-            return line
-        reason = re.sub(r"^[\s:\-—–]+", "", m.group("reason").strip()).strip()
-        claim = _claim(NA, rest, line_no)
-        claim.na_reason = reason
-        line.claims.append(claim)
-        return line
     if _NEEDED_START.match(rest):
         line.claims.append(_claim(NEEDED, rest, line_no))
         return line
     lead = _claims_from(rest, line_no)
     if items:
-        inherited = lead[-1].status if lead else None
+        inherited = lead[-1].status if lead and lead[-1].status != NA else None
         # The lead's last claim ("The rest is queued:") is carried by the bullets.
-        if lead and not (lead[-1].rulespec_refs or lead[-1].legal_refs):
+        if inherited and not (lead[-1].rulespec_refs or lead[-1].legal_refs):
             lead = lead[:-1]
         for item in items:
             own = _claims_from(item, line_no)

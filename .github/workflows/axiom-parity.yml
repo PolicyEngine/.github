@@ -48,7 +48,9 @@ jobs:
     name: Axiom parity
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+    # pull_request only: its merge ref is what the diff below reads. pull_request_target
+    # checks out the base branch, so the check would inspect the wrong diff.
+    if: github.event_name == 'pull_request'
     steps:
       # The PR and the tool go in separate directories, so nothing in the PR
       # can stand in for the tool's code.

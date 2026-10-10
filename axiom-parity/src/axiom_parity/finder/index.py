@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import pe_yaml
-from ..refs import parse_legal_refs
+from ..refs import norm_dashes, parse_legal_refs
 from ..rulespec import candidate_paths, legal_id_for_path, test_cases
 
 
@@ -79,7 +79,8 @@ class Index:
                         continue
                     text = f.read_text(encoding="utf-8", errors="replace")
                     rel = f.relative_to(base).as_posix()
-                    mod = Module(repo, rel, set(_CITE.findall(text)), _RULE.findall(text))
+                    # Citations are indexed with hyphens for any dash, so a URL's "1437c-1" finds "1437c–1".
+                    mod = Module(repo, rel, {norm_dashes(c) for c in _CITE.findall(text)}, _RULE.findall(text))
                     idx.modules.append(mod)
                     for c in mod.citations:
                         idx.by_citation.setdefault(c, []).append(mod)
@@ -92,6 +93,7 @@ class Index:
         for ``us/statute/26/24/d``) ranks first, then modules citing exactly
         that path, then modules citing an ancestor, then a descendant.
         """
+        citation = norm_dashes(citation)
         out: list[Match] = []
         seen: set[str] = set()
         by_path = self._by_path()
@@ -123,7 +125,7 @@ class Index:
 
     def _by_path(self) -> dict[str, Module]:
         if not hasattr(self, "_paths"):
-            self._paths = {m.path: m for m in self.modules}
+            self._paths = {norm_dashes(m.path): m for m in self.modules}
         return self._paths
 
     def match_section(self, jurisdiction: str, section: str, limit: int = 5) -> list[Match]:

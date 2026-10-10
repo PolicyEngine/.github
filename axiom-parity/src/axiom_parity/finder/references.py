@@ -64,6 +64,15 @@ def parameter_references(path: str, text: str, package: str) -> list[Reference]:
         if "reference" in node and not isinstance(node.get("reference"), dict | None):
             for url, title in _flatten(node["reference"]):
                 out.append(Reference(path, prefix, "parameter", url, title))
+        # A dated value can carry its own reference: {value: x, metadata: {reference: ...}}.
+        values = node.get("values")
+        if isinstance(values, dict):
+            for entry in values.values():
+                if isinstance(entry, dict):
+                    entry_meta = entry.get("metadata") if isinstance(entry.get("metadata"), dict) else {}
+                    for ref in (entry_meta.get("reference"), entry.get("reference")):
+                        for url, title in _flatten(ref):
+                            out.append(Reference(path, prefix, "parameter", url, title))
         for k, v in node.items():
             if k in ("metadata", "values", "reference"):
                 continue
