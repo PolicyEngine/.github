@@ -125,6 +125,7 @@ def cmd_drain_plan(args: argparse.Namespace) -> int:
         load_issues,
         load_pin_file,
         load_saved,
+        load_work_holds,
         markdown,
         plan,
         to_json,
@@ -146,10 +147,13 @@ def cmd_drain_plan(args: argparse.Namespace) -> int:
     def owners(citation: str) -> list[str]:
         return [m.path for idx in indexes for m in idx.by_citation.get(citation, [])]
 
-    batches = plan(rows, corpus, blocked, args.blocked_citation_pattern, listed, repealed, owners if indexes else None)
+    holds = load_work_holds(args.work_holds) if args.work_holds else None
+    batches = plan(
+        rows, corpus, blocked, args.blocked_citation_pattern, listed, repealed, owners if indexes else None, holds
+    )
     if args.json:
-        Path(args.json).write_text(json.dumps(to_json(batches, args.weekly_runs), indent=2), encoding="utf-8")
-    text = markdown(batches, args.weekly_runs)
+        Path(args.json).write_text(json.dumps(to_json(batches, args.weekly_runs, holds), indent=2), encoding="utf-8")
+    text = markdown(batches, args.weekly_runs, holds)
     _write(args.summary, text)
     if not args.summary:
         print(text)
@@ -235,6 +239,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         metavar="REGEX",
         help="block issues with a target citation matching this pattern, e.g. /manual/ (repeatable)",
+    )
+    d.add_argument(
+        "--work-holds",
+        help="modules a signed run does not edit, with the encoder owner's rule: JSON {rule, modules: [{module, "
+        "evidence}]}; an issue that asks for work on one is held (importing from one is not)",
     )
     d.add_argument("--weekly-runs", type=int, default=10, help="signed runs (signing approvals) a week")
     d.add_argument("--json")

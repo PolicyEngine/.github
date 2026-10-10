@@ -673,3 +673,64 @@ def test_the_encoder_owner_s_dispatch_verdicts_are_holds(tmp_path):
     held = {i.number: i.blocked for i in batch.issues}
     assert "dispatched" in held[1][0] and "blocked-source" in held[2][0] and held[3] == []
     assert not batch.ready
+
+
+def test_work_on_a_module_the_owner_holds_is_held_and_an_import_from_it_is_not(tmp_path):
+    from axiom_parity.drain import load_work_holds, markdown, to_json
+
+    listing = tmp_path / "assembled.json"
+    listing.write_text(
+        json.dumps(
+            {
+                "rule": "Assembled pipelines are edited by hand, not encoded.",
+                "modules": [
+                    {
+                        "repo": "rulespec-us",
+                        "module": "us/policies/income_tax/taxable_income_pipeline.yaml",
+                        "evidence": ["pipeline file name"],
+                    }
+                ],
+            }
+        )
+    )
+    holds = load_work_holds(str(listing))
+    assert holds.modules == {"us/policies/income_tax/taxable_income_pipeline.yaml": ("pipeline file name",)}
+    pin = {"us/statute/26/32/d"}
+    tail = " State each element with its proof excerpt. " * 3
+    edits = issue_inputs(
+        "R",
+        _with_finding(
+            "Encode it at us/statutes/26/32/d.yaml. Then wire it into us/policies/income_tax/taxable_income_pipeline.yaml."
+            + tail
+        ),
+        [],
+    )
+    (batch,) = plan([edits], corpus=pin, work_holds=holds)
+    (reason,) = batch.issues[0].blocked  # the owner's rule replaces the missing-citation reason
+    assert not batch.ready and "taxable_income_pipeline.yaml [pipeline file name]" in reason
+    assert "Assembled pipelines are edited by hand" in markdown([batch], 10, holds)
+    assert to_json([batch], 10, holds)["work_hold_rule"].startswith("Assembled pipelines")
+    imports = issue_inputs(
+        "R",
+        _with_finding(
+            "Encode it at us/statutes/26/32/d.yaml, importing us:policies/income_tax/taxable_income_pipeline#taxable_income."
+            + tail
+        ),
+        [],
+    )
+    (batch,) = plan([imports], corpus=pin, work_holds=holds)
+    assert batch.ready
+    # Without the owner's list, the same request is held for the citation it lacks.
+    (batch,) = plan(
+        [
+            issue_inputs("R", edits_body, [])
+            for edits_body in [
+                _with_finding(
+                    "Encode it at us/statutes/26/32/d.yaml. Then wire it into us/policies/income_tax/taxable_income_pipeline.yaml."
+                    + tail
+                )
+            ]
+        ],
+        corpus=pin,
+    )
+    assert "corpus citation the issue doesn't give" in batch.issues[0].blocked[0]

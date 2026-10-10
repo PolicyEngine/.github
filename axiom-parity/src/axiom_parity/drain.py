@@ -55,6 +55,7 @@ class IssueInputs:
     modules: list[str] = field(default_factory=list)  # modules the issue declares or tells the encoder to use
     finding_blocks: int = 0  # how many separate findings were joined
     unresolved: list[str] = field(default_factory=list)  # modules a finding asks for, with no citation to be found
+    work_modules: list[str] = field(default_factory=list)  # modules a finding, or a pairing line, asks for work on
 
     @property
     def documents(self) -> list[str]:
@@ -332,6 +333,7 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
 
     targets = _explicit_targets(joined, cites)
     modules: list[str] = []
+    work_modules: list[str] = []
     unresolved: list[str] = []
 
     def add(items: list[str], into: list[str]) -> None:
@@ -353,6 +355,7 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
             if same:
                 add(same, paired.setdefault(module, []))
                 add([module], modules)
+                add([module], work_modules)
                 add(same, targets)
     # Inside a finding, a module and a citation named in one sentence go together too:
     # "Re-encode uk/policies/govuk/x.yaml (corpus uk/guidance/govuk/x) in place".
@@ -373,6 +376,7 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
                 add([module], modules)
             if kind != WORK:
                 continue
+            add([module], work_modules)
             found = [witnessed[module]] if module in witnessed else paired.get(module, [])
             spelled = citation_for_module(module)
             found = found or [
@@ -401,6 +405,7 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
         modules,
         len(findings),
         unresolved,
+        work_modules,
     )
 
 
@@ -502,6 +507,32 @@ def load_blocked_citations(path: str) -> list[BlockedCitation]:
     return out
 
 
+@dataclass(frozen=True)
+class WorkHolds:
+    """Modules the encoder owner says a signed run does not edit, and its rule for why.
+
+    The first use is assembled pipelines: a change an issue asks for in one is a
+    reviewed hand edit, not an encode. An issue that only imports from such a
+    module is not held; one that asks for work on it is.
+    """
+
+    rule: str
+    modules: dict[str, tuple[str, ...]]  # module path -> the owner's evidence for listing it
+
+
+def load_work_holds(path: str) -> WorkHolds:
+    """Read ``{"rule": "...", "modules": [{"module": "...", "evidence": [...]}, ...]}``."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    modules: dict[str, tuple[str, ...]] = {}
+    for row in data.get("modules", []):
+        if isinstance(row, dict) and row.get("module"):
+            evidence = row.get("evidence") or []
+            modules[normal_module(str(row["module"]))] = tuple(
+                str(e) for e in ([evidence] if isinstance(evidence, str) else evidence)
+            )
+    return WorkHolds(str(data.get("rule", "")).strip(), modules)
+
+
 def _path_ancestors(module: str) -> list[str]:
     """``a/statutes/26/32/d/1.yaml`` -> itself, ``…/32/d.yaml``, ``…/32.yaml``, ``…/26.yaml``."""
     segs = module[: -len(".yaml")].split("/")
@@ -535,6 +566,7 @@ def plan(
     blocked_citations: list[BlockedCitation] | None = None,
     repealed: set[str] | None = None,
     owners: Callable[[str], Iterable[str]] | None = None,
+    work_holds: WorkHolds | None = None,
 ) -> list[Batch]:
     """Check each issue against the pin and the block lists, then group by source document."""
     blocked_modules = {normal_module(m) for m in blocked_modules or ()}
@@ -553,10 +585,19 @@ def plan(
                 r.blocked.append(f"target matches the blocked pattern {pattern}")
         if blocked_modules and modules_at_stake(r, owners) & blocked_modules:
             r.blocked.append("targets or imports a module the encoder owner has blocked")
-        if r.unresolved:
+        held = [m for m in r.work_modules if work_holds and m in work_holds.modules]
+        if held:
+            # The owner's rule explains these better than a missing citation would:
+            # naming a citation would not make the issue dispatchable.
+            r.blocked.append(
+                "asks for work on a module the encoder owner holds (see its rule): "
+                + ", ".join(f"{m} [{'; '.join(work_holds.modules[m])}]" for m in held)
+            )
+        unresolved = [m for m in r.unresolved if m not in held]
+        if unresolved:
             r.blocked.append(
                 "a finding asks for work on a module whose corpus citation the issue doesn't give: "
-                + ", ".join(r.unresolved)
+                + ", ".join(unresolved)
             )
         for doc in r.documents:
             groups.setdefault((r.repo, doc), []).append(r)
@@ -593,12 +634,13 @@ def runs_needed(batch: Batch) -> int:
     return max(1, -(-len(batch.citations) // MAX_BUNDLE_CITATIONS))
 
 
-def to_json(batches: list[Batch], weekly_runs: int) -> dict[str, Any]:
+def to_json(batches: list[Batch], weekly_runs: int, work_holds: WorkHolds | None = None) -> dict[str, Any]:
     ready = [b for b in batches if b.ready]
     issues = {(i.repo, i.number): i for b in batches for i in b.issues}
     return {
         "measured_cost": MEASURED,
         "weekly_runs": weekly_runs,
+        "work_hold_rule": work_holds.rule if work_holds else None,
         "batches": [
             {
                 "document": b.document,
@@ -623,7 +665,7 @@ def to_json(batches: list[Batch], weekly_runs: int) -> dict[str, Any]:
     }
 
 
-def markdown(batches: list[Batch], weekly_runs: int) -> str:
+def markdown(batches: list[Batch], weekly_runs: int, work_holds: WorkHolds | None = None) -> str:
     s = to_json(batches, weekly_runs)["summary"]
     m = MEASURED
     units = weekly_runs * MAX_BUNDLE_CITATIONS
@@ -653,7 +695,13 @@ def markdown(batches: list[Batch], weekly_runs: int) -> str:
         )
         issues = ", ".join(f"[#{i.number}]({i.url})" for i in b.issues[:6]) + (" …" if len(b.issues) > 6 else "")
         out.append(
-            f"| {n} | `{b.document}` | {b.repo.split('/')[1]} | {issues} | {len(b.citations)} | "
+            f"| {n} | `{b.document}` | {b.repo.split('/')[-1]} | {issues} | {len(b.citations)} | "
             f"{'yes' if b.ready else 'no'} | {', '.join(problems) or '-'} |"
         )
+    if (
+        work_holds
+        and work_holds.rule
+        and any("holds (see its rule)" in x for b in batches for i in b.issues for x in i.blocked)
+    ):
+        out += ["", f"The encoder owner's rule for held modules: {work_holds.rule}"]
     return "\n".join(out) + "\n"

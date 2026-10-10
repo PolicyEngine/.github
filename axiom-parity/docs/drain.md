@@ -39,7 +39,10 @@ So 2 of the 12 could be dispatched that day, and 2 more need only an issue updat
 
 `drain-plan` reads the verdicts back as holds (`--blocked-citations` takes that file too). With them applied it lists the 4 UK documents: `uk/regulation/uksi/2008/794` (rulespec-uk#386) and three Acts for rulespec-uk#440.
 
-13 lint-ready issues (6 UK, 7 US) are held because a finding asks for work on a module and the issue gives no corpus citation for it. Eight ask only for a change to a module under `policies/` (a composed pipeline or a guidance module). Five name a state statute module whose section the issue never cites in corpus form.
+Some lint-ready issues are held for the work they ask for, whatever their citations:
+
+- 9 ask for a change to an assembled pipeline, which the encoder owner says a signed run does not make (`--work-holds`, below). Examples are the Universal Credit and Housing Benefit composed pipelines and `us/policies/income_tax/taxable_income_pipeline.yaml`.
+- 8 ask for work on a module and give no corpus citation for it: five name a state statute module whose section the issue never cites in corpus form, and three name a guidance module. One issue, rulespec-uk#390, is in both groups.
 
 Two earlier versions of this plan overcounted, at 25 documents and then at 16 documents completing 15 issues. The first grouped an issue under its first citation's document only, so one run could mix jurisdictions, and it read targets from an issue's last comment only. The second took a module as a target only when its own sentence had a verb such as "encode", so a numbered list of modules under one "Encode these:" line went unread (rulespec-uk#429).
 
@@ -109,6 +112,8 @@ So one model encode from the 121 GPT-6 runs is on `main`. rulespec-uk `main` has
 
    `--blocked-citations` takes the encoder owner's list of citations to hold, each with a reason and whether paths below it are held too. It is repeatable, and it also reads the owner's dispatch-preparation verdicts, where every row (blocked, waiting for a ruling, or already dispatched) holds its citation. On 2026-10-10 that list had 350 entries: sources that change in the W6 corpus release, Title 26 text that selects on filing status, and paths missing from the pin or the corpus.
 
+   `--work-holds` takes the encoder owner's list of modules that a signed run does not edit, with its rule for why. Its first use is assembled pipelines: modules composed from other modules, where the change an issue asks for is a reviewed hand edit. An issue is held when a finding, or a line pairing a module with a citation, asks for work on a listed module. An issue that only imports from one is not held. The plan prints the owner's evidence for each module and its rule once. On 2026-10-10 the list had 261 modules (254 in rulespec-us, 7 in rulespec-uk); 28 of them (21 US, 7 UK) are listed on their file name alone.
+
    `--blocked-citation-pattern` blocks a class of source by pattern. The encoder owner asked for `/manual/` on 2026-10-10, until a fix for masks that hide table values on manual paths (axiom-encode#1821) merges.
 
 Steps 1 to 3 are what the tooling does. Steps 4 to 10 are a procedure for the encoder owner; nothing in this package dispatches, approves, links or closes anything.
@@ -166,7 +171,7 @@ cat pin-us.txt pin-uk.txt > pin.txt
 uv run axiom-parity drain-plan --corpus-citations pin.txt \
   --blocked-modules blocked-modules.json \
   --blocked-citations blocked-citations.json --blocked-citations prep-verdicts.json \
-  --blocked-citation-pattern /manual/ \
+  --blocked-citation-pattern /manual/ --work-holds assembled-pipelines.json \
   --rulespec-dir TheAxiomFoundation/rulespec-us=../rulespec-us \
   --rulespec-dir TheAxiomFoundation/rulespec-uk=../rulespec-uk \
   --weekly-runs 10 --json plan.json --summary plan.md
