@@ -50,9 +50,12 @@ jobs:
     timeout-minutes: 10
     if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
     steps:
+      # The PR and the tool go in separate directories, so nothing in the PR
+      # can stand in for the tool's code.
       - name: Check out the PR merge commit
         uses: actions/checkout@v6
         with:
+          path: pr
           fetch-depth: 2
           persist-credentials: false
 
@@ -61,7 +64,7 @@ jobs:
         with:
           repository: PolicyEngine/.github
           ref: ${{ inputs.tooling-ref }}
-          path: .axiom-parity-tool
+          path: tool
           sparse-checkout: axiom-parity
           persist-credentials: false
 
@@ -79,11 +82,11 @@ jobs:
           RULESPEC: ${{ inputs.rulespec }}
         run: |
           set +e
-          args=(--repo "$REPO" --pr "$PR" --local-repo . --base HEAD^1 --head HEAD
+          args=(--repo "$REPO" --pr "$PR" --local-repo pr --base HEAD^1 --head HEAD
                 --mode "$MODE" --summary "$GITHUB_STEP_SUMMARY" --json "$RUNNER_TEMP/axiom-parity.json" --annotations)
           [ -n "$PACKAGE" ] && args+=(--package "$PACKAGE")
           [ -n "$RULESPEC" ] && args+=(--rulespec "$RULESPEC")
-          uv run --quiet --project .axiom-parity-tool/axiom-parity axiom-parity check "${args[@]}"
+          uv run --quiet --project tool/axiom-parity axiom-parity check "${args[@]}"
           status=$?
           echo "status=$status" >> "$GITHUB_OUTPUT"
           exit 0
@@ -99,11 +102,11 @@ jobs:
           PACKAGE: ${{ inputs.package }}
           COMMENT: ${{ inputs.comment && github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
-          args=(--repo "$REPO" --pr "$PR" --title "$TITLE" --local-repo . --base HEAD^1 --head HEAD
+          args=(--repo "$REPO" --pr "$PR" --title "$TITLE" --local-repo pr --base HEAD^1 --head HEAD
                 --check-json "$RUNNER_TEMP/axiom-parity.json" --summary "$GITHUB_STEP_SUMMARY")
           [ -n "$PACKAGE" ] && args+=(--package "$PACKAGE")
           [ "$COMMENT" = "true" ] && args+=(--comment)
-          uv run --quiet --project .axiom-parity-tool/axiom-parity axiom-parity find "${args[@]}"
+          uv run --quiet --project tool/axiom-parity axiom-parity find "${args[@]}"
 
       - name: Verdict
         env:

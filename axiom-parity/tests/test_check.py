@@ -237,3 +237,20 @@ def test_report_json_round_trip(hub):
     r = run(hub, "axiom: rulespec-us#1416 queued")
     assert json.loads(json.dumps(r.to_json()))["claims"][0]["status"] == "queued"
     copy.deepcopy(r)
+
+
+def test_cli_crash_is_a_warning_in_warn_mode(monkeypatch, tmp_path, capsys):
+    from axiom_parity import cli
+
+    def boom(args):
+        raise RuntimeError("API down")
+
+    monkeypatch.setattr(cli, "_check", boom)
+    summary = tmp_path / "s.md"
+    args = cli.build_parser().parse_args(
+        ["check", "--repo", "PolicyEngine/policyengine-us", "--pr", "1", "--mode", "warn", "--summary", str(summary)]
+    )
+    assert cli.cmd_check(args) == 0
+    assert "::warning" in capsys.readouterr().out
+    args.mode = "enforce"
+    assert cli.cmd_check(args) == 2

@@ -26,6 +26,16 @@ def _write(path: str | None, text: str) -> None:
 
 
 def cmd_check(args: argparse.Namespace) -> int:
+    try:
+        return _check(args)
+    except Exception as err:  # noqa: BLE001 - a tooling failure must not read as a rule violation
+        level = "warning" if args.mode == "warn" else "error"
+        print(f"::{level} title=Axiom parity::the check could not run: {type(err).__name__}: {err}")
+        _write(args.summary, f"## Axiom parity\n\nThe check could not run: `{type(err).__name__}: {err}`.\n")
+        return 0 if args.mode == "warn" else 2
+
+
+def _check(args: argparse.Namespace) -> int:
     gh = GitHub()
     repo = args.repo
     package = args.package or package_for_repo(repo)

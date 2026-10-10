@@ -98,6 +98,11 @@ def _saved_issues(path: str, repo: str) -> list[tuple[dict, list[dict]]]:
 
 
 def run_find(args: argparse.Namespace) -> int:
+    check = (
+        json.loads(Path(args.check_json).read_text()) if args.check_json and Path(args.check_json).exists() else None
+    )
+    if check is not None and not check.get("applies"):
+        return 0  # no policy files changed: nothing to suggest
     gh = GitHub()
     package = args.package or package_for_repo(args.repo)
     paths = PolicyPaths(package)
@@ -140,9 +145,6 @@ def run_find(args: argparse.Namespace) -> int:
         for doc, group in group_by_document(proposals).items()
     }
 
-    check = (
-        json.loads(Path(args.check_json).read_text()) if args.check_json and Path(args.check_json).exists() else None
-    )
     md = render(proposals, unmapped, policy, check, drafts)
     if args.json:
         Path(args.json).write_text(json.dumps(to_json(proposals, unmapped, drafts), indent=2), encoding="utf-8")
