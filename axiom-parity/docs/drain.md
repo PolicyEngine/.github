@@ -8,10 +8,10 @@ The PR check stops new parity debt from slipping through. This document covers t
 |---|---|---|
 | Open pe-parity issues (ever closed) | 83 (0) | 175 (0) |
 | Pass the dispatch-ready lint | 79 | 84 |
-| Lint-ready, every target citation in the pinned corpus release, and every requested module resolved to a citation | 18 | 44 |
-| Also clear of the encoder owner's blocked-module list | 18 | 26 |
-| Also clear of the encoder owner's blocked citations and the pause on manual paths | 16 | 20 |
-| Also clear of the encoder owner's dispatch-preparation verdicts (US documents only) | 16 | 9 |
+| Lint-ready, every target citation in the pinned corpus release, and no hold on the work it asks for | 17 | 43 |
+| Also clear of the encoder owner's blocked-module list | 17 | 25 |
+| Also clear of the encoder owner's blocked citations and the pause on manual paths | 15 | 19 |
+| Also clear of the encoder owner's dispatch-preparation verdicts (US documents only) | 15 | 8 |
 | Pinned corpus release | `uk-rulespec-2026-09-07` | `us-rulespec-2026-08-08-obbb-alien-snap` |
 
 The main lint failures:
@@ -41,8 +41,9 @@ So 2 of the 12 could be dispatched that day, and 2 more need only an issue updat
 
 Some lint-ready issues are held for the work they ask for, whatever their citations:
 
-- 9 ask for a change to an assembled pipeline, which the encoder owner says a signed run does not make (`--work-holds`, below). Examples are the Universal Credit and Housing Benefit composed pipelines and `us/policies/income_tax/taxable_income_pipeline.yaml`.
-- 8 ask for work on a module and give no corpus citation for it: five name a state statute module whose section the issue never cites in corpus form, and three name a guidance module. One issue, rulespec-uk#390, is in both groups.
+- 10 ask for a change to an assembled pipeline, which the encoder owner says a signed run does not make (`--work-holds`, below). Examples are the Universal Credit and Housing Benefit composed pipelines and `us/policies/income_tax/taxable_income_pipeline.yaml`.
+- 13 ask for work on a module and give no corpus citation for it. Five name a state statute module whose section the issue never cites in corpus form, four a guidance module, three the Universal Credit program file, and one a state resident-core module.
+- Two issues, rulespec-uk#390 and #396, are in both groups.
 
 Two earlier versions of this plan overcounted, at 25 documents and then at 16 documents completing 15 issues. The first grouped an issue under its first citation's document only, so one run could mix jurisdictions, and it read targets from an issue's last comment only. The second took a module as a target only when its own sentence had a verb such as "encode", so a numbered list of modules under one "Encode these:" line went unread (rulespec-uk#429).
 
@@ -76,7 +77,7 @@ So one model encode from the 121 GPT-6 runs is on `main`. rulespec-uk `main` has
 
 1. **The encoder fails most runs.** The Axiom eng hub classified all 106 failures from 2026-09-24 to 10-10 (`~/reviews/axiom-hub/jobs/encode-throughput/work-a2/REPORT-A3.md`):
    - Source-completeness refusals explain 49.
-   - Missing or repealed corpus text explains 10.
+   - Missing or repealed corpus source text explains 8.
    - 82 failed runs escalated to Sol and still failed. The report counts 83 escalations in them: 79 from GPT-6 Luna and 4 from GPT-5.6 Terra. The run ended at the same gate before and after escalation in 27 of the 82, and at a different one in 55.
    - A failed run waited a median of 28 minutes for the protected job to start (86 minutes for runs since 2026-09-29), against 14 minutes of encoding.
 2. **The encoder pin lags.** The encoder runs at axiom-encode `main`, and rulespec CI requires each manifest's `validation_execution.axiom_encode` to equal the pin. The US pin, in `.axiom/workflow-toolchain.toml`, was 105 commits behind; the UK pin, hardcoded in `repository-checks.yml`, was 1,909 behind.
@@ -98,8 +99,8 @@ So one model encode from the 121 GPT-6 runs is on `main`. rulespec-uk `main` has
      - the citation the issue labels as the one to encode;
      - every citation a finding names;
      - the citation on any line that only pairs a module with a citation ("`us-nm/statutes/7-2-18/13.yaml` — `us-nm/statute/7-2-18.13`");
-     - the citation of every module a finding names, unless the words around the module say it is something else: an import ("import X", "from X"), a deferral ("do not import X", "deferred dependency on X"), a precedent ("mirroring the existing X", "as X does") or a description ("X currently carries …", "keep X unchanged"). Each of these covers its own clause only.
-   - A module's citation is the one the issue gives for it or for the provision above it, else the one its path spells (federal US and UK only; a state module's path respells its section). When neither exists, the issue is held and the plan names the module.
+     - the citation of every module a finding names, unless the module's own clause says it is something else: an import ("import X", "from X"), a deferral ("do not import X", "deferred dependency on X"), a precedent ("mirroring the existing X", "as X does") or a description ("X currently carries …", "keep X unchanged"). A request in the clause ("encode", "add", "repair", "compose" and the like) wins over a description: "encode the deferred X" and "add it to the guarantee that X composes" ask for work on X.
+   - A module's citation is the one the issue gives for it or for the provision above it, else the one its path spells (federal US and UK statutes and regulations only; a state module's path respells its section, and a `policies/` or `programs/` path spells no citation). When neither exists, the issue is held and the plan names the module.
    - `a/b/{1,2}` is read as two paths, and "`6.yaml`, `9.yaml`" after a full path as its siblings.
    - Each target is filed under its source document: an Act or SI, a US Code section, a CFR part, a state code. A document is ready only if every issue with a target in it passes the lint, has a finding to paste, and has every target in the pin. The plan ranks the documents and prices the wave.
 
@@ -110,7 +111,7 @@ So one model encode from the 121 GPT-6 runs is on `main`. rulespec-uk `main` has
 
    A precedent or a module the finding only describes is not at stake. On the lint-ready, pinned issues this blocks 18 in rulespec-us and none in rulespec-uk, including the IRC §1 group.
 
-   `--blocked-citations` takes the encoder owner's list of citations to hold, each with a reason and whether paths below it are held too. It is repeatable, and it also reads the owner's dispatch-preparation verdicts, where every row (blocked, waiting for a ruling, or already dispatched) holds its citation. On 2026-10-10 that list had 350 entries: sources that change in the W6 corpus release, Title 26 text that selects on filing status, and paths missing from the pin or the corpus.
+   `--blocked-citations` takes the encoder owner's list of citations to hold, each with a reason and whether paths below it are held too. It is repeatable, and it also reads the owner's dispatch-preparation verdicts, where every row (blocked, waiting for a ruling, or already dispatched) holds its citation. On 2026-10-10 that list had 351 entries: sources that change in the W6 corpus release, Title 26 text that selects on filing status, and paths missing from the pin or the corpus.
 
    `--work-holds` takes the encoder owner's list of modules that a signed run does not edit, with its rule for why. Its first use is assembled pipelines: modules composed from other modules, where the change an issue asks for is a reviewed hand edit. An issue is held when a finding, or a line pairing a module with a citation, asks for work on a listed module. An issue that only imports from one is not held. The plan prints the owner's evidence for each module and its rule once. On 2026-10-10 the list had 261 modules (254 in rulespec-us, 7 in rulespec-uk); 28 of them (21 US, 7 UK) are listed on their file name alone.
 

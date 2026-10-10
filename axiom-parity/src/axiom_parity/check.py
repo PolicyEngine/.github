@@ -148,17 +148,43 @@ class Context:
         return Resolver(self.source)
 
 
-_RULED_OUT = re.compile(
-    r"\b(?:not|no|without|except|excluding|never|nor)\s+(?:\w+\s+){0,2}[\s(\[{`\"'“]*$", re.IGNORECASE
+_NEGATOR = re.compile(r"\b(?:not|no|without|except|excluding|never|nor|neither)\b|n't\b", re.IGNORECASE)
+_SCAN = re.compile(
+    r"(?P<open>[(\[{])|(?P<close>[)\]}])|(?P<end>[;:]|[.!?]\s+(?=[A-Z`]))|"
+    r"(?P<status>(?<![\w/-])(?:encoded-correct|encoded|queued|debt)(?![\w-]))|"
+    r"(?P<neg>\b(?:not|no|without|except|excluding|never|nor|neither)\b|n't\b)",
+    re.IGNORECASE,
 )
 
 
+def _ruled_out(text: str, at: int) -> bool:
+    """Is the reference at ``text[at]`` named in the reach of a negation?
+
+    A negation reaches to the end of its own bracket group, nested groups
+    included: "(not (`a`, `b`))" rules out both. A colon, a semicolon, a
+    sentence end or a status word ends its reach, so "(no new test is needed:
+    `t` covers it)" and "Not in Axiom yet, #5 queued (`t`)" keep `t`.
+    """
+    reach = [False]  # one flag per open group
+    for m in _SCAN.finditer(text, 0, at):
+        if m.group("open"):
+            reach.append(False)
+        elif m.group("close"):
+            if len(reach) > 1:
+                reach.pop()
+        elif m.group("neg"):
+            reach[-1] = True
+        else:
+            reach[-1] = False
+    return any(reach)
+
+
 def _affirmed(claim: Claim) -> list[TestRef]:
-    """The claim's test references, less any it names right after a negation."""
+    """The claim's test references, less any it names only to rule out."""
     out = []
     for t in claim.test_refs:
         at = claim.text.find(t.raw)
-        if at < 0 or not _RULED_OUT.search(claim.text[:at]):
+        if at < 0 or not _ruled_out(claim.text, at):
             out.append(t)
     return out
 

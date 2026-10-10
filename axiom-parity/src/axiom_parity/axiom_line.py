@@ -50,16 +50,18 @@ _NEGATION = re.compile(
 )
 # A negation left hanging before an aside still governs the status after it:
 # "is not (yet) queued", "is not, as of Oct. 10, queued", "(not yet) queued",
-# "will (soon) be queued". Hanging means the aside opens (or the parenthesis
-# closes) right after the negation, so "(not #2) queued" and "Not in Axiom yet,
-# #5 queued" still claim queued. Its reach ends at a hard break, at a reference
+# "will (soon) be queued", "cannot be (yet) queued". Hanging means the aside opens
+# (or the parenthesis closes) before the negation has anything but an auxiliary
+# or an adverb after it, so "(not #2) queued" and "Not in Axiom yet, #5 queued"
+# still claim queued. Its reach ends at a hard break, at a reference
 # (the negation has found its object, or a new subject has started) and at
 # another status word.
 _HANGING = re.compile(
     r"(?:\b(?:not|never|hardly|barely|scarcely|no longer|once|until|if|unless|might|may|could|would|should|will|shall|"
     r"cannot|to be|"
     r"yet to be|needs? to be|must be)|n't)"
-    r"(?:\s+(?:yet|currently|really|actually|quite|fully|already|now|still|ever))*\s*[,()]",
+    r"(?:\s+(?:be|been|being|to|yet|currently|really|actually|quite|fully|already|now|still|ever))*"
+    r"\s*(?:[,()]|-\s)",  # an aside opens with a comma, a bracket or a spaced dash
     re.IGNORECASE,
 )
 _HARD_BREAK = re.compile(r"[;:]|[.!?]\s+(?=[A-Z`])|\bbut\b", re.IGNORECASE)
@@ -68,7 +70,23 @@ _REFERENCE = re.compile(
     re.IGNORECASE,
 )
 # Markdown emphasis around a word says nothing: "is not **queued**" denies queued.
-_EMPHASIS = re.compile(r"\*\*|(?<![\w*])\*(?=[^\s*])|(?<=[^\s*])\*(?![\w*])|(?<!\w)__(?=\S)|(?<=\S)__(?!\w)")
+_UNDERSCORE_EMPHASIS = re.compile(r"(?<![\w/#.:`-])_+(?=[A-Za-z0-9`])|(?<=[A-Za-z0-9`])_+(?![\w/#.:`-])")
+
+
+def without_emphasis(text: str) -> str:
+    """The text with every emphasis mark gone, however deeply nested: ``***queued***`` is ``queued``.
+
+    An asterisk means nothing else on an axiom line. Underscores go only at a
+    word's edge, so rule and test names keep theirs.
+    """
+    text = text.replace("*", "")
+    while True:
+        stripped = _UNDERSCORE_EMPHASIS.sub("", text)
+        if stripped == text:
+            return text
+        text = stripped
+
+
 _NA_START = re.compile(
     r"^\s*(?:\*\*|__|`)?n\s*/\s*a(?:\*\*|__|`)?(?![\w])\s*(?P<reason>.*)$", re.IGNORECASE | re.DOTALL
 )
@@ -208,7 +226,7 @@ def _hanging_negation(before: str) -> bool:
         between = before[hang.end() :]
         if _HARD_BREAK.search(between) or _STATUS_WORD.search(between):
             continue
-        opener = hang.group(0)[-1]
+        opener = hang.group(0).rstrip()[-1]
         if opener == "(":
             close = between.find(")")
             if close < 0:
@@ -216,6 +234,8 @@ def _hanging_negation(before: str) -> bool:
             after_aside = between[close + 1 :]
         elif opener == ",":
             after_aside = between.rsplit(",", 1)[-1]
+        elif opener == "-":
+            after_aside = re.split(r"\s-(?:\s|$)", " " + between)[-1]
         else:
             after_aside = between
         if not _REFERENCE.search(after_aside):
@@ -365,8 +385,8 @@ def _has_refs(text: str) -> bool:
 
 def parse_line(rest: str, line_no: int = 0, items: list[str] | tuple[str, ...] = ()) -> AxiomLine:
     """Parse the text after ``axiom:`` (and any continuation bullets) into claims."""
-    rest = _EMPHASIS.sub("", norm_dashes(rest))
-    items = [_EMPHASIS.sub("", norm_dashes(i)) for i in items]
+    rest = without_emphasis(norm_dashes(rest))
+    items = [without_emphasis(norm_dashes(i)) for i in items]
     line = AxiomLine(raw=rest, line_no=line_no)
     if not rest.strip():
         line.problems.append("empty axiom line")
@@ -387,7 +407,9 @@ def parse_line(rest: str, line_no: int = 0, items: list[str] | tuple[str, ...] =
             own = _claims_from(item, line_no)
             if own:
                 lead.extend(own)
-            elif inherited and _has_refs(item):
+            # A bullet that says anything about a status speaks for itself: "- #5 is not
+            # queued" must not inherit "queued" from the line above.
+            elif inherited and _has_refs(item) and not _STATUS_WORD.search(item):
                 lead.append(_claim(inherited, item, line_no))
     line.claims.extend(lead)
     if not line.claims:

@@ -220,15 +220,23 @@ def _without_inputs(lines: list[str]) -> list[str]:
 _RESULT_COLUMN = re.compile(r"\b(?:expect\w*|outputs?|results?|outcomes?)\b", re.IGNORECASE)
 
 
+def _cells(row: str) -> list[str]:
+    return [c.strip() for c in row.strip().strip("|").split("|")]
+
+
 def _result_table(lines: list[str]) -> bool:
-    """A table whose header names a result column, with at least one row under it."""
+    """A table whose header names a result column, with a result filled in under it."""
     rows: list[str] = []
     for line in [*lines, ""]:
         if _TABLE.match(line):
             rows.append(line)
             continue
-        if len(rows) >= 3 and _RESULT_COLUMN.search(rows[0]):
-            return True
+        header = _cells(rows[0]) if rows else []
+        columns = [n for n, cell in enumerate(header) if _RESULT_COLUMN.search(cell)]
+        for row in rows[2:]:
+            cells = _cells(row)
+            if any(n < len(cells) and re.search(r"\w", cells[n]) for n in columns):
+                return True
         rows = []
     return False
 
@@ -351,6 +359,12 @@ _FINDING_STATEMENT = re.compile(
     re.IGNORECASE,
 )
 _FIELD = re.compile(r"review[_\s-]?finding", re.IGNORECASE)
+# A finding that opens by saying there isn't one yet: "unavailable until the encoder owner approves it."
+_OPENS_DEFERRED = re.compile(
+    r"^\W*(?:\w+\W+){0,3}?(?:unavailable|pending|forthcoming|awaiting|awaited|tbd|tbc|todo|none|n/a|"
+    r"not (?:yet|available|written|ready)|to follow|to come|to be (?:written|supplied|added|confirmed))\b",
+    re.IGNORECASE,
+)
 
 
 def _introduces_finding(line: str) -> bool:
@@ -421,12 +435,17 @@ def _finding_at(lines: list[str], i: int) -> tuple[str | None, int]:
     if heading and not _FIELD.search(heading.group("title")):
         return None, i + 1
     titled = bool(heading) or bool(label and _FIELD.search(label.group("title")))
+    inline = ""  # text on a label's own line that starts the finding itself
     if titled:
         title = (heading or label).group("title")
-        # A label's short remainder is part of the title: "**review finding** (pending):".
-        if label and len(label.group("after")) <= 40:
-            title += " " + label.group("after")
-        if _FINDING_NEGATED.search(title) or _FINDING_DEFERRED.search(title):
+        after = label.group("after").strip() if label else ""
+        if after.endswith(":") or len(after) <= 40:
+            # The rest of the label's line is still the label: "**review finding** (pending):",
+            # "**Review finding:** unavailable until the encoder owner approves:".
+            title += " " + after
+        else:
+            inline = after
+        if _FINDING_NEGATED.search(title) or _FINDING_DEFERRED.search(title) or _OPENS_DEFERRED.match(inline):
             return None, i + 1  # "## review_finding (pending)" promises a finding; it doesn't give one
     elif not _introduces_finding(line):
         return None, i + 1  # "No review_finding is supplied." mentions the field; it doesn't give one
@@ -435,6 +454,8 @@ def _finding_at(lines: list[str], i: int) -> tuple[str | None, int]:
     if label and titled and label.group("after").strip():
         plain.append(label.group("after").strip())
     for n, nxt in enumerate(lines[i + 1 : i + 80], start=i + 1):
+        if inline and (re.match(r"^\s*(```|~~~)", nxt) or _QUOTE.match(nxt)):
+            break  # the label's own line began the finding; a quote below it is something else
         if re.match(r"^\s*(```|~~~)", nxt):
             if fenced:
                 quoted_end = n + 1
@@ -527,16 +548,29 @@ _NAMED_OUTPUT = re.compile(
 )
 
 
+# What follows a name can make it an input after all: "a_b_c as a new input", "a_b_c, a leaf input".
+_DESIGNATED_INPUT = re.compile(
+    r"^`?\s*(?:[,(]\s*)?(?:(?:as|is|are|being|to be|will be|to|among|in|into)\s+)?(?:(?:an?|the)\s+)?"
+    r"(?:(?:new|leaf|opaque|free|supplied|required|additional|optional|raw)\s+){0,3}inputs?\b",
+    re.IGNORECASE,
+)
+
+
 def _named_output(finding: str) -> re.Match[str] | None:
     """The first declaration of an output in the finding, or None.
 
-    A declaration whose own clause speaks of an input or an import ("Add an input
-    rule a_b_c", "the rule imported from …") declares something else.
+    A declaration is skipped when its clause speaks of an input or an import
+    before the name ("Add an input rule a_b_c", "the rule imported from …"), or
+    when the words right after the name make it an input ("Add a rule a_b_c as
+    a new input").
     """
     for m in _NAMED_OUTPUT.finditer(finding):
         clause = re.split(r"[.!?;:]\s|\n", finding[: m.start()])[-1] + m.group(0)
-        if not re.search(r"\binputs?\b|\bimport\w*\b", clause, re.IGNORECASE):
-            return m
+        if re.search(r"\binputs?\b|\bimport\w*\b", clause, re.IGNORECASE):
+            continue
+        if _DESIGNATED_INPUT.match(finding[m.end() :]):
+            continue
+        return m
     return None
 
 

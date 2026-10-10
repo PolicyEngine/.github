@@ -20,7 +20,15 @@ from typing import Any
 from .finder.draft import module_path_for
 from .finder.propose import document_of
 from .github import GitHub
-from .issue_lint import _ARTIFACT, _CORPUS_SINGULAR, _JURIS, expand_braces, lint_issue, review_findings
+from .issue_lint import (
+    _ARTIFACT,
+    _CORPUS_SINGULAR,
+    _JURIS,
+    _LIST_MARKER,
+    expand_braces,
+    lint_issue,
+    review_findings,
+)
 from .refs import norm_dashes
 
 # Measured model spend per completed targeted-signed-reencode run, GPT-6 Luna
@@ -134,8 +142,9 @@ def _explicit_targets(text: str, cites: list[str]) -> list[str]:
 # A module named in running text: a path (with or without ".yaml") or a legal id.
 # The plural kind tells a module ("us/statutes/…") from a corpus citation ("us/statute/…").
 # A trailing slash makes it a directory ("at the matching uk/statutes/ukpga/2014/28/ paths").
+_MODULE_KINDS = "statutes|regulations|policies|legislation|programs"
 _MODULE_NAME = re.compile(
-    rf"(?<![\w/-])(?P<juris>{_JURIS})[/:](?P<kind>statutes|regulations|policies|legislation)/"
+    rf"(?<![\w/-])(?P<juris>{_JURIS})[/:](?P<kind>{_MODULE_KINDS})/"
     r"(?P<rest>[\w./:\-]*\w)(?P<dir>/)?(?:#[\w.]+)?"
 )
 # Why a finding names a module. Unless the words around it say otherwise, a named
@@ -144,39 +153,69 @@ _MODULE_NAME = re.compile(
 WORK, IMPORT, MENTION, DEFERRED = "work", "import", "mention", "deferred"
 _CLAUSE_STARTS = re.compile(r"[,;]|\b(?:but|and|then)\b", re.IGNORECASE)
 _LIST_GOES_ON = re.compile(r"^[\s,()/]*(?:(?:and|or|&|to)[\s,()/]*)?$", re.IGNORECASE)
+# A request for work. When one stands between the start of the sentence (or the
+# module before) and this module, the module is work whatever describes it:
+# "encode the deferred X", "add it to the guarantee that X composes", "encode X as a module".
+_REQUESTS = re.compile(
+    r"\b(?:re-?encode|encode|create|write|add|repair|replace|extend|change|correct|update|compose|wire|complete|"
+    r"finali[sz]e|fix|split|move|rename|remove|delete)\b",
+    re.IGNORECASE,
+)
 # "Declare a deferred dependency on X", "do not import X", "without importing X", "62.yaml defers X".
+# The bare adjective is not one: "encode the deferred X" asks for X.
 _DEFERS = re.compile(
-    r"\bdefer\w*\b|\bblocked_by\b|do(?:es)? not import|don't import|must not import|never import|not import\b|"
-    r"without importing|rather than import|instead of import",
+    r"deferred dependenc|\bdefers\b|\bdeferring\b|\bblocked_by\b|do(?:es)? not import|don't import|"
+    r"must not import|never import|not import\b|without importing|rather than import|instead of import",
     re.IGNORECASE,
 )
 _DEFERRED_AFTER = re.compile(r"^\s+(?:cannot|can't|must not|should not|is not to) be imported", re.IGNORECASE)
 _INTO = re.compile(r"\binto\s*$", re.IGNORECASE)  # "import it into X": X is edited
 _IMPORTS = re.compile(r"\bimport\w*\b|\bfrom\b[^,;()]{0,30}$", re.IGNORECASE)
-# Words that make X a description, a precedent or a condition, not a request:
+# After a request, only a word that makes X the model to copy turns it into a mention:
+# "encode it mirroring the existing X".
+_PRECEDENT = re.compile(
+    r"\b(?:existing|matching|mirror(?:s|ing)?|like|unlike|precedents?|same as|as in|model+ed on|following)\b"
+    r"[^,;:()]*$",
+    re.IGNORECASE,
+)
+# With no request in sight, these make X a description, a precedent or a condition:
 # "matching the existing England module X", "defined in X", "once X has …", "keep X".
 _MENTIONS = re.compile(
     r"\b(?:existing|matching|mirror(?:s|ing)?|like|unlike|precedents?|sibling|same as|as in|model+ed on|"
     r"follow(?:s|ing)?|see|cf|compare|defined in|declared in|once|until|when|if|unless|because|since|whereas|"
-    r"while|keep|leave|preserve|retain)\b[^,;:()]*$|\b(?:that|which)\s*$",
+    r"while|keep|leave|preserve|retain|stays? in|remains? in|lives? in|kept in|left in)\b[^,;:()]*$",
     re.IGNORECASE,
 )
 # "X does", "X currently defers …", "X carries the aggregate", "X's blocked_by": X is the
-# subject of a description. "X needs a rule" and "X lacks a case" are requests.
+# subject of a description. The verbs are listed: "X as a module" and "X needs a rule" are not here.
 _MENTIONED_AFTER = re.compile(
-    r"^(?:'s\b|\s+(?:does|do|did|already|currently|still|now|today|has|have|is|are|was|must (?:still )?pass|"
-    r"(?!needs\b|requires\b|lacks\b|misses\b|gets\b|gains\b|becomes\b)[a-z]+s\b))",
+    r"^(?:'s\b|\s+(?:does|do|did|already|currently|still|now|today|has|have|had|is|are|was|were|carries|outputs|"
+    r"defines|states|takes|uses|reads|imports|exposes|encodes|covers|models|labels|composes|holds|contains|"
+    r"includes|gives|provides|sets|keeps|treats|applies|computes|derives|returns|remains|stays|"
+    r"must (?:still )?pass)\b)",
     re.IGNORECASE,
 )
-# "following the precedent min(a, 3) in X": the precedent word reaches X unless a request comes between.
-_PRECEDENT = re.compile(r"\b(?:precedents?|existing|mirror(?:s|ing)?|matching)\b", re.IGNORECASE)
-_REQUESTS = re.compile(
-    r"\b(?:re-?encode|encode|create|write|add|repair|replace|extend|change|correct|update|compose|wire)\b",
-    re.IGNORECASE,
-)
+# "following the precedent min(a, 3) in X": within its clause the precedent word reaches X across brackets.
+_PRECEDENT_ANYWHERE = re.compile(r"\b(?:precedents?|existing|mirror(?:s|ing)?|matching)\b", re.IGNORECASE)
+
+
+def _own_clause(gap: str) -> str:
+    """The part of ``gap`` after its last clause start that is not inside brackets."""
+    depth, start = 0, 0
+    breaks = {m.start(): m.end() for m in _CLAUSE_STARTS.finditer(gap)}
+    for i, ch in enumerate(gap):
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth = max(0, depth - 1)
+        elif depth == 0 and i in breaks:
+            start = breaks[i]
+    return gap[start:]
+
+
 # "uk/statutes/ukpga/1992/14/6.yaml, 9.yaml and 77.yaml": the short names are siblings of the first.
 _SIBLINGS = re.compile(
-    r"(?P<dir>(?<![\w/-])[a-z]{2}(?:-[a-z0-9]+)*/(?:statutes|regulations|policies|legislation)/(?:[\w.:\-]+/)*)"
+    rf"(?P<dir>(?<![\w/-])[a-z]{{2}}(?:-[a-z0-9]+)*/(?:{_MODULE_KINDS})/(?:[\w.:\-]+/)*)"
     r"(?P<first>[\w.:\-]+\.yaml)(?P<rest>(?:(?:\s*,\s*|\s+(?:and|or|to)\s+)[\w.:\-]+\.yaml\b(?!/))+)"
 )
 
@@ -265,20 +304,25 @@ def _modules_in(sentence: str) -> list[tuple[str, str]]:
         if out and _LIST_GOES_ON.match(gap):
             pass  # the list's first module decided
         else:
-            lead = _CLAUSE_STARTS.split(gap)[-1]
-            precedent = [p for p in _PRECEDENT.finditer(gap) if not _REQUESTS.search(gap, p.end())]
-            # "(X)" on its own is a pointer to where something lives, unless the clause asks for work.
-            aside = lead.rstrip().endswith("(") and after.lstrip().startswith(")") and not _REQUESTS.search(lead)
-            if _DEFERS.search(lead) or _DEFERRED_AFTER.match(after):
+            # The module's own clause decides. A request in it makes the module work
+            # unless what stands between the request and the module says otherwise.
+            lead = _own_clause(gap)
+            requests = list(_REQUESTS.finditer(lead))
+            tail = lead[requests[-1].end() :] if requests else lead
+            comparison = re.search(r"\bas\s*$", lead) and re.match(r"\s+(?:does|do|did)\b", after)
+            if _DEFERS.search(tail) or _DEFERRED_AFTER.match(after):
                 kind = DEFERRED
             elif _INTO.search(lead):
                 kind = WORK
-            elif _IMPORTS.search(lead):
+            elif _IMPORTS.search(tail):
                 kind = IMPORT
-            elif _MENTIONS.search(lead.rstrip("( ") + " ") or _MENTIONED_AFTER.match(after) or precedent or aside:
-                kind = MENTION
+            elif requests:
+                kind = MENTION if _PRECEDENT.search(tail) or comparison else WORK
             else:
-                kind = WORK
+                # "(X)" on its own is a pointer to where something lives.
+                aside = lead.rstrip().endswith("(") and after.lstrip().startswith(")")
+                described = _MENTIONS.search(lead.rstrip("( ") + " ") or _MENTIONED_AFTER.match(after)
+                kind = MENTION if described or aside or _PRECEDENT_ANYWHERE.search(lead) else WORK
         out.append((normal_module(m.group(0)), kind))
         last_end = m.end()
     return out
@@ -316,7 +360,8 @@ def _pair_line(line: str) -> tuple[list[str], list[str]]:
     cites = _corpus_citations(line)
     if not modules or not cites:
         return [], []
-    rest = _CORPUS_SINGULAR.sub("", _MODULE_NAME.sub("", line))
+    # "1. module — citation" and "2) module — citation" are list items like "- module — citation".
+    rest = _CORPUS_SINGULAR.sub("", _MODULE_NAME.sub("", _LIST_MARKER.sub("", line)))
     return (modules, cites) if _PAIR_FILLER.match(rest) else ([], [])
 
 
