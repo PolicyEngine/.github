@@ -307,3 +307,74 @@ def test_braces_expand_to_paths():
         "uk/regulations/uksi/2006/213/2.yaml, uk/regulations/uksi/2006/213/19.yaml"
     )
     assert expand_braces("a set {x, y} of things") == "a set {x, y} of things"
+
+
+@given(st.integers(0, 1_000_000), st.integers(0, 1_000_000))
+@settings(max_examples=50, deadline=None)
+def test_property_a_list_of_input_facts_needs_an_output(income, children):
+    prefix = READY_ISSUE_BODY.split("## Companion tests")[0]
+    for case in (
+        f"- inputs: income: {income}; children: {children}",
+        f"- income: {income}\n- children: {children}",
+        f"- income is {income} and there are {children} children",
+    ):
+        body = prefix + "## Companion tests\n\n" + case + "\n"
+        assert "companion_tests" in lint_issue({"body": body}).missing, case
+
+
+def test_a_yaml_case_counts_whatever_the_order_of_its_keys():
+    prefix = READY_ISSUE_BODY.split("## Companion tests")[0] + "## Companion tests\n\n"
+    first = "- input:\n    income: 0\n  output:\n    credit: 0\n  name: zero_income\n"
+    last = "- name: zero_income\n  output:\n    credit: 0\n  input:\n    income: 0\n"
+    assert lint_issue({"body": prefix + first}).ready
+    assert lint_issue({"body": prefix + last}).ready
+    only_inputs = "- name: zero_income\n  input:\n    income: 0\n    children: 2\n"
+    assert "companion_tests" in lint_issue({"body": prefix + only_inputs}).missing
+
+
+def test_an_input_rule_is_not_a_required_output():
+    body = _without("Required outputs").replace(
+        "> Encode 26 USC 32(d) as its own module at us/statutes/26/32/d.yaml. The separated-spouse rule must be\n"
+        "> stated from its statutory elements.",
+        "> Add an input rule a_b_c to this module. Preserve the existing statutory text and its proof excerpts as they are.",
+    )
+    assert "required_outputs" in lint_issue({"body": body}).missing
+
+
+@given(
+    st.sampled_from(
+        [
+            "**Review finding (pending):**",
+            "**Review finding is unavailable:**",
+            "## review_finding (to follow)",
+            "**Review finding: none yet**",
+            "- **review finding** (pending):",
+        ]
+    )
+)
+def test_a_deferred_title_does_not_borrow_the_law(title):
+    from axiom_parity.issue_lint import review_finding_text
+
+    body = _without("review_finding (paste as-is)").replace("## Law (verbatim)\n", f"## Law (verbatim)\n\n{title}\n")
+    assert review_finding_text(body) is None
+    assert "review_finding" in lint_issue({"body": body}).missing
+
+
+def test_back_to_back_finding_labels_keep_both_findings():
+    from axiom_parity.issue_lint import review_findings
+
+    first = (
+        "Encode reg 3 as its own module and state each amount with a proof excerpt from the text of the regulation. "
+        * 2
+    )
+    second = "> " + "Re-encode reg 4 in place and correct the taper rate it states today, with its proof excerpt. " * 2
+    md = f"**Review finding one**\n{first}\n**Review finding two**\n{second}\n"
+    assert [f[:13] for f in review_findings(md)] == ["Encode reg 3 ", "Re-encode reg"]
+
+
+def test_several_brace_groups_expand_to_every_path():
+    from axiom_parity.issue_lint import expand_braces
+
+    assert expand_braces("uk/regulations/uksi/2006/213/schedule/{6,9}/paragraph/{1,2}.yaml") == ", ".join(
+        f"uk/regulations/uksi/2006/213/schedule/{s}/paragraph/{p}.yaml" for s in (6, 9) for p in (1, 2)
+    )

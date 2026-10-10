@@ -502,7 +502,8 @@ def test_a_modules_line_lists_targets_and_a_precedent_is_not_one():
         "uk/regulation/ssi/2021/249/36",
         "uk/regulation/wsi/2013/3029/schedule/1/paragraph/5",
     ]
-    assert "uk/regulations/uksi/2012/2885/schedule/1/paragraph/11.yaml" in row.modules  # still checked for a block
+    # A precedent is neither written nor imported, so a block on it doesn't hold the issue.
+    assert "uk/regulations/uksi/2012/2885/schedule/1/paragraph/11.yaml" not in row.modules
 
 
 def test_sibling_module_names_are_spelled_out():
@@ -512,3 +513,128 @@ def test_sibling_module_names_are_spelled_out():
         "Modules: uk/statutes/ukpga/1992/14/6.yaml, uk/statutes/ukpga/1992/14/9.yaml and "
         "uk/statutes/ukpga/1992/14/77.yaml. Then 3.yaml."
     )
+
+
+def _with_finding(finding: str, body: str = READY_ISSUE_BODY) -> dict:
+    head, _, rest = body.partition("## review_finding (paste as-is)")
+    quoted = "\n".join("> " + line for line in finding.splitlines())
+    return {
+        "number": 1,
+        "body": head
+        + "## review_finding (paste as-is)\n\n"
+        + quoted
+        + "\n\n## Companion"
+        + rest.partition("## Companion")[2],
+    }
+
+
+def test_a_numbered_worklist_of_modules_is_all_targets():
+    finding = (
+        "Encode these modules from the statutory elements with grounded proof excerpts and companion cases:\n"
+        "1. `us/statutes/26/32/a.yaml`: expose the lawful output.\n"
+        "2. `us/statutes/26/32/b.yaml`, `c.yaml`: the same, for the phaseout."
+    )
+    row = issue_inputs("R", _with_finding(finding), [])
+    assert row.targets == ["us/statute/26/32/d"] + [f"us/statute/26/32/{x}" for x in "abc"]
+    (batch,) = plan([row], corpus={"us/statute/26/32/d"})
+    assert not batch.ready and batch.issues[0].blocked == ["not in the pinned corpus release"]
+
+
+def test_a_deferral_covers_only_its_own_clause():
+    blocked = {"us/statutes/26/1/c.yaml"}
+    both = issue_inputs(
+        "R",
+        _with_finding(
+            "Import us/statutes/26/1/c.yaml, but do not import us/statutes/26/1/h.yaml. "
+            "Preserve all statutory proof excerpts and pass the provided companion cases."
+        ),
+        [],
+    )
+    assert "us/statutes/26/1/c.yaml" in both.modules and "us/statutes/26/1/h.yaml" not in both.modules
+    (batch,) = plan([both], corpus={"us/statute/26/32/d"}, blocked_modules=blocked)
+    assert not batch.ready
+    without = issue_inputs(
+        "R",
+        _with_finding(
+            "Encode us/statutes/26/32/e.yaml without importing us/statutes/26/1/h.yaml, from the " + "text. " * 20
+        ),
+        [],
+    )
+    assert without.targets == ["us/statute/26/32/d", "us/statute/26/32/e"]
+    assert "us/statutes/26/1/h.yaml" not in without.modules
+
+
+def test_a_precedent_or_a_description_is_neither_work_nor_an_import():
+    blocked = {"us/statutes/26/32/c.yaml"}
+    for wording in (
+        "Encode it at us/statutes/26/32/d.yaml, mirroring the existing us/statutes/26/32/c.yaml.",
+        "Encode it at us/statutes/26/32/d.yaml, as us/statutes/26/32/c.yaml does.",
+        "us/statutes/26/32/c.yaml currently carries the amount as an input. Encode us/statutes/26/32/d.yaml.",
+        "Encode us/statutes/26/32/d.yaml. Keep us/statutes/26/32/c.yaml unchanged.",
+        "Encode us/statutes/26/32/d.yaml, using the relation (us/statutes/26/32/c.yaml) for the total.",
+    ):
+        row = issue_inputs("R", _with_finding(wording + " State each element with its proof excerpt. " * 3), [])
+        assert row.targets == ["us/statute/26/32/d"], wording
+        (batch,) = plan([row], corpus={"us/statute/26/32/d"}, blocked_modules=blocked)
+        assert batch.ready, wording
+    # A request about the same module is work, however it is phrased.
+    for wording in (
+        "us/statutes/26/32/c.yaml needs a rule for the separated spouse.",
+        "(3) In us/statutes/26/32/c.yaml, compose the deduction into Step 2.",
+        "Imports: us:statutes/26/1/h#net_capital_gain. Modules: us/statutes/26/32/c.yaml.",
+    ):
+        row = issue_inputs("R", _with_finding(wording + " State each element with its proof excerpt. " * 3), [])
+        assert "us/statute/26/32/c" in row.targets, wording
+
+
+def test_work_on_a_module_with_no_citation_to_be_found_is_held():
+    finding = "Encode R.C. 5747.01(A)(10) at us-oh/statutes/5747/01/a/10.yaml from the ingested operative row. " * 2
+    body = READY_ISSUE_BODY.replace("us/statute/26/32/d", "us-oh/statute/5747.02").replace(
+        "us/statutes/26/32/d.yaml", "us-oh/statutes/5747/02.yaml"
+    )
+    row = issue_inputs("R", _with_finding(finding, body), [])
+    assert row.unresolved == ["us-oh/statutes/5747/01/a/10.yaml"]
+    (batch,) = plan([row], corpus={"us-oh/statute/5747.02"})
+    assert not batch.ready and "us-oh/statutes/5747/01/a/10.yaml" in batch.issues[0].blocked[0]
+    # The issue's citation for the section above the module resolves it.
+    part = "Encode the part at us-mt/statutes/15-30-2131/1/g.yaml from the statutory text, with proof excerpts. " * 2
+    body = READY_ISSUE_BODY.replace("us/statute/26/32/d", "us-mt/statute/15-30-2131").replace(
+        "us/statutes/26/32/d.yaml", "us-mt/statutes/15-30-2131.yaml"
+    )
+    row = issue_inputs("R", _with_finding(part, body), [])
+    assert not row.unresolved and row.targets == ["us-mt/statute/15-30-2131"]
+
+
+def test_lines_that_pair_a_module_with_a_citation_declare_targets():
+    pairs = (
+        "\nProposed destinations and citations:\n\n"
+        "- us-nm/statutes/7-2-39.yaml/.test.yaml — us-nm/statute/7-2-39\n"
+        "- us-nm/statutes/7-2-18/13.yaml/.test.yaml — us-nm/statute/7-2-18.13\n"
+        "| us-nm/statutes/7-2-18/1.yaml | us-nm/statute/7-2-18.1 |\n"
+        "\nThe credit follows us-nm/statutes/7-2-18/15.yaml, which cites us-nm/statute/7-2-18.15 today.\n"
+    )
+    body = READY_ISSUE_BODY.replace("us/statute/26/32/d", "us-nm/statute/7-2-39").replace(
+        "us/statutes/26/32/d.yaml", "us-nm/statutes/7-2-39.yaml"
+    )
+    row = issue_inputs("R", {"number": 1, "body": body + pairs}, [])
+    assert row.targets == ["us-nm/statute/7-2-39", "us-nm/statute/7-2-18.13", "us-nm/statute/7-2-18.1"]
+    assert "us-nm/statutes/7-2-18/13.yaml" in row.modules and "us-nm/statutes/7-2-18/15.yaml" not in row.modules
+
+
+def test_backticked_sibling_names_and_incomplete_paths():
+    finding = (
+        "Modules: `uk/statutes/ukpga/1992/14/6.yaml`, `9.yaml` and `77.yaml`. Northern Ireland is out of scope "
+        "until rulespec-uk has a uk/regulations/nisr tree. See uk/regulation/uksi/2012/2885/schedule/1/paragraph for the rest."
+    )
+    row = issue_inputs("R", _with_finding(finding + " State each with its proof excerpt." * 3), [])
+    assert [t for t in row.targets if t.startswith("uk/")] == [f"uk/statute/ukpga/1992/14/{n}" for n in (6, 9, 77)]
+
+
+def test_a_pin_citation_may_hold_spaces(tmp_path):
+    from axiom_parity.drain import load_pin_file
+
+    pin = tmp_path / "pin.txt"
+    pin.write_text("us-ak/regulation/aac/title-7/chapter-45/7 AAC 45.010\n!us/statute/26/1/x\n\nus/statute/26/32/d\n")
+    present, repealed = load_pin_file(str(pin))
+    assert present == {"us-ak/regulation/aac/title-7/chapter-45/7 AAC 45.010", "us/statute/26/32/d"}
+    assert repealed == {"us/statute/26/1/x"}

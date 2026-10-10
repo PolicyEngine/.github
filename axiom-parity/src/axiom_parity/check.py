@@ -148,7 +148,9 @@ class Context:
         return Resolver(self.source)
 
 
-_RULED_OUT = re.compile(r"\b(?:not|no|without|except|excluding|never|nor)\s+(?:\w+\s+){0,2}[`\"'“]?$", re.IGNORECASE)
+_RULED_OUT = re.compile(
+    r"\b(?:not|no|without|except|excluding|never|nor)\s+(?:\w+\s+){0,2}[\s(\[{`\"'“]*$", re.IGNORECASE
+)
 
 
 def _affirmed(claim: Claim) -> list[TestRef]:

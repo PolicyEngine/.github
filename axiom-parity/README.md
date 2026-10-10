@@ -57,12 +57,22 @@ A queued issue must let the signed encoder run without further research. Its bod
 Each element is found under a heading that names it (`## Law (verbatim)`, `## Required outputs`, `## review_finding (paste as-is)`, `## Companion tests`), or after an inline cue that introduces it, such as "Required outputs: `a`, `b`" or "Paste this as `review_finding`:". The lint reports where it found each element. These rules keep it honest:
 
 - An element with a `TODO` in it is unfinished and counts as missing. The finder's drafts therefore never pass until a person completes them.
-- Companion tests must state an expected outcome. Input facts ("input income: 0", or the lines under an `input:` key) are not one.
+- Companion tests must state an expected outcome: "holds", "expected: 250", "→", "= 250", "gives 250", "allowed", a value under an `output:` key, a numeric table cell, a table with an expected column, or a described case followed by its result ("Pay £40,000, loss £10,000: relief £10,000"). Input facts are not one: "input income: 0", the lines under an `input:` key, or a bare "income: 0" or "income is 0".
 - A required output is a declared output: a section or cue that lists outputs, or a finding that says "Output `x_y_z`", "Add a Judgment x_y_z" or "Add … to `9.yaml#rule`". "Add an input named x_y_z" declares an input.
-- A cue hands the finding over only if it does so now. "`review_finding` will be supplied later:" and "`review_finding` is unavailable:" hand over nothing, and an inline cue takes the quote or code block right below it, not one further down.
+- A cue or heading hands the finding over only if it does so now. "`review_finding` will be supplied later:" and "**Review finding (pending):**" hand over nothing, and an inline cue takes the quote or code block right below it, not one further down.
 - The `review_finding` is whatever `drain-plan` could paste into the encoder. One extractor decides both, so a lint-ready issue always has dispatch input.
 
 The lint checks presence, not legal completeness. An issue that leaves a question of interpretation open can still pass.
+
+## Limits
+
+The `axiom:` line, the issues and their findings are free text, and the tools read them with rules, not understanding. Where a rule has to guess, it guesses towards the safe side: an issue is not ready, a claim is not made, a module is requested work, a target is not in the pin. The limits that remain:
+
+- **Coverage.** The check verifies the claims a PR makes, not that every changed provision has one.
+- **Denials.** A status word after a negation in its own clause, or after a negation left hanging before an aside ("is not (yet) queued"), is not a claim. A denial phrased some other way ("queued status is wrong") can still read as a claim.
+- **Presence, not substance.** The lint finds each element and checks that it is finished. It does not judge whether the law is right, whether the outputs are the right ones, or whether a stated outcome is correct. A described case followed by a number after a colon counts as stating its result.
+- **Targets.** `drain-plan` reads targets and modules out of findings. It treats a module as requested work unless the words around it mark an import, a deferral, a precedent or a description, and it holds an issue when it can't find a citation for requested work. A module it wrongly counts adds a target or a hold; the encoder owner confirms the targets before dispatching.
+- **Rulespec state.** Lookups use rulespec `main` today, so a claim can pass because a module landed after the PR merged.
 
 ## Rollout
 
@@ -101,8 +111,8 @@ The tests use an in-memory GitHub. Besides example cases, they include property 
 - adding a passing claim never breaks a passing PR;
 - a drain batch is ready if and only if every issue is lint-ready and every target is in the pin;
 - every drain batch holds one source document and one jurisdiction, each target sits in exactly one batch, and a batch's run count is its citations over 16, rounded up;
-- an aside never cancels a negation: "is not (…) queued" and "is not, …, queued" claim nothing;
-- an input is never an expected outcome, and a named input is never a required output;
+- an aside or emphasis never cancels a negation: "is not (…) queued", "is not, …, queued" and "is not **queued**" claim nothing;
+- an input is never an expected outcome, however many are listed, and a named input is never a required output;
 - the URL mapper never contradicts 427 URL-to-citation pairs checked against the corpus (differential; `tests/fixtures/url_vectors.json`).
 
 `scripts/replay_history.py` replays the check over merged PRs to measure compliance and calibrate the parser. With `--rulespec-dir` and `--issues-file` it reads rulespec and the open issues from local copies, and uses the API only for closed issues and rulespec PRs.

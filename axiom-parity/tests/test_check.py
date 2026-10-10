@@ -399,3 +399,13 @@ def test_a_test_named_only_to_rule_it_out_is_not_evidence(hub):
         "(no new test is needed: `three_children_social_security_excess` covers it)"
     )
     assert not run(hub, stated).would_fail
+
+
+def test_a_ruled_out_test_stays_ruled_out_inside_brackets(hub):
+    own = "axiom: us:statutes/26/24/d encoded-correct (not (`three_children_social_security_excess`))"
+    assert codes(run(hub, own)) == {"encoded-correct-no-test"}
+    sibling = (
+        "axiom: us:statutes/26/24/d encoded-correct; "
+        "rulespec-us#1416 queued (excluding [`three_children_social_security_excess`])"
+    )
+    assert codes(run(hub, sibling)) == {"encoded-correct-no-test"}

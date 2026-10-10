@@ -226,3 +226,33 @@ def test_bold_na_after_a_claim_is_still_a_claim():
 def test_adjective_with_an_adverb_is_not_a_claim():
     claims = parse_line("rulespec-us#1416 queued. The already queued federal rule covers the rest.").claims
     assert [c.status for c in claims] == [QUEUED]
+
+
+@given(
+    ASIDE,
+    st.sampled_from(
+        [
+            "is not ({a}) **queued**",
+            "is not **queued**",
+            "is not, {a} Oct. 10, queued",
+            "is *not* ({a}) queued",
+            "will ({a}) be queued",
+            "may, {a}, be __queued__",
+        ]
+    ),
+)
+@settings(max_examples=200)
+def test_property_emphasis_and_dated_asides_do_not_make_a_denial_a_claim(aside, wording):
+    assert not parse_line("rulespec-us#1416 " + wording.format(a=aside)).claims
+
+
+def test_a_hanging_negation_ends_at_the_next_status_or_reference():
+    assert [c.status for c in parse_line("rulespec-us#1416 is not (yet) encoded but queued").claims] == [QUEUED]
+    assert [c.status for c in parse_line("rulespec-us#9 is not (yet) encoded; rulespec-us#1416 **queued**").claims] == [
+        QUEUED
+    ]
+    assert [c.status for c in parse_line("Not (yet) in Axiom: rulespec-us#1416 queued").claims] == [QUEUED]
+    # A reference inside the aside does not rescue the claim; one after it does.
+    assert not parse_line("rulespec-us#1416 will (per rulespec-us#5) be queued").claims
+    assert not parse_line("rulespec-us#1416 is not, as of rulespec-us#5, queued").claims
+    assert [c.status for c in parse_line("It is not, in fact, encoded, rulespec-us#1416 queued").claims] == [QUEUED]

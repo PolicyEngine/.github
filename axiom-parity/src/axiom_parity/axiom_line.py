@@ -43,21 +43,32 @@ _STATUS_WORD = re.compile(r"(?<![\w/-])(encoded-correct|encoded|queued|debt)(?![
 # "is not yet encoded", "until it is encoded", "might be queued", "ready to be
 # queued": prose about a status, not a claim of it.
 _NEGATION = re.compile(
-    r"(?:\b(?:not|never|no longer|once|until|if|unless|might|may|could|would|should|will|shall|cannot|to be|"
+    r"(?:\b(?:not|never|hardly|barely|scarcely|no longer|once|until|if|unless|might|may|could|would|should|will|shall|"
+    r"cannot|to be|"
     r"yet to be|needs? to be|must be)|n't)\s+(?:\w+\s+){0,4}$",
     re.IGNORECASE,
 )
 # A negation left hanging before an aside still governs the status after it:
-# "is not (yet) queued", "is not, in fact, queued", "(not yet) queued". The aside is
-# the only thing between them, so "(not #2) queued" and "Not in Axiom, #5 queued"
-# still claim queued.
-_NEG = r"(?:\b(?:not|never|no longer|cannot)|n't)"
-_ADVERBS = r"(?:\s+(?:yet|currently|really|actually|quite|fully|already|now|still|ever))*"
-_ASIDE_NEGATION = re.compile(
-    rf"(?:{_NEG}{_ADVERBS}\s*(?:\([^()]*\)|,[^,;:.()]*,)|\(\s*(?:(?:still|currently)\s+)?{_NEG}{_ADVERBS}\s*\))"
-    r"\s*(?:\w+\s+){0,4}$",
+# "is not (yet) queued", "is not, as of Oct. 10, queued", "(not yet) queued",
+# "will (soon) be queued". Hanging means the aside opens (or the parenthesis
+# closes) right after the negation, so "(not #2) queued" and "Not in Axiom yet,
+# #5 queued" still claim queued. Its reach ends at a hard break, at a reference
+# (the negation has found its object, or a new subject has started) and at
+# another status word.
+_HANGING = re.compile(
+    r"(?:\b(?:not|never|hardly|barely|scarcely|no longer|once|until|if|unless|might|may|could|would|should|will|shall|"
+    r"cannot|to be|"
+    r"yet to be|needs? to be|must be)|n't)"
+    r"(?:\s+(?:yet|currently|really|actually|quite|fully|already|now|still|ever))*\s*[,()]",
     re.IGNORECASE,
 )
+_HARD_BREAK = re.compile(r"[;:]|[.!?]\s+(?=[A-Z`])|\bbut\b", re.IGNORECASE)
+_REFERENCE = re.compile(
+    r"#\d+|/(?:pull|issues)/\d+|[a-z]{2}(?:-[a-z0-9]+)*[:/](?:statutes?|regulations?|policies|legislation|guidance)/",
+    re.IGNORECASE,
+)
+# Markdown emphasis around a word says nothing: "is not **queued**" denies queued.
+_EMPHASIS = re.compile(r"\*\*|(?<![\w*])\*(?=[^\s*])|(?<=[^\s*])\*(?![\w*])|(?<!\w)__(?=\S)|(?<=\S)__(?!\w)")
 _NA_START = re.compile(
     r"^\s*(?:\*\*|__|`)?n\s*/\s*a(?:\*\*|__|`)?(?![\w])\s*(?P<reason>.*)$", re.IGNORECASE | re.DOTALL
 )
@@ -186,6 +197,32 @@ _ADJECTIVE = re.compile(
 )
 
 
+def _hanging_negation(before: str) -> bool:
+    """Is the status word after ``before`` still in the reach of a hanging negation?
+
+    The aside itself is skipped: "will (per #5) be queued" is still a denial.
+    After it, a reference ends the reach; a hard break or another status word
+    ends it anywhere.
+    """
+    for hang in _HANGING.finditer(before):
+        between = before[hang.end() :]
+        if _HARD_BREAK.search(between) or _STATUS_WORD.search(between):
+            continue
+        opener = hang.group(0)[-1]
+        if opener == "(":
+            close = between.find(")")
+            if close < 0:
+                continue
+            after_aside = between[close + 1 :]
+        elif opener == ",":
+            after_aside = between.rsplit(",", 1)[-1]
+        else:
+            after_aside = between
+        if not _REFERENCE.search(after_aside):
+            return True
+    return False
+
+
 def _status_hits(text: str) -> list[re.Match[str]]:
     depths = _depth_map(text)
     hits = []
@@ -197,7 +234,7 @@ def _status_hits(text: str) -> list[re.Match[str]]:
         # "is not encoded but is queued" still claims queued.
         breaks = [b.end() for b in _CLAUSE_BREAK.finditer(before)]
         clause = before[breaks[-1] :] if breaks else before
-        if _NEGATION.search(clause) or _ASIDE_NEGATION.search(before) or _ADJECTIVE.search(before):
+        if _NEGATION.search(clause) or _hanging_negation(before) or _ADJECTIVE.search(before):
             continue
         hits.append(m)
     return hits
@@ -328,8 +365,8 @@ def _has_refs(text: str) -> bool:
 
 def parse_line(rest: str, line_no: int = 0, items: list[str] | tuple[str, ...] = ()) -> AxiomLine:
     """Parse the text after ``axiom:`` (and any continuation bullets) into claims."""
-    rest = norm_dashes(rest)
-    items = [norm_dashes(i) for i in items]
+    rest = _EMPHASIS.sub("", norm_dashes(rest))
+    items = [_EMPHASIS.sub("", norm_dashes(i)) for i in items]
     line = AxiomLine(raw=rest, line_no=line_no)
     if not rest.strip():
         line.problems.append("empty axiom line")

@@ -75,19 +75,25 @@ _INLINE = {
     ),
     "companion_tests": re.compile(r"companion (?:tests?|cases?)", re.IGNORECASE),
 }
-# Issues write several provisions of one document as "uk/regulation/uksi/2006/213/{2,19,13D}".
-_BRACES = re.compile(
-    r"(?P<head>(?<![\w/-])[a-z]{2}(?:-[a-z0-9]+)*[/:][\w.:\-]+(?:/[\w.:\-]+)*/)\{(?P<alts>[^{}\n]{1,200})\}"
-    r"(?P<tail>[^\s,;()`'\"]*)"
-)
+# Issues write several provisions of one document as "uk/regulation/uksi/2006/213/{2,19,13D}",
+# sometimes with more than one group: "…/{6,9}/{1,2}.yaml".
+_BRACED = re.compile(r"(?<![\w/-])[a-z]{2}(?:-[a-z0-9]+)*[/:][\w.:\-/]*(?:\{[^{}\n]{1,200}\}[\w.:\-/]*)+")
+_GROUP = re.compile(r"\{([^{}]*)\}")
 
 
 def expand_braces(text: str) -> str:
     """``a/b/{1,2}.yaml`` -> ``a/b/1.yaml, a/b/2.yaml``, so each path is read as a path."""
-    return _BRACES.sub(
-        lambda m: ", ".join(f"{m['head']}{alt.strip()}{m['tail']}" for alt in m["alts"].split(",") if alt.strip()),
-        text,
-    )
+
+    def spell(m: re.Match[str]) -> str:
+        paths = [""]
+        last = 0
+        for g in _GROUP.finditer(m.group(0)):
+            alts = [alt.strip() for alt in g.group(1).split(",") if alt.strip()] or [""]
+            paths = [p + m.group(0)[last : g.start()] + alt for p in paths for alt in alts]
+            last = g.end()
+        return ", ".join(p + m.group(0)[last:] for p in paths)
+
+    return _BRACED.sub(spell, text)
 
 
 _HEADING = re.compile(r"^\s{0,3}(#{1,6})\s+(?P<title>.+?)\s*#*\s*$")
@@ -123,9 +129,13 @@ def _sections(text: str, source: str, labels: bool = True) -> list[Section]:
     section.
     """
     sections = [Section("", [], source)]
+    fenced = False
     for line in text.splitlines():
-        h = _HEADING.match(line)
-        lab = _LABEL.match(line) if labels and not h else None
+        if _FENCE.match(line):
+            fenced = not fenced
+        # Inside a code block, "# case 1" is a YAML comment, not a heading.
+        h = _HEADING.match(line) if not fenced else None
+        lab = _LABEL.match(line) if labels and not h and not fenced else None
         if h:
             sections.append(Section(h.group("title"), [], source))
         elif lab:
@@ -141,21 +151,33 @@ _INLINE_QUOTE = re.compile(r"[“\"]([^”\"]{12,600}?)[”\"]")
 # An unfinished element: the finder's drafts mark what a person must fill in.
 _TODO = re.compile(r"\b(?:TODO|TBD|FIXME|TBC)\b|<\s*fill[^>]*>", re.IGNORECASE)
 # A companion case states its expected outcome. A list number, an input amount
-# or a section number is not one, so a bare digit doesn't count.
+# or a section number is not one, so a bare digit doesn't count, and neither does
+# a bare "key: 0" or "income is 0", which could as well be an input. A result
+# after a colon counts when a described case (four words or more) comes before it.
 _OUTCOME = re.compile(
-    r"\bnot_holds\b|\bholds?\b|\bdoes(?: not|n't) hold\b|\bexpect\w*|→|=>|"
-    r"(?:=|\bgives?|\breturns?|\byields?|\bequals?|\bis|\bare|\bto be|\bshould be|:)\s*[-–]?[£$€]?\d|"
+    r"\bnot_holds\b|\bholds?\b|\bdoes(?: not|n't) hold\b|\bexpect(?:ed|s)?\b[^.\n]*?(?:[:=]|\d)|→|=>|"
+    r"(?:=|\bgives?|\breturns?|\byields?|\bequals?|\bshould be|\bmust be)\s*[-–]?[£$€]?\d|"
     r"\btrue\b|\bfalse\b|\b(?:in)?eligible\b|\bzero\b|\bnil\b|\bpass(?:es)?\b|\bfails?\b|"
+    r"\b(?:allowed|denied|disallowed)\b|\boutputs?\s*:\s*\S|"
+    # "Pay £40,000, loss £10,000: relief £10,000": a described case, then its result.
+    r"(?:[\w£$€%,.()'’-]+\s+){3,}[\w£$€%,.()'’-]+\s*:\s*(?:[a-z][\w -]{0,40}\s)?[-–]?[£$€]?\d|"
     r"\|\s*[-–]?[£$€]?\d[\d,.]*%?\s*\|",
     re.IGNORECASE,
 )
 _LIST_MARKER = re.compile(r"^\s*(?:>\s*)*(?:[-*+]|\d+[.)])\s+")
-# A case's input facts: an ``input:`` block, or an "input income: 0" clause that
-# runs until the result starts.
-_INPUT_BLOCK = re.compile(r"^\s*(?:[-*+]\s+)?(?:\*\*|`)?inputs?(?:\*\*|`)?\s*:\s*$", re.IGNORECASE)
+# A structured case: an ``input:`` key and an ``output:`` (or ``expected:``) key, each
+# with its facts indented below it. The key's own column decides what is below it,
+# so "- input:" and a sibling "  output:" are two blocks.
+_BLOCK_KEY = re.compile(
+    r"^(?P<lead>\s*(?:[-*+]\s+)?)(?:\*\*|`)?(?P<key>inputs?|outputs?|expected|expect)(?:\*\*|`)?\s*:\s*$",
+    re.IGNORECASE,
+)
+_KEY_VALUE = re.compile(r"^\s*(?:[-*+]\s+)?[`\w.:/#\-]+\s*:\s*\S")
+# An "input income: 0" clause runs until a result is announced. A semicolon or a
+# comma only separates one input fact from the next.
 _INPUT_LABEL = re.compile(r"\binputs?\b", re.IGNORECASE)
 _RESULT_STARTS = re.compile(
-    r"→|=>|->|;|\b(?:expect\w*|outputs?|then|should|gives?|returns?|yields?|result\w*)\b", re.IGNORECASE
+    r"→|=>|->|\b(?:expect\w*|outputs?|then|should|gives?|returns?|yields?|result\w*)\b", re.IGNORECASE
 )
 
 
@@ -163,18 +185,24 @@ def _without_inputs(lines: list[str]) -> list[str]:
     """The lines with input facts removed, so that only stated results are left.
 
     "- input income: 0" gives a fact, not an expected outcome. So does every
-    line under an ``input:`` key, until the indentation comes back.
+    line under an ``input:`` key. A "key: value" line under an ``output:`` or
+    ``expected:`` key is a stated result, and is marked as one.
     """
     out: list[str] = []
-    block: int | None = None
+    block: tuple[int, bool] | None = None  # (the key's column, is it an input block)
     for raw in lines:
         indent = len(raw) - len(raw.lstrip())
         if block is not None:
-            if not raw.strip() or indent > block:
+            if not raw.strip():
+                continue
+            if indent > block[0]:
+                if not block[1] and _KEY_VALUE.match(raw):
+                    out.append("expected: " + raw.strip())
                 continue
             block = None
-        if _INPUT_BLOCK.match(raw):
-            block = indent
+        key = _BLOCK_KEY.match(raw)
+        if key:
+            block = (len(key.group("lead")), key.group("key").lower().startswith("input"))
             continue
         line = _LIST_MARKER.sub("", raw)
         pos = 0
@@ -189,8 +217,24 @@ def _without_inputs(lines: list[str]) -> list[str]:
     return out
 
 
+_RESULT_COLUMN = re.compile(r"\b(?:expect\w*|outputs?|results?|outcomes?)\b", re.IGNORECASE)
+
+
+def _result_table(lines: list[str]) -> bool:
+    """A table whose header names a result column, with at least one row under it."""
+    rows: list[str] = []
+    for line in [*lines, ""]:
+        if _TABLE.match(line):
+            rows.append(line)
+            continue
+        if len(rows) >= 3 and _RESULT_COLUMN.search(rows[0]):
+            return True
+        rows = []
+    return False
+
+
 def _states_outcome(lines: list[str]) -> bool:
-    return any(_OUTCOME.search(line) for line in _without_inputs(lines))
+    return _result_table(lines) or any(_OUTCOME.search(line) for line in _without_inputs(lines))
 
 
 def _finished(lines: list[str]) -> list[str]:
@@ -255,13 +299,20 @@ def _introduces_content(element: str, line: str, following: list[str]) -> bool:
     if re.match(r"\s*(?:below|above|listed|in the)\b", rest, re.I):
         return False
     block = [rest.lstrip(" \t:,;—–-(*`_")]
+    fenced = False
     for nxt in following:
-        if _HEADING.match(nxt):
+        if _FENCE.match(nxt):
+            fenced = not fenced
+        if _HEADING.match(nxt) and not fenced:
             break
         if not nxt.strip():
-            if any(b.strip() for b in block[1:]):
+            # Cases often run over several paragraphs: a list, a note, then a table of
+            # expected values. Other elements end at the first blank line.
+            if element != "companion_tests" and any(b.strip() for b in block[1:]):
                 break
             continue
+        if element == "companion_tests" and _LABEL.match(nxt):
+            break
         block.append(nxt)
     if any(_TODO.search(b) for b in block):
         return False
@@ -338,6 +389,14 @@ def _yaml_value(lines: list[str], i: int) -> tuple[str, int]:
     return " ".join(t for t in block if t).strip(), end
 
 
+def _names_finding(line: str) -> bool:
+    """Is the line a bold label or an inline cue for a review_finding of its own?"""
+    if not _FIELD.search(line) or _YAML_KEY.match(line):
+        return False
+    label = _LABEL.match(line)
+    return bool(label and _FIELD.search(label.group("title"))) or _introduces_finding(line)
+
+
 def _finding_at(lines: list[str], i: int) -> tuple[str | None, int]:
     """The finding that ``lines[i]`` introduces, and the index after the lines it used."""
     line = lines[i]
@@ -362,7 +421,14 @@ def _finding_at(lines: list[str], i: int) -> tuple[str | None, int]:
     if heading and not _FIELD.search(heading.group("title")):
         return None, i + 1
     titled = bool(heading) or bool(label and _FIELD.search(label.group("title")))
-    if not titled and not _introduces_finding(line):
+    if titled:
+        title = (heading or label).group("title")
+        # A label's short remainder is part of the title: "**review finding** (pending):".
+        if label and len(label.group("after")) <= 40:
+            title += " " + label.group("after")
+        if _FINDING_NEGATED.search(title) or _FINDING_DEFERRED.search(title):
+            return None, i + 1  # "## review_finding (pending)" promises a finding; it doesn't give one
+    elif not _introduces_finding(line):
         return None, i + 1  # "No review_finding is supplied." mentions the field; it doesn't give one
     quoted, plain, fenced = [], [], False
     quoted_end = plain_end = i + 1
@@ -388,6 +454,8 @@ def _finding_at(lines: list[str], i: int) -> tuple[str | None, int]:
             continue
         if _HEADING.match(nxt):
             break
+        if _names_finding(nxt):
+            break  # the next finding's label: what follows it is not this one's
         if quoted:
             if nxt.strip():
                 break
@@ -459,6 +527,19 @@ _NAMED_OUTPUT = re.compile(
 )
 
 
+def _named_output(finding: str) -> re.Match[str] | None:
+    """The first declaration of an output in the finding, or None.
+
+    A declaration whose own clause speaks of an input or an import ("Add an input
+    rule a_b_c", "the rule imported from …") declares something else.
+    """
+    for m in _NAMED_OUTPUT.finditer(finding):
+        clause = re.split(r"[.!?;:]\s|\n", finding[: m.start()])[-1] + m.group(0)
+        if not re.search(r"\binputs?\b|\bimport\w*\b", clause, re.IGNORECASE):
+            return m
+    return None
+
+
 def lint_texts(texts: list[tuple[str, str]]) -> LintResult:
     """Lint an issue given (source label, markdown) pairs: body, then comments."""
     result = LintResult()
@@ -525,7 +606,7 @@ def lint_texts(texts: list[tuple[str, str]]) -> LintResult:
         # The finding itself may name the outputs: "Add a Judgment x_holds_for_year",
         # "54.yaml outputs `person_earned_income`".
         for source, text in texts:
-            m = next((m for f in review_findings(text or "") if (m := _NAMED_OUTPUT.search(f))), None)
+            m = next((m for f in review_findings(text or "") if (m := _named_output(f))), None)
             if m:
                 result.found["required_outputs"] = f"{source}: review_finding names “{_snippet(m.group(0), 70)}”"
                 break
