@@ -11,7 +11,8 @@ The PR check stops new parity debt from slipping through. This document covers t
 | Lint-ready, every target citation in the pinned corpus release, and no hold on the work it asks for | 17 | 43 |
 | Also clear of the encoder owner's blocked-module list | 17 | 25 |
 | Also clear of the encoder owner's blocked citations and the pause on manual paths | 15 | 19 |
-| Also clear of the encoder owner's dispatch-preparation verdicts (US documents only) | 15 | 8 |
+| Also clear of the encoder owner's dispatch-preparation verdicts | 13 | 8 |
+| Also clear of its hold on the rulespec-uk route | 0 | 8 |
 | Pinned corpus release | `uk-rulespec-2026-09-07` | `us-rulespec-2026-08-08-obbb-alien-snap` |
 
 The main lint failures:
@@ -25,19 +26,26 @@ The unit of work is the source document. A signed run takes one primary citation
 
 The plan's own checks leave 16 documents: 4 UK and 12 US, holding 17 citations, one run each. Those 16 runs would complete 11 issues. Without the holds of 2026-10-10 (blocked citations, and manual paths paused), 26 documents and 29 citations pass, and their runs would complete 18 issues.
 
-**Passing the plan is necessary, not sufficient.** On 2026-10-10 the encoder owner prepared each of the 12 US documents for dispatch. By its account that means reading the pinned source text against the finding, and checking the existing module and manifest, the import closure and the encoder's admission code. Its verdicts (`prep-verdicts.json`, 19:25Z):
+**Passing the plan is necessary, not sufficient.** On 2026-10-10 the encoder owner prepared each of the 16 documents for dispatch. By its account that means reading the pinned source text against the finding, and checking the existing module and manifest, the import closure and the encoder's admission code. Its verdicts (`prep-verdicts.json`, as it stood at 20:28Z):
 
 | Verdict | Documents |
 |---|---|
-| Dispatched the same day, waiting on the signing approval | 2: `us-co/statute/39` (rulespec-us#1530), `us-nm/statute/7-2-18.13` (#1618) |
-| Runnable once the issue text is updated | 2: `us-nm/statute/7-2-18.1` and `7-2-39` (#1618) |
+| Dispatched the same day, waiting on the signing approval | 4: `us-co/statute/39` (rulespec-us#1530), and `us-nm/statute/7-2-18.13`, `7-2-18.1` and `7-2-39` (#1618) |
 | Waits on an encoder fix, axiom-encode#1819 | 5: `us-ok/statute/68-2906`, `us-az/statute/43-1072`, `us-va/statute/58.1` (2 citations), `us-in/statute/6-3-1-11`, `us-in/statute/6-3.1-21-6` |
-| Needs a ruling on the law | 1: `us/statute/42/1397gg` |
-| A form the finding relies on is not in the pin | 2: `us-mo/statute/143.177`, `us-or/statute/316.695` |
+| A source the finding relies on is not in the pin | 3: `us/statute/42/1397gg`, `us-mo/statute/143.177`, `us-or/statute/316.695` |
+| rulespec-uk has no working signed route | 4: `uk/regulation/uksi/2008/794` (rulespec-uk#386), and `uk/statute/ukpga/2021/26`, `2023/1` and `2026/11` (#440) |
 
-So 2 of the 12 could be dispatched that day, and 2 more need only an issue update. The plan cannot see what stopped the other 8: how the pinned text is laid out, an open question of law, or a second source a finding relies on without citing it in corpus form. The 4 UK documents had not been prepared.
+So 4 of the 16 were dispatched that day, and none of the other 12 can be. The plan cannot see what stopped them: how the pinned text is laid out, a second source a finding relies on without citing it in corpus form, or whether the rulespec repo can take a signed run at all.
 
-`drain-plan` reads the verdicts back as holds (`--blocked-citations` takes that file too). With them applied it lists the 4 UK documents: `uk/regulation/uksi/2008/794` (rulespec-uk#386) and three Acts for rulespec-uk#440.
+**rulespec-uk has no working signed route.** At rulespec-uk `1bdb983` and axiom-encode `63e292c`:
+
+- `targeted-signed-reencode.yml` reads `.axiom/workflow-toolchain.toml` from the rulespec checkout in its `Checkout RuleSpec-pinned axiom-compose` step, with no fallback when the file is missing. rulespec-uk has no such file: its `.axiom/` holds `toolchain.toml`, `repository-structure.yaml` and the ingest manifests.
+- rulespec-uk's `tests/test_repository_layout.py` asserts that `.axiom/encoding-manifests` holds no manifest at all. The encoder owner reports that a signed run always writes one.
+- Its checks run with the generated-file guard off (`run-generated-guard: false` in `repository-checks.yml`).
+
+The encoder owner has queued the route question for Max as one decision. Until it is settled every rulespec-uk issue is held, whatever the plan's other checks say. `drain-plan` carries that as `--blocked-citation-pattern '^uk[-/]'`.
+
+`drain-plan` reads the verdicts back as holds (`--blocked-citations` takes that file too). With the verdicts and the UK hold applied, it lists no document that is ready and not already dispatched.
 
 Some lint-ready issues are held for the work they ask for, whatever their citations:
 
@@ -124,7 +132,7 @@ The plan's order is a starting point. On 2026-10-10 the encoder owner added thre
 - hold three of the five pilot documents (Oklahoma, Arizona, Virginia) until axiom-encode#1819 merges, because a signed run is locked to the encoder at its dispatch commit;
 - treat status-selecting Title 26 provisions as blocked until the filing-status chain (26 USC 2, 7703, 6013, 152, 151) is encoded;
 - encode Ohio R.C. 5747.02 before the W6 corpus re-pin or wait for a successor release (d1251).
-4. **Pin-bump gate.** Before each wave, the rulespec repo's encoder pin must equal axiom-encode `main`. If it doesn't, the encoder owner lands a pin bump first. Moving the UK pin into `.axiom/workflow-toolchain.toml`, as US already does, makes that a one-file PR in both repos.
+4. **Pin-bump gate.** Before each wave, the rulespec repo's encoder pin must equal axiom-encode `main`. If it doesn't, the encoder owner lands a pin bump first. Moving the UK pin into `.axiom/workflow-toolchain.toml`, as US already does, makes that a one-file PR in both repos. rulespec-uk needs that file before the signed workflow can run there at all (see above).
 5. **Pilot.** Encode 5 ready documents, chosen by the encoder owner from the top of the plan once the failure taxonomy's fixes are in. The drain proceeds only if at least 3 of the 5 produce a rulespec PR that:
    - passes the required `validate` gate (generated-guard, proofs, companion tests);
    - carries the issue's companion cases.
@@ -159,7 +167,7 @@ The scarce resource is the signing approval, so the budget counts approvals. Ten
 
 Bundled runs have not been measured yet; the pilot will give the first figures. A hard cap of $40 a week sits above the p90 for a full week.
 
-The 16 documents that pass the plan hold at most 2 citations each, and only 2 to 4 of the 12 US ones survived preparation. So for now the drain is limited by encoder fixes, sources and the issues themselves, well before it reaches 10 approvals a week or the 160-citation ceiling.
+The 16 documents that pass the plan hold at most 2 citations each, and only 4 of them survived preparation. So for now the drain is limited by encoder fixes, sources, the rulespec-uk route and the issues themselves, well before it reaches 10 approvals a week or the 160-citation ceiling.
 
 The measured spend per successful run is $0.64. One of the 11 successful GPT-6 runs has its output on `main`, which puts the window's whole spend, $7.08, against one landed encode. One is too few to call a rate; the pilot's merged PRs will give the first usable figure.
 
@@ -172,7 +180,8 @@ cat pin-us.txt pin-uk.txt > pin.txt
 uv run axiom-parity drain-plan --corpus-citations pin.txt \
   --blocked-modules blocked-modules.json \
   --blocked-citations blocked-citations.json --blocked-citations prep-verdicts.json \
-  --blocked-citation-pattern /manual/ --work-holds assembled-pipelines.json \
+  --blocked-citation-pattern /manual/ --blocked-citation-pattern '^uk[-/]' \
+  --work-holds assembled-pipelines.json \
   --rulespec-dir TheAxiomFoundation/rulespec-us=../rulespec-us \
   --rulespec-dir TheAxiomFoundation/rulespec-uk=../rulespec-uk \
   --weekly-runs 10 --json plan.json --summary plan.md
