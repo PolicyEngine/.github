@@ -1,6 +1,6 @@
-"""``axiom-parity find``: suggest the axiom line for a PR.
+"""``axiom-parity suggest``: suggest the axiom line for a PR.
 
-    axiom-parity find --repo PolicyEngine/policyengine-uk --pr 2237 --local-repo . \\
+    axiom-parity suggest --repo PolicyEngine/policyengine-uk --pr 2237 --local-repo . \\
         --base origin/main --head HEAD
 
 It reads the reference URLs on the changed parameters and variables, maps
@@ -228,7 +228,7 @@ def render(
             "",
         ]
     out.append(
-        f"_Generated {dt.date.today().isoformat()} by `axiom-parity find`; module matches are by corpus citation and path, so check each one._"
+        f"_Generated {dt.date.today().isoformat()} by `axiom-parity suggest`; module matches are by corpus citation and path, so check each one._"
     )
     return "\n".join(out) + "\n"
 

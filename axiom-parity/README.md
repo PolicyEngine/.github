@@ -3,7 +3,7 @@
 Tooling for PolicyEngine's rule that every policy change in a country model is mirrored in Axiom RuleSpec ([CONTRIBUTING, Mirror policy changes in Axiom](../CONTRIBUTING.md#mirror-policy-changes-in-axiom)). Its commands:
 
 - **`check`** reads a PR's `axiom:` line and verifies what it cites against GitHub. The reusable workflow [`axiom-parity.yml`](../.github/workflows/axiom-parity.yml) runs it on every country-model PR.
-- **`find`** suggests the line. It maps the changed parameters' and variables' `reference` URLs to corpus citations, looks up RuleSpec modules and open `pe-parity` issues, and drafts a dispatch-ready issue when nothing covers a citation.
+- **`suggest`** suggests the line. It maps the changed parameters' and variables' `reference` URLs to corpus citations, looks up RuleSpec modules and open `pe-parity` issues, and drafts a dispatch-ready issue when nothing covers a citation.
 - **`lint-issue`** and **`backlog`** say whether `pe-parity` issues are dispatch-ready, one issue at a time or across the whole backlog.
 - **`corpus-pin`** and **`drain-plan`** plan a drain of that backlog through the signed encoder ([docs/drain.md](docs/drain.md)). They plan; they dispatch nothing.
 
@@ -72,13 +72,13 @@ Country repos call the workflow with `mode: warn` first. The job summary and ann
 cd axiom-parity
 uv run axiom-parity check --repo PolicyEngine/policyengine-uk --pr 2242 \
   --local-repo ../../policyengine-uk --base origin/main --head HEAD
-uv run axiom-parity find --repo PolicyEngine/policyengine-uk --pr 2242 \
+uv run axiom-parity suggest --repo PolicyEngine/policyengine-uk --pr 2242 \
   --local-repo ../../policyengine-uk --base origin/main --head HEAD
 uv run axiom-parity lint-issue TheAxiomFoundation/rulespec-us#1416
 uv run axiom-parity backlog --json backlog.json
 ```
 
-Set `GITHUB_TOKEN` (or `GH_TOKEN`). The check makes about 10 to 30 API calls per PR. `find` takes shallow, blobless, sparse clones of the rulespec repos it needs.
+Set `GITHUB_TOKEN` (or `GH_TOKEN`). The check makes about 10 to 30 API calls per PR. `suggest` takes shallow, blobless, sparse clones of the rulespec repos it needs.
 
 ## Tests
 

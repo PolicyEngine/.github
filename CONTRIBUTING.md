@@ -100,7 +100,7 @@ Use `queued` only when the signed encoder is blocked; record the blocker in the 
 
 Put each element under its own heading: `## Law (verbatim)`, `## Required outputs`, `## review_finding (paste as-is)` and `## Companion tests`. [rulespec-us#1416](https://github.com/TheAxiomFoundation/rulespec-us/issues/1416) is an example. RuleSpec modules come from the signed encoder and are never written by hand. If you are an external contributor and can't do this, write `axiom: needed` and a maintainer will follow up.
 
-The [Axiom parity workflow](.github/workflows/axiom-parity.yml) checks the line on every PR that changes parameters, variables or reforms. It confirms that each cited issue, PR, module and companion test exists and that queued issues are dispatch-ready. It also comments with suggested lines, found by mapping the changed files' `reference` URLs to Axiom modules and open issues, and drafts a dispatch-ready issue when nothing covers a provision. Run it locally with `uvx --from "git+https://github.com/PolicyEngine/.github#subdirectory=axiom-parity" axiom-parity find --help`.
+The [Axiom parity workflow](.github/workflows/axiom-parity.yml) checks the line on every PR that changes parameters, variables or reforms. It confirms that each cited issue, PR, module and companion test exists and that queued issues are dispatch-ready. It also comments with suggested lines, found by mapping the changed files' `reference` URLs to Axiom modules and open issues, and drafts a dispatch-ready issue when nothing covers a provision. Run it locally with `uvx --from "git+https://github.com/PolicyEngine/.github#subdirectory=axiom-parity" axiom-parity suggest --help`.
 
 ## Peer review
 

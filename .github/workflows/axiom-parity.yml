@@ -108,7 +108,7 @@ jobs:
                 --check-json "$RUNNER_TEMP/axiom-parity.json" --summary "$GITHUB_STEP_SUMMARY")
           [ -n "$PACKAGE" ] && args+=(--package "$PACKAGE")
           [ "$COMMENT" = "true" ] && args+=(--comment)
-          uv run --quiet --project tool/axiom-parity axiom-parity find "${args[@]}"
+          uv run --quiet --project tool/axiom-parity axiom-parity suggest "${args[@]}"
 
       - name: Verdict
         env:
