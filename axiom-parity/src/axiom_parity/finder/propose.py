@@ -50,6 +50,8 @@ class Proposal:
             return f"{m.legal_id} encoded-correct (`{m.test_path.rsplit('/', 1)[-1]}::{case}`)"
         if self.issues:
             i = self.issues[0]
+            if i.get("extend"):
+                return f"{i['repo']}#{i['number']} queued (extend it to cover {self.citation})"
             return f"{i['repo']}#{i['number']} queued"
         return f"<the pe-parity issue drafted below for {document_of(self.citation)}> queued"
 
@@ -112,7 +114,11 @@ def collect_references(files: list[str], read: Any, package: str) -> list[Refere
 
 def _issue_mentions(issue: dict[str, Any], comments: list[dict[str, Any]], needles: list[str]) -> bool:
     text = (issue.get("body") or "") + "\n" + "\n".join(c.get("body") or "" for c in comments)
-    return any(re.search(rf"(?<![\w/-]){re.escape(n)}(?![\w-])", text) for n in needles)
+    # A needle is a whole path ("us/statute/26/3" doesn't match "us/statute/26/32"). The
+    # first needle, the citation itself, also matches an issue about a part of it.
+    if needles and re.search(rf"(?<![\w/-]){re.escape(needles[0])}/[\w.:-]", text):
+        return True
+    return any(re.search(rf"(?<![\w/-]){re.escape(n)}(?![\w/-])", text) for n in needles)
 
 
 def propose(
@@ -144,7 +150,7 @@ def propose(
             p.modules = idx.match(path)
             for m in p.modules[:3]:
                 p.cases[m.module.path] = _cases_outputting(idx, m)
-        p.issues = _matching_issues(open_issues.get(repo, []), [path], repo)
+        p.issues = _matching_issues(open_issues.get(repo, []), _ancestors(path), repo, strict=False)
         proposals.append(p)
     for key, (hint, refs) in sorted(hints.items()):
         repo = _repo_for(hint.jurisdiction + "/")
@@ -158,6 +164,18 @@ def propose(
             open_issues.get(repo, []), [f"{hint.jurisdiction}/statute/{hint.section}", hint.section], repo, strict=False
         )
         proposals.append(p)
+    # A citation with no module and no issue of its own, in a document that
+    # already has an open issue, extends that issue rather than starting one.
+    by_doc: dict[str, list[dict[str, Any]]] = {}
+    for p in proposals:
+        if "/" in p.citation:
+            for i in p.issues:
+                by_doc.setdefault(document_of(p.citation), []).append(i)
+    for p in proposals:
+        if not p.modules and not p.issues and "/" in p.citation:
+            siblings = by_doc.get(document_of(p.citation), [])
+            if siblings:
+                p.issues = [{**siblings[0], "extend": True}]
     if pe_pr:
         # An open issue that already names this PE PR is the best queued candidate.
         for repo, issues in open_issues.items():
@@ -194,6 +212,16 @@ def _issue_row(issue: dict[str, Any], comments: list[dict[str, Any]], repo: str)
         "ready": res.ready,
         "missing": res.missing,
     }
+
+
+def _ancestors(citation: str) -> list[str]:
+    """The citation and its ancestors down to its source document, most specific first."""
+    doc_len = len(document_of(citation).split("/"))
+    segs = citation.split("/")
+    # Stop above the document itself: an issue about another provision of the
+    # same Act is a sibling (extend it), not a match.
+    out = ["/".join(segs[:i]) for i in range(len(segs), doc_len, -1)]
+    return out or [citation]
 
 
 def _matching_issues(issues, needles: list[str], repo: str, strict: bool = True) -> list[dict[str, Any]]:

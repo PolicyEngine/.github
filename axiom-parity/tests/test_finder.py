@@ -218,3 +218,32 @@ def test_document_grouping():
     groups = group_by_document([Proposal(c, True, []) for c in cites])
     assert sorted(groups) == ["uk/statute/ukpga/2003/14", "uk/statute/ukpga/2004/12"]
     assert len(groups["uk/statute/ukpga/2004/12"]) == 2
+
+
+def test_sibling_citation_extends_the_documents_open_issue(rs_tree):
+    idx = Index.build("TheAxiomFoundation/rulespec-uk", rs_tree, ["uk"])
+    refs = parameter_references(
+        "policyengine_uk/parameters/gov/x.yaml",
+        "metadata:\n  reference:\n    - href: https://www.legislation.gov.uk/ukpga/2004/12/section/227\n"
+        "    - href: https://www.legislation.gov.uk/ukpga/2004/12/section/228A/2\n",
+        "policyengine_uk",
+    )
+    issue = {"number": 444, "title": "AA", "html_url": "u", "body": "Encode uk/statute/ukpga/2004/12/227."}
+    proposals, _ = propose(
+        refs, {"TheAxiomFoundation/rulespec-uk": idx}, {"TheAxiomFoundation/rulespec-uk": [(issue, [])]}
+    )
+    by = {p.citation: p for p in proposals}
+    assert by["uk/statute/ukpga/2004/12/227"].line == "TheAxiomFoundation/rulespec-uk#444 queued"
+    assert by["uk/statute/ukpga/2004/12/228A/2"].line == (
+        "TheAxiomFoundation/rulespec-uk#444 queued (extend it to cover uk/statute/ukpga/2004/12/228A/2)"
+    )
+    from axiom_parity.finder.propose import group_by_document
+
+    assert group_by_document(proposals) == {}
+
+
+def test_issue_mentioning_a_parent_citation_matches():
+    from axiom_parity.finder.propose import _ancestors
+
+    assert _ancestors("us/regulation/20/416/1202/a") == ["us/regulation/20/416/1202/a", "us/regulation/20/416/1202"]
+    assert _ancestors("us/statute/26/32") == ["us/statute/26/32"]

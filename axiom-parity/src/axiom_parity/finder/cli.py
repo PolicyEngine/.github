@@ -196,7 +196,7 @@ def render(
             )
             iss = (
                 "<br>".join(
-                    f"[{i['repo'].split('/')[1]}#{i['number']}]({i['url']}) {'dispatch-ready' if i['ready'] else 'missing ' + ', '.join(i['missing'])}"
+                    f"[{i['repo'].split('/')[1]}#{i['number']}]({i['url']}) {'(extend) ' if i.get('extend') else ''}{'dispatch-ready' if i['ready'] else 'missing ' + ', '.join(i['missing'])}"
                     for i in p.issues[:3]
                 )
                 or "none"
