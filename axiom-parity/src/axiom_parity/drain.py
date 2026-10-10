@@ -180,7 +180,10 @@ def _legal_id(module_path: str) -> str:
 
 
 def plan(
-    rows: list[IssueInputs], corpus: set[str] | None = None, blocked_modules: set[str] | None = None
+    rows: list[IssueInputs],
+    corpus: set[str] | None = None,
+    blocked_modules: set[str] | None = None,
+    blocked_patterns: list[str] | None = None,
 ) -> list[Batch]:
     """Group issues by the source document of their first citation."""
     from .finder.draft import module_path_for
@@ -191,6 +194,10 @@ def plan(
             continue
         if corpus is not None and not all(in_pin(c, corpus) for c in r.targets):
             r.blocked.append("not in the pinned corpus release")
+        for pattern in blocked_patterns or []:
+            # A class of source the encoder owner has paused, e.g. "/manual/".
+            if any(re.search(pattern, c) for c in r.targets):
+                r.blocked.append(f"target matches the blocked pattern {pattern}")
         if blocked_modules:
             target_modules = {module_path_for(c) for c in r.targets}
             finding = r.review_finding or ""

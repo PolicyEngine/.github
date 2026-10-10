@@ -130,7 +130,7 @@ def cmd_drain_plan(args: argparse.Namespace) -> int:
 
     corpus = set(Path(args.corpus_citations).read_text().split()) if args.corpus_citations else None
     blocked = load_blocked_modules(args.blocked_modules) if args.blocked_modules else None
-    batches = plan(rows, corpus, blocked)
+    batches = plan(rows, corpus, blocked, args.blocked_citation_pattern)
     if args.json:
         Path(args.json).write_text(json.dumps(to_json(batches, args.weekly_runs), indent=2), encoding="utf-8")
     text = markdown(batches, args.weekly_runs)
@@ -198,6 +198,13 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument(
         "--blocked-modules",
         help="module paths the encoder owner has ruled out as targets or imports (text list, or JSON of lists)",
+    )
+    d.add_argument(
+        "--blocked-citation-pattern",
+        action="append",
+        default=[],
+        metavar="REGEX",
+        help="block issues with a target citation matching this pattern, e.g. /manual/ (repeatable)",
     )
     d.add_argument("--weekly-runs", type=int, default=10, help="signed runs (signing approvals) a week")
     d.add_argument("--json")

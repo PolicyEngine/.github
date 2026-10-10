@@ -252,3 +252,14 @@ def test_review_finding_in_a_tagged_fence_and_after_a_long_paragraph():
     assert review_finding_text(para).startswith("Encode the household income")
     denied = "This issue does not carry a `review_finding`:\n\n> " + "Some quoted law text that is long enough. " * 3
     assert review_finding_text(denied) is None
+
+
+def test_a_blocked_citation_pattern_blocks_matching_targets():
+    manual = issue_inputs(
+        "R", {"number": 1, "body": READY_ISSUE_BODY.replace("us/statute/26/32/d", "us-il/manual/dhs/pm-08-01")}, []
+    )
+    statute = issue_inputs("R", {"number": 2, "body": READY_ISSUE_BODY}, [])
+    pin = {"us-il/manual/dhs/pm-08-01", "us/statute/26/32/d"}
+    by = {b.issues[0].number: b for b in plan([manual, statute], corpus=pin, blocked_patterns=["/manual/"])}
+    assert not by[1].ready and "/manual/" in by[1].issues[0].blocked[0]
+    assert by[2].ready
