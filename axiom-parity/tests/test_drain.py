@@ -263,3 +263,34 @@ def test_a_blocked_citation_pattern_blocks_matching_targets():
     by = {b.issues[0].number: b for b in plan([manual, statute], corpus=pin, blocked_patterns=["/manual/"])}
     assert not by[1].ready and "/manual/" in by[1].issues[0].blocked[0]
     assert by[2].ready
+
+
+def test_blocked_citations_block_exactly_or_with_descendants(tmp_path):
+    from axiom_parity.drain import load_blocked_citations
+
+    f = tmp_path / "blocked.json"
+    f.write_text(
+        json.dumps(
+            {
+                "blocked": [
+                    {
+                        "citation": "us/statute/26/32",
+                        "match": "exact-or-descendant",
+                        "kind": "filing-status",
+                        "reason": "r",
+                    },
+                    {"citation": "us/statute/26/1", "match": "exact", "kind": "w6-B", "reason": "r"},
+                ]
+            }
+        )
+    )
+    listed = load_blocked_citations(str(f))
+    assert [(b.citation, b.descendants) for b in listed] == [("us/statute/26/32", True), ("us/statute/26/1", False)]
+    under = issue_inputs("R", {"number": 1, "body": READY_ISSUE_BODY}, [])  # targets us/statute/26/32/d
+    exact_only = issue_inputs("R", {"number": 2, "body": READY_ISSUE_BODY.replace("26/32/d", "26/1/h")}, [])
+    sibling = issue_inputs("R", {"number": 3, "body": READY_ISSUE_BODY.replace("26/32/d", "26/320/a")}, [])
+    pin = {"us/statute/26/32/d", "us/statute/26/1/h", "us/statute/26/320/a"}
+    by = {b.issues[0].number: b for b in plan([under, exact_only, sibling], corpus=pin, blocked_citations=listed)}
+    assert not by[1].ready and "filing-status" in by[1].issues[0].blocked[0]
+    assert by[2].ready  # 26/1 is blocked exactly; 26/1/h is a different path
+    assert by[3].ready  # 26/320 is not below 26/32

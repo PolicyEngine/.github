@@ -19,7 +19,7 @@ The main lint failures:
 - 8 US issues have no companion cases with an expected outcome.
 - 6 US and 3 UK issues have no required outputs.
 
-A source document is ready when every one of its issues is. That gives 25 ready documents today: 31 issues and 45 citations. At up to 16 citations a signed run, that is 25 runs. While manual paths are paused (see `--blocked-citation-pattern` below), it is 21 documents: 27 issues and 37 citations. Examples are SI 2012/2885 (3 issues), IRC §62 (3), Ohio R.C. 5747.02 (2) and Va. Code title 58.1 (2).
+A source document is ready when every one of its issues is. That gives 25 ready documents today: 31 issues and 45 citations. At up to 16 citations a signed run, that is 25 runs. With the encoder owner's holds of 2026-10-10 applied as well (blocked citations, and manual paths paused), it is 16 documents: 21 issues and 24 citations. Examples are SI 2012/2885 (3 issues), IRC §62 (3), Ohio R.C. 5747.02 (2) and Va. Code title 58.1 (2).
 
 The lint checks that each element is present and finished. It cannot judge whether the law in an issue is settled: an independent read of 30 issues found 3 that pass the lint while leaving a legal question open (rulespec-uk#357, rulespec-us#1517 and #1358). The encoder owner still reads an issue before dispatching it.
 
@@ -64,6 +64,8 @@ No fresh model encode since 2026-09-25 has landed a manifest on `main`. rulespec
 3. **Plan.** `axiom-parity drain-plan --corpus-citations pin.txt` lints every open issue and extracts its target citations and pasteable `review_finding`. It groups the issues by source document (an Act or SI, a US Code section, a CFR part, a state code), so related provisions are encoded together, as the encoder owner asked. A document is ready only if every issue passes the lint, has a `review_finding` the tool can paste, and has every target in the pin. The plan ranks the documents and prices the wave.
 
    `--blocked-modules` takes the encoder owner's list of modules that must not be a target or an import. Its first use is the obsolete `source_verification.values` field: 17 modules on rulespec-us `main` at `16a6677` carry it under `module.source_verification`, and a target that imports one fails to compile. The encoder owner's list of those 17 plus the modules that reference them (35 directly, 64 transitively) blocks 18 issues, 13 of them otherwise ready, including the IRC §1 group.
+
+   `--blocked-citations` takes the encoder owner's list of citations to hold, each with a reason and whether paths below it are held too. On 2026-10-10 that list had 266 entries: sources that change in the W6 corpus release, Title 26 text that selects on filing status, and paths missing from the pin or the corpus.
 
    `--blocked-citation-pattern` blocks a class of source by pattern. The encoder owner asked for `/manual/` on 2026-10-10, until a fix for masks that hide table values on manual paths (axiom-encode#1821) merges.
 
