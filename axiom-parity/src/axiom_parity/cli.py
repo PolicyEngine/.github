@@ -139,7 +139,7 @@ def cmd_drain_plan(args: argparse.Namespace) -> int:
         rows.extend(issue_inputs(repo, i, c) for i, c in items)
     corpus, repealed = load_pin_file(args.corpus_citations) if args.corpus_citations else (None, None)
     blocked = load_blocked_modules(args.blocked_modules) if args.blocked_modules else None
-    listed = load_blocked_citations(args.blocked_citations) if args.blocked_citations else None
+    listed = [hold for path in args.blocked_citations for hold in load_blocked_citations(path)] or None
     # With a rulespec checkout, a blocked module also blocks the citations it owns on main.
     indexes = [Index.build(repo, path) for repo, path in (item.split("=", 1) for item in args.rulespec_dir)]
 
@@ -224,7 +224,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     d.add_argument(
         "--blocked-citations",
-        help="citations the encoder owner has ruled out for now: JSON {blocked: [{citation, match, kind, reason}]}",
+        action="append",
+        default=[],
+        help="citations the encoder owner holds for now: JSON {blocked: [{citation, match, kind, reason}]} or its "
+        "dispatch-preparation verdicts {documents: [{citation, verdict, reason, until}]} (repeatable)",
     )
     d.add_argument(
         "--blocked-citation-pattern",

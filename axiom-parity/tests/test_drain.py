@@ -638,3 +638,38 @@ def test_a_pin_citation_may_hold_spaces(tmp_path):
     present, repealed = load_pin_file(str(pin))
     assert present == {"us-ak/regulation/aac/title-7/chapter-45/7 AAC 45.010", "us/statute/26/32/d"}
     assert repealed == {"us/statute/26/1/x"}
+
+
+def test_the_encoder_owner_s_dispatch_verdicts_are_holds(tmp_path):
+    from axiom_parity.drain import load_blocked_citations
+
+    verdicts = tmp_path / "prep-verdicts.json"
+    verdicts.write_text(
+        json.dumps(
+            {
+                "documents": [
+                    {"citation": "us/statute/26/32/d", "verdict": "dispatched", "reason": "run 1", "until": ""},
+                    {
+                        "citation": "us/statute/26/32/e",
+                        "verdict": "blocked-source",
+                        "reason": "needs a form",
+                        "until": "a re-pin",
+                    },
+                ]
+            }
+        )
+    )
+    holds = load_blocked_citations(str(verdicts))
+    assert [(h.citation, h.kind, h.reason) for h in holds] == [
+        ("us/statute/26/32/d", "dispatched", "run 1"),
+        ("us/statute/26/32/e", "blocked-source", "needs a form (until a re-pin)"),
+    ]
+    rows = [
+        issue_inputs("R", {"number": n, "body": READY_ISSUE_BODY.replace("32/d", sub)}, [])
+        for n, sub in enumerate(["32/d", "32/e", "32/f"], 1)
+    ]
+    pin = {f"us/statute/26/32/{x}" for x in "def"}
+    (batch,) = plan(rows, corpus=pin, blocked_citations=holds)
+    held = {i.number: i.blocked for i in batch.issues}
+    assert "dispatched" in held[1][0] and "blocked-source" in held[2][0] and held[3] == []
+    assert not batch.ready

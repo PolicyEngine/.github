@@ -470,27 +470,36 @@ class BlockedCitation:
 
 
 def load_blocked_citations(path: str) -> list[BlockedCitation]:
-    """Read ``{"blocked": [{citation, match, kind, reason}, ...]}`` or a bare list.
+    """Read the encoder owner's holds: ``{"blocked": [{citation, match, kind, reason}, ...]}`` or a bare list.
 
-    ``match`` is ``exact`` or ``exact-or-descendant``. A text file with one
-    citation a line blocks each exactly.
+    ``match`` is ``exact`` or ``exact-or-descendant``. The owner's
+    dispatch-preparation verdicts are read too: ``{"documents": [{citation,
+    verdict, reason, until}, ...]}``. Every row is a hold on dispatching that
+    citation now, whether it is blocked, waiting for a ruling or already in
+    flight. A text file with one citation a line blocks each exactly.
     """
     text = Path(path).read_text(encoding="utf-8")
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
         return [BlockedCitation(c.strip(), False, "listed", "listed") for c in text.splitlines() if c.strip()]
-    rows = data.get("blocked", []) if isinstance(data, dict) else data
-    return [
-        BlockedCitation(
-            str(r["citation"]),
-            r.get("match", "exact") == "exact-or-descendant",
-            str(r.get("kind", "listed")),
-            str(r.get("reason", "")),
+    rows = (data.get("blocked") or data.get("documents") or []) if isinstance(data, dict) else data
+    out = []
+    for r in rows:
+        if not (isinstance(r, dict) and r.get("citation")):
+            continue
+        reason = str(r.get("reason", ""))
+        if r.get("until"):
+            reason += f" (until {r['until']})"
+        out.append(
+            BlockedCitation(
+                str(r["citation"]),
+                r.get("match", "exact") == "exact-or-descendant",
+                str(r.get("kind") or r.get("verdict") or "listed"),
+                reason,
+            )
         )
-        for r in rows
-        if isinstance(r, dict) and r.get("citation")
-    ]
+    return out
 
 
 def _path_ancestors(module: str) -> list[str]:
@@ -537,7 +546,7 @@ def plan(
             r.blocked.append("not in the pinned corpus release")
         hits = sorted({b.kind for b in blocked_citations or [] for c in r.targets if b.matches(c)})
         if hits:
-            r.blocked.append(f"target on the encoder owner's blocked-citation list ({', '.join(hits)})")
+            r.blocked.append(f"target held by the encoder owner ({', '.join(hits)})")
         for pattern in blocked_patterns or []:
             # A class of source the encoder owner has paused, e.g. "/manual/".
             if any(re.search(pattern, c) for c in r.targets):
