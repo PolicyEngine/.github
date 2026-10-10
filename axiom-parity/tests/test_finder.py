@@ -105,6 +105,7 @@ def test_module_path_for():
 def test_parameter_and_variable_references():
     yaml_text = """description: x
 values:
+  0000-01-01: 0
   2025-01-01: 1
 metadata:
   reference:

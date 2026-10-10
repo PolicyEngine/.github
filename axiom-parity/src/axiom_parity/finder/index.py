@@ -12,8 +12,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import yaml
-
+from .. import pe_yaml
 from ..refs import parse_legal_refs
 from ..rulespec import candidate_paths, legal_id_for_path, test_cases
 
@@ -146,8 +145,8 @@ class Index:
         if not f.is_file():
             return []
         try:
-            return test_cases(yaml.safe_load(f.read_text(encoding="utf-8", errors="replace")))
-        except yaml.YAMLError:
+            return test_cases(pe_yaml.load(f.read_text(encoding="utf-8", errors="replace")))
+        except pe_yaml.YAMLError:
             return []
 
 

@@ -35,7 +35,7 @@ CATEGORIES: dict[str, dict] = {
     },
     "microsim-only": {
         "label": "microsimulation-only (model structure, inputs, aggregates, behavioural responses)",
-        "keywords": r"microsim|microsimulation|simulation-only|simulation coverage|model[- ]structure|model input|"
+        "keywords": r"microsim|microsimulation|simulation-only|simulation[- ]coverage|simulation flag|cliff|model[- ]structure|model input|"
         r"input plumbing|model aggregate|aggregate|labou?r supply|behaviou?ral|household role|role inference|"
         r"presumption|projected years|modelling fix|modeling fix|statistical measure|not a (?:legal|statutory) "
         r"provision|not a legislated provision|period-range|split",

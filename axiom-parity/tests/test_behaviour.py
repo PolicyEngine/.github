@@ -103,3 +103,26 @@ def test_property_value_edits_always_count(values, bump):
     key = sorted(values)[0]
     after = yaml.safe_dump({"values": {**values, key: values[key] + bump}})
     assert changes_behaviour("p/parameters/x.yaml", before, after)
+
+
+def test_year_zero_dates_and_reference_moves():
+    before = "values:\n  0000-01-01: false\n  2018-01-01: true\nmetadata:\n  reference:\n    - href: a\n"
+    after = before.replace("href: a", "href: b")
+    assert not changes_behaviour("p/parameters/x.yaml", before, after)
+    assert changes_behaviour("p/parameters/x.yaml", before, before.replace("2018-01-01: true", "2018-01-01: false"))
+
+
+def test_reference_moved_into_value_metadata():
+    before = "values:\n  2013-01-01:\n    value: 3_900\n    reference:\n      - href: rp-13-15\n"
+    after = "values:\n  2013-01-01:\n    value: 3_900\n    metadata:\n      reference:\n        - href: rp-13-15\n"
+    assert not changes_behaviour("p/parameters/x.yaml", before, after)
+    assert not changes_behaviour(
+        "p/parameters/x.yaml", "values:\n  2013-01-01: 3900\n", "values:\n  2013-01-01:\n    value: 3900\n"
+    )
+
+
+def test_only_the_value_of_a_dated_entry_counts():
+    before = "values:\n  2024-08-01:\n    value: 20_600\n    refrence:\n      - href: a\n"
+    after = "values:\n  2024-08-01:\n    value: 20_600\n    metadata:\n      reference:\n        - href: a\n"
+    assert not changes_behaviour("p/parameters/x.yaml", before, after)
+    assert changes_behaviour("p/parameters/x.yaml", before, before.replace("20_600", "20_700"))

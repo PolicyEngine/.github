@@ -16,8 +16,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-import yaml
-
+from .. import pe_yaml
 from ..issue_lint import lint_issue
 from .citations import Citation, StateHint, map_url
 from .index import Index, Match
@@ -92,8 +91,8 @@ def pe_test_cases(path: str, text: str | None) -> list[TestCase]:
     if text is None:
         return []
     try:
-        doc = yaml.safe_load(text)
-    except yaml.YAMLError:
+        doc = pe_yaml.load(text)
+    except pe_yaml.YAMLError:
         return []
     out = []
     for case in doc if isinstance(doc, list) else []:

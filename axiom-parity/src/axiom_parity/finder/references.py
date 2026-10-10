@@ -11,7 +11,7 @@ import ast
 from dataclasses import dataclass
 from typing import Any
 
-import yaml
+from .. import pe_yaml
 
 
 @dataclass(frozen=True)
@@ -48,8 +48,8 @@ def parameter_name(path: str, package: str) -> str:
 
 def parameter_references(path: str, text: str, package: str) -> list[Reference]:
     try:
-        doc = yaml.safe_load(text)
-    except yaml.YAMLError:
+        doc = pe_yaml.load(text)
+    except pe_yaml.YAMLError:
         return []
     name = parameter_name(path, package)
     out: list[Reference] = []

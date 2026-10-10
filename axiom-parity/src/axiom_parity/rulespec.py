@@ -13,8 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-import yaml
-
+from . import pe_yaml
 from .github import GitHub, NotFound
 from .refs import AXIOM_OWNER, LegalRef, TestRef
 
@@ -156,8 +155,8 @@ def candidate_paths(ref: LegalRef) -> list[tuple[str, str]]:
 
 def load_yaml(text: str) -> Any:
     try:
-        return yaml.safe_load(text)
-    except yaml.YAMLError:
+        return pe_yaml.load(text)
+    except pe_yaml.YAMLError:
         return None
 
 

@@ -17,7 +17,7 @@ from __future__ import annotations
 import ast
 from typing import Any
 
-import yaml
+from . import pe_yaml
 
 DESCRIPTIVE_KEYS = {"description", "label", "reference", "references", "documentation", "note", "notes"}
 PRESENTATION_METADATA = {"unit", "economy", "household", "display", "propagate_metadata_to_children", "name"}
@@ -33,16 +33,29 @@ def _strip_yaml(node: Any, in_metadata: bool = False) -> Any:
                 continue
             if in_metadata and key in PRESENTATION_METADATA:
                 continue
-            out[key] = _strip_yaml(v, in_metadata or key == "metadata")
+            if key == "values" and isinstance(v, dict):
+                out[key] = {str(d): _dated_value(e) for d, e in v.items()}
+                continue
+            stripped = _strip_yaml(v, in_metadata or key == "metadata")
+            if key == "metadata" and stripped in ({}, None):
+                continue  # a metadata block that held only descriptions
+            out[key] = stripped
         return out
     if isinstance(node, list):
         return [_strip_yaml(v, in_metadata) for v in node]
     return node
 
 
+def _dated_value(entry: Any) -> Any:
+    """A dated entry is ``x`` or ``{value: x, ...}``; only the value is read."""
+    if isinstance(entry, dict) and "value" in entry:
+        return _strip_yaml(entry["value"])
+    return _strip_yaml(entry)
+
+
 def yaml_behaviour(text: str) -> Any:
     """The behaviour-relevant content of a parameter file."""
-    return _strip_yaml(yaml.safe_load(text))
+    return _strip_yaml(pe_yaml.load(text))
 
 
 class _StripDescriptive(ast.NodeTransformer):
@@ -105,6 +118,6 @@ def changes_behaviour(path: str, before: str | None, after: str | None) -> bool:
             return yaml_behaviour(before) != yaml_behaviour(after)
         if lower.endswith(".py"):
             return python_behaviour(before) != python_behaviour(after)
-    except (yaml.YAMLError, SyntaxError, ValueError):
+    except (pe_yaml.YAMLError, SyntaxError, ValueError):
         return True
     return before != after

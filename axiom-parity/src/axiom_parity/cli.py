@@ -104,6 +104,37 @@ def cmd_backlog(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_drain_plan(args: argparse.Namespace) -> int:
+    from .drain import issue_inputs, load_issues, load_saved, markdown, plan, to_json
+
+    gh = GitHub()
+    saved = dict(item.split("=", 1) for item in args.issues_file)
+    rows = []
+    for repo in args.repos:
+        items = load_saved(saved[repo], repo) if repo in saved else load_issues(gh, repo, args.label)
+        rows.extend(issue_inputs(repo, i, c) for i, c in items)
+    corpus = set(Path(args.corpus_citations).read_text().split()) if args.corpus_citations else None
+    batches = plan(rows, corpus)
+    if args.json:
+        Path(args.json).write_text(json.dumps(to_json(batches, args.weekly_runs), indent=2), encoding="utf-8")
+    text = markdown(batches, args.weekly_runs)
+    _write(args.summary, text)
+    if not args.summary:
+        print(text)
+    return 0
+
+
+def cmd_corpus_pin(args: argparse.Namespace) -> int:
+    from .corpus_pin import write_pin_file
+
+    pin, n = write_pin_file(args.rulespec_dir, args.corpus_dir, args.out, args.ref, args.corpus_ref)
+    print(
+        f"{pin.release} @ axiom-corpus {pin.corpus_ref[:12]} ({pin.ref_source}): "
+        f"{n} citations with an operative body -> {args.out}"
+    )
+    return 0
+
+
 def cmd_find(args: argparse.Namespace) -> int:
     from .finder.cli import run_find
 
@@ -140,6 +171,26 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--json")
     b.add_argument("--summary")
     b.set_defaults(func=cmd_backlog)
+
+    d = sub.add_parser(
+        "drain-plan", help="group dispatch-ready pe-parity issues by source document and price the waves"
+    )
+    d.add_argument("--repos", nargs="+", default=["TheAxiomFoundation/rulespec-uk", "TheAxiomFoundation/rulespec-us"])
+    d.add_argument("--label", default="pe-parity")
+    d.add_argument("--issues-file", action="append", default=[], metavar="REPO=PATH")
+    d.add_argument("--corpus-citations", help="file of citation paths in the pinned corpus release, one per line")
+    d.add_argument("--weekly-runs", type=int, default=40)
+    d.add_argument("--json")
+    d.add_argument("--summary")
+    d.set_defaults(func=cmd_drain_plan)
+
+    cp = sub.add_parser("corpus-pin", help="list the citations in the corpus release a rulespec clone pins")
+    cp.add_argument("--rulespec-dir", required=True, help="local rulespec-<country> clone")
+    cp.add_argument("--corpus-dir", required=True, help="local axiom-corpus clone that has the pinned ref")
+    cp.add_argument("--ref", default="origin/main", help="rulespec ref to read the pin from")
+    cp.add_argument("--corpus-ref", help="axiom-corpus commit to read the release at (default: from the pin)")
+    cp.add_argument("--out", required=True)
+    cp.set_defaults(func=cmd_corpus_pin)
 
     f = sub.add_parser("find", help="suggest the axiom line for a PR or a set of changed files")
     from .finder.cli import add_find_arguments
