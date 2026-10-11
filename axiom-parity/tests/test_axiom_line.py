@@ -63,10 +63,20 @@ def test_pipe_and_sentence_separated_claims():
     )
     assert [c.status for c in line.claims] == [ENCODED_CORRECT, QUEUED]
     line = parse_line(
+        "TheAxiomFoundation/rulespec-uk#366 queued (s150A). uk:regulations/uksi/2026/148/article/6 is "
+        "already encoded-correct (`6.test.yaml`)."
+    )
+    assert [c.status for c in line.claims] == [QUEUED, ENCODED_CORRECT]
+
+
+def test_a_status_in_prose_is_noted_not_claimed():
+    # The status must follow what it is claimed for; prose around it is not read as a claim.
+    line = parse_line(
         "TheAxiomFoundation/rulespec-uk#366 queued (s150A). The in-force rates are already encoded-correct: "
         "uk:regulations/uksi/2026/148/article/6 (`6.test.yaml`)."
     )
-    assert [c.status for c in line.claims] == [QUEUED, ENCODED_CORRECT]
+    assert [c.status for c in line.claims] == [QUEUED]
+    assert any("encoded-correct" in n and "not read as a claim" in n for n in line.notes)
 
 
 def test_statusless_sentence_joins_previous_claim():
@@ -209,12 +219,20 @@ def test_property_an_aside_does_not_cancel_a_negation(aside, wording):
     assert not line.claims
 
 
-def test_a_negation_in_an_aside_of_its_own():
-    assert not parse_line("rulespec-us#1416 (not yet) queued").claims
-    # The aside rules out something else; the status stands.
-    assert [c.status for c in parse_line("rulespec-us#1416 (not #1417) queued").claims] == [QUEUED]
-    assert [c.status for c in parse_line("Not in Axiom yet, rulespec-us#1416 queued").claims] == [QUEUED]
+def test_a_denial_anywhere_before_the_status_in_its_piece_means_no_claim():
+    # A status is claimed only when it follows its reference and nothing before it denies it.
+    for line in (
+        "rulespec-us#1416 (not yet) queued",
+        "rulespec-us#1416 (not #1417) queued",
+        "Not in Axiom yet, rulespec-us#1416 queued",
+        "Not (yet) in Axiom: rulespec-us#1416 queued",
+        "rulespec-us#1416 is not (yet) encoded but queued",
+    ):
+        assert not parse_line(line).claims, line
+    # Each status is judged in its own piece, so a denied claim doesn't take its neighbour with it.
     assert [c.status for c in parse_line("rulespec-us#9 is not encoded, rulespec-us#1416 queued").claims] == [QUEUED]
+    claims = parse_line("rulespec-us#9 is not encoded, rulespec-us#1416 queued").claims
+    assert [r.number for r in claims[0].rulespec_refs] == [1416]
 
 
 def test_bold_na_after_a_claim_is_still_a_claim():
@@ -246,13 +264,10 @@ def test_property_emphasis_and_dated_asides_do_not_make_a_denial_a_claim(aside, 
     assert not parse_line("rulespec-us#1416 " + wording.format(a=aside)).claims
 
 
-def test_a_hanging_negation_ends_at_the_next_status_or_reference():
-    assert [c.status for c in parse_line("rulespec-us#1416 is not (yet) encoded but queued").claims] == [QUEUED]
+def test_a_denial_ends_with_its_own_piece():
     assert [c.status for c in parse_line("rulespec-us#9 is not (yet) encoded; rulespec-us#1416 **queued**").claims] == [
         QUEUED
     ]
-    assert [c.status for c in parse_line("Not (yet) in Axiom: rulespec-us#1416 queued").claims] == [QUEUED]
-    # A reference inside the aside does not rescue the claim; one after it does.
     assert not parse_line("rulespec-us#1416 will (per rulespec-us#5) be queued").claims
     assert not parse_line("rulespec-us#1416 is not, as of rulespec-us#5, queued").claims
     assert [c.status for c in parse_line("It is not, in fact, encoded, rulespec-us#1416 queued").claims] == [QUEUED]

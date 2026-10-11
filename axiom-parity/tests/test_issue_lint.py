@@ -244,7 +244,7 @@ def test_property_a_named_input_is_not_a_required_output(ident, wording):
 
 def test_an_output_declared_in_the_finding_counts():
     for finding in (
-        "Add `section_199a_net_capital_gain` and keep the proof excerpts for every amount it reads from the text.",
+        "Add `section_199a_net_capital_gain` Money (TaxUnit) = max(0, line 15) + qualified dividends, with proof.",
         "Add the secondary percentage's history to uk/statutes/ukpga/1992/4/9.yaml#secondary_percentage, each with proof.",
         "State the monthly figures. Name them secondary_threshold_monthly_equivalent and so on, with excerpts.",
     ):

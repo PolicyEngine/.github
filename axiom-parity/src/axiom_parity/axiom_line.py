@@ -40,35 +40,26 @@ _LINE = re.compile(
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _PLACEHOLDER = re.compile(r"<\s*(legal id|rulespec[^>]*|reason|category)\s*>", re.IGNORECASE)
 _STATUS_WORD = re.compile(r"(?<![\w/-])(encoded-correct|encoded|queued|debt)(?![\w-])", re.IGNORECASE)
-# "is not yet encoded", "until it is encoded", "might be queued", "ready to be
-# queued": prose about a status, not a claim of it.
-_NEGATION = re.compile(
-    r"(?:\b(?:not|never|hardly|barely|scarcely|no longer|once|until|if|unless|might|may|could|would|should|will|shall|"
-    r"cannot|to be|"
-    r"yet to be|needs? to be|must be)|n't)\s+(?:\w+\s+){0,4}$",
+# A status is claimed only when it stands right after what it is claimed for: a
+# reference ("rulespec-us#1416 queued", "`us:statutes/26/24/d` encoded-correct") or a
+# legal citation ("26 USC 129(a)(2) queued"). Between the two only closing marks,
+# separators and these words may stand: "`/22` and `/32` are encoded-correct".
+_CLAIM_TAIL = re.compile(
+    r"(?:[\s`'\")\]:\-]|\b(?:is|are|was|were|now|already|also|both|all|each|fully)\b)+$", re.IGNORECASE
+)
+_CITATION_TOKEN = re.compile(r"[\w.§(),/-]*\d[\w.§(),/-]*(?<!,)")  # "129(a)(2)", "43-1041(A),(H)"
+# And nothing before it in its piece may deny, defer or condition it. This is a
+# second guard: a denial between the reference and the status already breaks
+# the adjacency above, whatever its punctuation.
+_DENIES = re.compile(
+    r"\b(?:not|never|no(?![.\s]*\d)|none|nor|neither|without|cannot|hardly|barely|scarcely|nowhere|"
+    r"will|would|may|might|could|should|shall|must|once|until|unless|if|whether|"
+    r"pending|planned|later|soon|eventually|tbd|tbc|"
+    r"aint|isnt|arent|wasnt|werent|wont|cant|dont|doesnt|didnt|hasnt|havent|hadnt|shouldnt|wouldnt|couldnt|"
+    r"mustnt|to\s+be|yet\s+to)\b|n't\b",
     re.IGNORECASE,
 )
-# A negation left hanging before an aside still governs the status after it:
-# "is not (yet) queued", "is not, as of Oct. 10, queued", "(not yet) queued",
-# "will (soon) be queued", "cannot be (yet) queued". Hanging means the aside opens
-# (or the parenthesis closes) before the negation has anything but an auxiliary
-# or an adverb after it, so "(not #2) queued" and "Not in Axiom yet, #5 queued"
-# still claim queued. Its reach ends at a hard break, at a reference
-# (the negation has found its object, or a new subject has started) and at
-# another status word.
-_HANGING = re.compile(
-    r"(?:\b(?:not|never|hardly|barely|scarcely|no longer|once|until|if|unless|might|may|could|would|should|will|shall|"
-    r"cannot|to be|"
-    r"yet to be|needs? to be|must be)|n't)"
-    r"(?:\s+(?:be|been|being|to|yet|currently|really|actually|quite|fully|already|now|still|ever))*"
-    r"\s*(?:[,()]|-\s)",  # an aside opens with a comma, a bracket or a spaced dash
-    re.IGNORECASE,
-)
-_HARD_BREAK = re.compile(r"[;:]|[.!?]\s+(?=[A-Z`])|\bbut\b", re.IGNORECASE)
-_REFERENCE = re.compile(
-    r"#\d+|/(?:pull|issues)/\d+|[a-z]{2}(?:-[a-z0-9]+)*[:/](?:statutes?|regulations?|policies|legislation|guidance)/",
-    re.IGNORECASE,
-)
+_APOSTROPHES = str.maketrans({"\u2019": "'", "\u2018": "'", "\u02bc": "'", "\u2032": "'"})
 # Markdown emphasis around a word says nothing: "is not **queued**" denies queued.
 _UNDERSCORE_EMPHASIS = re.compile(r"(?<![\w/#.:`-])_+(?=[A-Za-z0-9`])|(?<=[A-Za-z0-9`])_+(?![\w/#.:`-])")
 
@@ -204,59 +195,57 @@ _SEPARATOR = re.compile(r"\s*(?:;|\|\||\s\|\s)\s*")
 _SENTENCE = re.compile(r"(?<=[.)])\s+(?=[A-Z`*])")
 
 
-_CLAUSE_BREAK = re.compile(r"[,;:.()]|\b(?:but|and|though|although|however|while|whereas)\b", re.IGNORECASE)
-# "the queued federal rule", "an encoded module": the status word describes a noun.
-# The determiner must be a word of its own: the "A" ending "26/24/d/1/A" is a path segment.
-# An adverb may sit between them: "the already queued federal rule".
-_ADJECTIVE = re.compile(
-    r"(?:^|(?<=\s))(?:the|a|an|this|that|these|those|its|their|each|every|any|no|other)\s+"
-    r"(?:(?:already|still|now|newly|previously|currently|recently|\w+ly)\s+){0,2}$",
-    re.IGNORECASE,
-)
+def _status_words(text: str) -> list[re.Match[str]]:
+    """Status keywords at nesting depth zero: inside brackets or backticks they are notes."""
+    depths = _depth_map(text)
+    return [m for m in _STATUS_WORD.finditer(text) if depths[m.start()] == 0]
 
 
-def _hanging_negation(before: str) -> bool:
-    """Is the status word after ``before`` still in the reach of a hanging negation?
+def _ends_with_reference(core: str) -> bool:
+    """Does ``core`` end with a rulespec or legal reference?
 
-    The aside itself is skipped: "will (per #5) be queued" is still a denial.
-    After it, a reference ends the reach; a hard break or another status word
-    ends it anywhere.
+    The last token is parsed on its own, because the parsers fold repeats of
+    one reference together ("#403" and a URL to #403's comment are one ref);
+    the whole text is parsed too, for a relative reference ("/4A") whose base
+    comes earlier.
     """
-    for hang in _HANGING.finditer(before):
-        between = before[hang.end() :]
-        if _HARD_BREAK.search(between) or _STATUS_WORD.search(between):
-            continue
-        opener = hang.group(0).rstrip()[-1]
-        if opener == "(":
-            close = between.find(")")
-            if close < 0:
-                continue
-            after_aside = between[close + 1 :]
-        elif opener == ",":
-            after_aside = between.rsplit(",", 1)[-1]
-        elif opener == "-":
-            after_aside = re.split(r"\s-(?:\s|$)", " " + between)[-1]
-        else:
-            after_aside = between
-        if not _REFERENCE.search(after_aside):
+    # A Markdown link reads as its text: "[rulespec-uk#380](https://…/issues/380) queued".
+    core = re.sub(r"\]\([^()\s]*\)?$", "", core)  # the closing ")" may already be gone
+    token = core.split()[-1].lstrip("([{`'\"")
+    for found in (parse_rulespec_refs(token), parse_legal_refs(token)):
+        if any(r.start == 0 and len(r.raw) == len(token) for r in found):
             return True
-    return False
+    return any(r.start + len(r.raw) == len(core) for r in parse_legal_refs(core))
+
+
+def _claimed(piece: str, m: re.Match[str]) -> bool:
+    """Does ``piece`` claim the status ``m``?
+
+    It does when nothing before the status denies it, and the status follows
+    a reference or a citation directly, or opens the piece ("queued:
+    rulespec-uk#415"). "rulespec-us#1416 is not [yet] queued" and
+    "rulespec-us#1416 isn’t queued" claim nothing: a word other than the few in
+    ``_CLAIM_TAIL`` stands between the reference and the status.
+    """
+    head = piece[: m.start()]
+    if _DENIES.search(head):
+        return False
+    core = _CLAIM_TAIL.sub("", head)
+    if not core.strip(" \t>-+#.,([{"):
+        return True  # the status opens its piece; its references follow it
+    if _ends_with_reference(core):
+        return True
+    return bool(_CITATION_TOKEN.fullmatch(core.split()[-1]))
 
 
 def _status_hits(text: str) -> list[re.Match[str]]:
-    depths = _depth_map(text)
+    """The status keywords ``text`` claims, each judged within its own piece."""
     hits = []
-    for m in _STATUS_WORD.finditer(text):
-        if depths[m.start()] != 0:
-            continue
-        before = text[: m.start()]
-        # Negation reaches back only to the start of its own clause:
-        # "is not encoded but is queued" still claims queued.
-        breaks = [b.end() for b in _CLAUSE_BREAK.finditer(before)]
-        clause = before[breaks[-1] :] if breaks else before
-        if _NEGATION.search(clause) or _hanging_negation(before) or _ADJECTIVE.search(before):
-            continue
-        hits.append(m)
+    for piece, offset in _pieces(text):
+        words = _status_words(piece)
+        if words and _claimed(piece, words[-1]):
+            m = words[-1]
+            hits.append(_STATUS_WORD.match(text, offset + m.start()))
     return hits
 
 
@@ -268,6 +257,33 @@ def _first_status(text: str) -> str | None:
     return LEGACY_ALIASES.get(word, word)
 
 
+_NOTE = re.compile(r"\s*\([^()]*(?:\([^()]*\)[^()]*)*\)")
+
+
+def _pieces(sentence: str) -> list[tuple[str, int]]:
+    """(piece, offset): the sentence cut after every top-level status keyword.
+
+    Each piece runs from the end of the previous status (and the parenthetical
+    note right after it) to the end of its own; the last piece takes the rest
+    of the sentence. So "rulespec-us#9 is not encoded, rulespec-us#1416 queued"
+    is two pieces, and the denied first one keeps its reference to itself.
+    """
+    words = _status_words(sentence)
+    if len(words) <= 1:
+        return [(sentence, 0)]
+    out, start = [], 0
+    for n, w in enumerate(words):
+        end = len(sentence)
+        if n + 1 < len(words):
+            end = w.end()
+            note = _NOTE.match(sentence, end)
+            if note:
+                end = note.end()
+        out.append((sentence[start:end], start))
+        start = end
+    return out
+
+
 def _merge_statusless(sentences: list[str]) -> list[str]:
     """Attach sentences with no status keyword to the claim before them.
 
@@ -275,9 +291,9 @@ def _merge_statusless(sentences: list[str]) -> list[str]:
     """
     out: list[str] = []
     for sentence in sentences:
-        if out and not _status_hits(sentence):
+        if out and not _status_words(sentence):
             out[-1] = f"{out[-1]} {sentence}"
-        elif out and not _status_hits(out[-1]):
+        elif out and not _status_words(out[-1]):
             out[-1] = f"{out[-1]} {sentence}"
         else:
             out.append(sentence)
@@ -290,52 +306,19 @@ _NA_INLINE = re.compile(
 
 
 def _segments(rest: str) -> list[str]:
-    """Split a line into segments that each hold at most one status keyword."""
+    """Split a line into pieces that each hold at most one status keyword."""
     out = []
     # "X queued and n/a: metadata" and "X queued. n/a: metadata": an n/a that
     # opens a clause is its own claim wherever it sits.
-    pieces = []
+    parts = []
     for seg in _split_top(rest, _SEPARATOR):
-        pieces.extend(_split_top(seg, _NA_INLINE))
-    for seg in pieces:
-        if len(_status_hits(seg)) <= 1:
+        parts.extend(_split_top(seg, _NA_INLINE))
+    for seg in parts:
+        if len(_status_words(seg)) <= 1:
             out.append(seg)
             continue
         for sentence in _merge_statusless(_split_top(seg, _SENTENCE)):
-            hits = _status_hits(sentence)
-            if len(hits) <= 1:
-                out.append(sentence)
-                continue
-            # Several claims in one sentence: each runs up to and including
-            # its status keyword and any parenthetical note right after it.
-            start = 0
-            pieces = []
-            for h in hits[:-1]:
-                end = h.end()
-                tail = sentence[end:]
-                note = re.match(r"\s*\([^()]*(?:\([^()]*\)[^()]*)*\)", tail)
-                if note:
-                    end += note.end()
-                pieces.append(sentence[start:end])
-                start = end
-            pieces.append(sentence[start:])
-            # "The rules are queued: rulespec-uk#415 queued" is one claim: a status
-            # word that cites nothing joins the piece after it.
-            merged: list[str] = []
-            carry = ""
-            for n, piece in enumerate(pieces):
-                piece = carry + piece
-                carry = ""
-                nxt = pieces[n + 1] if n + 1 < len(pieces) else None
-                # Join only a repeat of the same status ("are queued: #415 queued").
-                # "queued: #1416 encoded" makes two different claims and keeps both.
-                if nxt is not None and not _has_refs(piece) and _first_status(piece) == _first_status(nxt):
-                    carry = piece
-                    continue
-                merged.append(piece)
-            if carry:
-                merged.append(carry)
-            out.extend(merged)
+            out.extend(piece for piece, _ in _pieces(sentence))
     return out
 
 
@@ -370,10 +353,10 @@ def _claims_from(text: str, line_no: int) -> list[Claim]:
             claims.append(na)
             claims.extend(c for c in _claims_from(_NA_START.match(seg).group("reason"), line_no) if c.status != NA)
             continue
-        hits = _status_hits(seg)
-        if not hits:
+        words = _status_words(seg)
+        if not words or not _claimed(seg, words[-1]):
             continue
-        word = hits[0].group(1).lower()
+        word = words[-1].group(1).lower()
         status = LEGACY_ALIASES.get(word, word)
         claims.append(_claim(status, seg, line_no, legacy=word if word in LEGACY_ALIASES else None))
     return claims
@@ -383,10 +366,25 @@ def _has_refs(text: str) -> bool:
     return bool(parse_rulespec_refs(text) or parse_legal_refs(text))
 
 
+def _unclaimed(rest: str) -> list[str]:
+    """Status keywords that stand in prose, with a reference after them but none just before."""
+    out = []
+    for piece in _segments(rest):
+        words = _status_words(piece)
+        if not words or _claimed(piece, words[-1]) or _DENIES.search(piece[: words[-1].start()]):
+            continue
+        if _has_refs(piece[words[-1].end() :]):
+            out.append(words[-1].group(1))
+    return out
+
+
+_LEAD_STATUS = re.compile(r"(?<![\w/-])(encoded-correct|encoded|queued|debt)\s*:\s*$", re.IGNORECASE)
+
+
 def parse_line(rest: str, line_no: int = 0, items: list[str] | tuple[str, ...] = ()) -> AxiomLine:
     """Parse the text after ``axiom:`` (and any continuation bullets) into claims."""
-    rest = without_emphasis(norm_dashes(rest))
-    items = [without_emphasis(norm_dashes(i)) for i in items]
+    rest = without_emphasis(norm_dashes(rest).translate(_APOSTROPHES))
+    items = [without_emphasis(norm_dashes(i).translate(_APOSTROPHES)) for i in items]
     line = AxiomLine(raw=rest, line_no=line_no)
     if not rest.strip():
         line.problems.append("empty axiom line")
@@ -399,9 +397,14 @@ def parse_line(rest: str, line_no: int = 0, items: list[str] | tuple[str, ...] =
         return line
     lead = _claims_from(rest, line_no)
     if items:
-        inherited = lead[-1].status if lead and lead[-1].status != NA else None
-        # The lead's last claim ("The rest is queued:") is carried by the bullets.
-        if inherited and not (lead[-1].rulespec_refs or lead[-1].legal_refs):
+        # "The rest is queued:" gives its status to the bullets below it, unless
+        # anything in it denies, defers or conditions that status.
+        tail = _LEAD_STATUS.search(rest)
+        inherited = None
+        if tail and not _DENIES.search(rest[: tail.start()]):
+            word = tail.group(1).lower()
+            inherited = LEGACY_ALIASES.get(word, word)
+        if lead and inherited and lead[-1].status == inherited and not (lead[-1].rulespec_refs or lead[-1].legal_refs):
             lead = lead[:-1]
         for item in items:
             own = _claims_from(item, line_no)
@@ -412,6 +415,11 @@ def parse_line(rest: str, line_no: int = 0, items: list[str] | tuple[str, ...] =
             elif inherited and _has_refs(item) and not _STATUS_WORD.search(item):
                 lead.append(_claim(inherited, item, line_no))
     line.claims.extend(lead)
+    for word in _unclaimed(rest):
+        line.notes.append(
+            f"`{word}` here is not read as a claim: write the reference right before it, e.g. "
+            f"`rulespec-us#123 {word.lower()}` or `us:statutes/26/24/d {word.lower()}`"
+        )
     if not line.claims:
         msg = "no claim found: write a status (encoded-correct, encoded, queued, or n/a: <category>: <reason>)"
         # A line that cites rulespec work but states no status is a broken

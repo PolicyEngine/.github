@@ -164,7 +164,7 @@ _OUTCOME = re.compile(
     r"\|\s*[-–]?[£$€]?\d[\d,.]*%?\s*\|",
     re.IGNORECASE,
 )
-_LIST_MARKER = re.compile(r"^\s*(?:>\s*)*(?:[-*+]|\d+[.)])\s+")
+_LIST_MARKER = re.compile(r"^\s*(?:>\s*)*(?:[-*+]|\d+[.)]|\(\d+\)|\(?[a-z]\)|[ivx]+[.)])\s+")
 # A structured case: an ``input:`` key and an ``output:`` (or ``expected:``) key, each
 # with its facts indented below it. The key's own column decides what is below it,
 # so "- input:" and a sibling "  output:" are two blocks.
@@ -190,6 +190,7 @@ def _without_inputs(lines: list[str]) -> list[str]:
     """
     out: list[str] = []
     block: tuple[int, bool] | None = None  # (the key's column, is it an input block)
+    header: list[bool] | None = None  # for each column of the current table, is it an input column
     for raw in lines:
         indent = len(raw) - len(raw.lstrip())
         if block is not None:
@@ -204,6 +205,13 @@ def _without_inputs(lines: list[str]) -> list[str]:
         if key:
             block = (len(key.group("lead")), key.group("key").lower().startswith("input"))
             continue
+        if _TABLE.match(raw):
+            cells = [c.strip() for c in raw.strip().strip("|").split("|")]
+            if header is None:
+                header = [bool(re.search(r"\binputs?\b|\bgiven\b|\bfacts?\b", c, re.I)) for c in cells]
+            out.append("|" + "|".join("" if n < len(header) and header[n] else c for n, c in enumerate(cells)) + "|")
+            continue
+        header = None
         line = _LIST_MARKER.sub("", raw)
         pos = 0
         while label := _INPUT_LABEL.search(line, pos):
@@ -445,7 +453,15 @@ def _finding_at(lines: list[str], i: int) -> tuple[str | None, int]:
             title += " " + after
         else:
             inline = after
-        if _FINDING_NEGATED.search(title) or _FINDING_DEFERRED.search(title) or _OPENS_DEFERRED.match(inline):
+        # A finding that starts on the label's line is judged by its first sentence:
+        # "Coming soon when the owner has checked the text." gives no finding, however long.
+        opening = re.split(r"(?<=[.!?])\s+", inline, maxsplit=1)[0]
+        if (
+            _FINDING_NEGATED.search(title)
+            or _FINDING_DEFERRED.search(title)
+            or _OPENS_DEFERRED.match(inline)
+            or _FINDING_DEFERRED.search(opening)
+        ):
             return None, i + 1  # "## review_finding (pending)" promises a finding; it doesn't give one
     elif not _introduces_finding(line):
         return None, i + 1  # "No review_finding is supplied." mentions the field; it doesn't give one
@@ -532,16 +548,18 @@ def review_finding_text(markdown: str) -> str | None:
     return found[0] if found else None
 
 
-# An output named in running text. The declaration must be about an output and tied
-# to the identifier: "Output Money x_y_z", "Add a Judgment x_y_z", "Add `x_y_z`",
-# "Name them x_y_z", "Add … to 9.yaml#x_y". "Add an input named a_b_c" declares an
-# input, and "derived from … imported from m#x_y_z" names another module's rule.
+# An output named in running text, in one of a closed set of declarations:
+# "Output Money x_y_z", "outputs `x_y_z`", "Judgment x_y_z", "Add `x_y_z` Money (TaxUnit) = …",
+# "Name them x_y_z", "Add … to 9.yaml#x_y". A bare "Add x_y_z" or "a leaf x_y_z" is not one:
+# it could as well be an input.
 _NOT_OUTPUT = r"(?!\b(?:inputs?|import\w*|from|tests?|cases?)\b)"
-_IDENT = r"`?\b[a-z][a-z0-9]*(?:_[a-z0-9]+){2,}\b`?(?!`?\s+(?:as\s+)?(?:an?\s+)?inputs?\b)"
+_TYPES = r"(?:Judge?ments?|Money|Rates?|Amounts?|Counts?|Integers?|Booleans?|Dates?|Decimals?|Percentages?)"
+_IDENT = r"`?\b[a-z][a-z0-9]*(?:_[a-z0-9]+){2,}\b`?"
 _NAMED_OUTPUT = re.compile(
-    r"\b(?:outputs?|Judge?ments?|rules?|leaf|leaves|deriv(?:e|es|ed)|comput(?:e|es|ed)|expos(?:e|es|ed)|"
-    rf"publish(?:es|ed)?|name (?:it|them|each|the outputs?))\b(?:{_NOT_OUTPUT}[^.\n]){{0,80}}?{_IDENT}"
-    rf"|\badd(?:s|ed)?\s+(?:(?:an?|the|new|this|these)\s+)*{_IDENT}"
+    rf"\boutputs?\s*:?\s*(?:(?:an?|the|new)\s+)?(?:{_TYPES}\s+)?{_IDENT}"
+    rf"|\bJudge?ments?\s+{_IDENT}"
+    rf"|\badd(?:s|ed)?\s+(?:(?:an?|the|new)\s+)*{_IDENT}\s+{_TYPES}\b"
+    rf"|\bname (?:it|them|each|the outputs?)\b(?:{_NOT_OUTPUT}[^.\n]){{0,80}}?{_IDENT}"
     r"|\b(?:add|output|state|change|correct|repair|update|extend)(?:s|ed|es|d)?\b"
     rf"(?:{_NOT_OUTPUT}[^.\n]){{0,120}}?(?:\.yaml|[a-z0-9])#[a-z][a-z0-9_]+",
     re.IGNORECASE,
@@ -551,7 +569,7 @@ _NAMED_OUTPUT = re.compile(
 # What follows a name can make it an input after all: "a_b_c as a new input", "a_b_c, a leaf input".
 _DESIGNATED_INPUT = re.compile(
     r"^`?\s*(?:[,(]\s*)?(?:(?:as|is|are|being|to be|will be|to|among|in|into)\s+)?(?:(?:an?|the)\s+)?"
-    r"(?:(?:new|leaf|opaque|free|supplied|required|additional|optional|raw)\s+){0,3}inputs?\b",
+    r"(?:[\w-]+\s+){0,3}inputs?\b",  # "as a new input", "as a scoped leaf input", "as a Date input"
     re.IGNORECASE,
 )
 

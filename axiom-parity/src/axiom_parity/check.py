@@ -180,11 +180,21 @@ def _ruled_out(text: str, at: int) -> bool:
 
 
 def _affirmed(claim: Claim) -> list[TestRef]:
-    """The claim's test references, less any it names only to rule out."""
+    """The claim's test references, less any it names only to rule out.
+
+    References are read as whole tokens: the "::" in "file.test.yaml::case"
+    or a colon inside backticks is not punctuation that ends a negation's reach.
+    """
+    text = claim.text
+    for t in claim.test_refs:
+        at = text.find(t.raw)
+        if at >= 0:
+            text = text[:at] + "x" * len(t.raw) + text[at + len(t.raw) :]
+    text = re.sub(r"`[^`]*`", lambda m: "x" * len(m.group(0)), text)
     out = []
     for t in claim.test_refs:
         at = claim.text.find(t.raw)
-        if at < 0 or not _ruled_out(claim.text, at):
+        if at < 0 or not _ruled_out(text, at):
             out.append(t)
     return out
 

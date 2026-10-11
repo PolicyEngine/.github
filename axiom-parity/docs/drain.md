@@ -24,7 +24,7 @@ The main lint failures:
 
 The unit of work is the source document. A signed run takes one primary citation and a bundle of up to 16 more, and the encoder refuses a bundle that leaves the primary's jurisdiction (`parse_source_bundle` in axiom-encode's `prepare_signed_backfill.py`). So the plan gives each document its own run. A document is ready when every issue with a target in it is. An issue whose targets span several documents needs all of them.
 
-The plan's own checks leave 16 documents: 4 UK and 12 US, holding 17 citations, one run each. Those 16 runs would complete 11 issues. Without the holds of 2026-10-10 (blocked citations, and manual paths paused), 26 documents and 29 citations pass, and their runs would complete 18 issues.
+The plan's own checks leave 16 documents: 4 UK and 12 US, holding 17 citations, one run each. Those 16 runs would complete 11 issues. Without the holds of 2026-10-10 (blocked citations, and manual paths paused), 28 documents and 31 citations pass, and their runs would complete 17 issues.
 
 **Passing the plan is necessary, not sufficient.** On 2026-10-10 the encoder owner prepared each of the 16 documents for dispatch. By its account that means reading the pinned source text against the finding, and checking the existing module and manifest, the import closure and the encoder's admission code. Its verdicts (`prep-verdicts.json`, as it stood at 20:28Z):
 

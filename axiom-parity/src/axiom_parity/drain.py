@@ -143,8 +143,9 @@ def _explicit_targets(text: str, cites: list[str]) -> list[str]:
 # The plural kind tells a module ("us/statutes/…") from a corpus citation ("us/statute/…").
 # A trailing slash makes it a directory ("at the matching uk/statutes/ukpga/2014/28/ paths").
 _MODULE_KINDS = "statutes|regulations|policies|legislation|programs"
+# Program modules also live at the root: "programs/us-ar/tanf/fy-2026.yaml".
 _MODULE_NAME = re.compile(
-    rf"(?<![\w/-])(?P<juris>{_JURIS})[/:](?P<kind>{_MODULE_KINDS})/"
+    rf"(?<![\w/-])(?:{_JURIS}[/:](?:{_MODULE_KINDS})|programs/{_JURIS})/"
     r"(?P<rest>[\w./:\-]*\w)(?P<dir>/)?(?:#[\w.]+)?"
 )
 # Why a finding names a module. Unless the words around it say otherwise, a named
@@ -170,12 +171,18 @@ _DEFERS = re.compile(
 )
 _DEFERRED_AFTER = re.compile(r"^\s+(?:cannot|can't|must not|should not|is not to) be imported", re.IGNORECASE)
 _INTO = re.compile(r"\binto\s*$", re.IGNORECASE)  # "import it into X": X is edited
-_IMPORTS = re.compile(r"\bimport\w*\b|\bfrom\b[^,;()]{0,30}$", re.IGNORECASE)
+# The import word must govern X: "import X", "importing the rule X", "Imports: X", "… from X".
+# "Add the import to X" edits X.
+_IMPORTS = re.compile(
+    r"\bimport(?:s|ed|ing)?\s*:?\s*(?:(?:the|a|an|its|their)\s+)?(?:(?:module|rule|amount|value)s?\s+)?$"
+    r"|\bfrom\b[^,;()]{0,30}$",
+    re.IGNORECASE,
+)
 # After a request, only a word that makes X the model to copy turns it into a mention:
 # "encode it mirroring the existing X".
 _PRECEDENT = re.compile(
-    r"\b(?:existing|matching|mirror(?:s|ing)?|like|unlike|precedents?|same as|as in|model+ed on|following)\b"
-    r"[^,;:()]*$",
+    r"\b(?:matching|mirror(?:s|ing)?|like|unlike|precedents?|same as|as in|model+ed on|following)\b"
+    r"[^,;:()]*$",  # "existing" alone is not one: "repair the existing X" asks for work on X
     re.IGNORECASE,
 )
 # With no request in sight, these make X a description, a precedent or a condition:
@@ -215,7 +222,8 @@ def _own_clause(gap: str) -> str:
 
 # "uk/statutes/ukpga/1992/14/6.yaml, 9.yaml and 77.yaml": the short names are siblings of the first.
 _SIBLINGS = re.compile(
-    rf"(?P<dir>(?<![\w/-])[a-z]{{2}}(?:-[a-z0-9]+)*/(?:{_MODULE_KINDS})/(?:[\w.:\-]+/)*)"
+    rf"(?P<dir>(?<![\w/-])(?:[a-z]{{2}}(?:-[a-z0-9]+)*/(?:{_MODULE_KINDS})|programs/[a-z]{{2}}(?:-[a-z0-9]+)*)/"
+    r"(?:[\w.:\-]+/)*)"
     r"(?P<first>[\w.:\-]+\.yaml)(?P<rest>(?:(?:\s*,\s*|\s+(?:and|or|to)\s+)[\w.:\-]+\.yaml\b(?!/))+)"
 )
 
@@ -230,9 +238,16 @@ def expand_siblings(text: str) -> str:
     return _SIBLINGS.sub(spell, text)
 
 
+_EDGE_EMPHASIS = re.compile(r"(?<![\w/])[_*]+(?=[\w/])|(?<=[\w/])[_*]+(?![\w/])")
+
+
 def plain(text: str) -> str:
-    """The text as paths are read from it: no code ticks or bold, braces and sibling names spelled out."""
-    return expand_siblings(expand_braces(re.sub(r"`|\*\*", "", text)))
+    """The text as paths are read from it.
+
+    No code ticks or emphasis (``_x_``, ``**x**``; underscores inside a name stay),
+    and braces and sibling names spelled out.
+    """
+    return expand_siblings(expand_braces(_EDGE_EMPHASIS.sub("", text.replace("`", ""))))
 
 
 def normal_module(name: str) -> str:

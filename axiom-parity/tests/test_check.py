@@ -345,8 +345,10 @@ def test_different_statuses_in_one_sentence_are_both_kept(hub):
     assert r.would_fail and {"queued-no-issue", "encoded-no-pr"} <= codes(r)
 
 
-def test_negation_stops_at_its_clause(hub):
-    assert not run(hub, "axiom: rulespec-us#1416 is not encoded but is queued").would_fail
+def test_a_status_must_follow_its_reference(hub):
+    # "but is queued" doesn't say what is queued, so the line makes no claim and fails.
+    assert run(hub, "axiom: rulespec-us#1416 is not encoded but is queued").would_fail
+    assert not run(hub, "axiom: rulespec-us#1416 is not encoded; rulespec-us#1416 is queued").would_fail
 
 
 def test_adjective_use_of_a_status_is_not_a_claim(hub):
