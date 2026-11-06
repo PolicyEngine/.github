@@ -348,7 +348,10 @@ def test_different_statuses_in_one_sentence_are_both_kept(hub):
 def test_a_status_must_follow_its_reference(hub):
     # "but is queued" doesn't say what is queued, so the line makes no claim and fails.
     assert run(hub, "axiom: rulespec-us#1416 is not encoded but is queued").would_fail
-    assert not run(hub, "axiom: rulespec-us#1416 is not encoded; rulespec-us#1416 is queued").would_fail
+    # A noncanonical first head keeps its scope across separators, rather than
+    # letting a split discard a possible condition on the following claim.
+    assert run(hub, "axiom: rulespec-us#1416 is not encoded; rulespec-us#1416 is queued").would_fail
+    assert not run(hub, "rulespec-us#1416 is not encoded.\n\naxiom: rulespec-us#1416 is queued").would_fail
 
 
 def test_adjective_use_of_a_status_is_not_a_claim(hub):

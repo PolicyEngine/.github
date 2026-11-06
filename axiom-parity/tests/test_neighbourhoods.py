@@ -89,7 +89,9 @@ def test_an_affirmed_status_is_a_claim_whatever_its_emphasis(mark, note):
 )
 def test_a_bullet_that_denies_a_status_does_not_inherit_one(denial, lead):
     line = parse_line(lead, items=[f"rulespec-us#1416 {denial}", "rulespec-us#1417"])
-    assert [(c.status, [r.number for r in c.rulespec_refs]) for c in line.claims] == [(QUEUED, [1417])]
+    # Unknown lead prose is outside the strict continuation grammar.
+    expected = [] if lead == "These are queued:" else [(QUEUED, [1417])]
+    assert [(c.status, [r.number for r in c.rulespec_refs]) for c in line.claims] == expected
 
 
 # --- companion evidence ---------------------------------------------------------------

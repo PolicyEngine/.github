@@ -92,14 +92,18 @@ def test_negated_status_words_are_prose():
     line = parse_line("TheAxiomFoundation/rulespec-us#1497 queued (the amendment is not yet encoded in the pin)")
     assert [c.status for c in line.claims] == [QUEUED]
     line = parse_line("the 2015-2025 years are not encoded, see rulespec-us#1 queued")
-    assert [c.status for c in line.claims] == [QUEUED]
+    # Unknown leading prose keeps its scope; splitting must not guess whether
+    # it qualifies the later reference.
+    assert not line.claims
 
 
-def test_status_inside_parentheses_is_a_note():
+def test_prose_before_status_is_not_a_claim_even_inside_parentheses():
     line = parse_line(
         "uk:regulations/uksi/2013/376/66 (exclusion deferred, queued in rulespec-uk#392) encoded-correct (`66.test.yaml`)"
     )
-    assert [c.status for c in line.claims] == [ENCODED_CORRECT]
+    # Free prose between the reference and status is outside the grammar,
+    # including prose that names another reference in a parenthetical note.
+    assert not line.claims
 
 
 def test_legacy_debt_means_queued():
@@ -107,13 +111,14 @@ def test_legacy_debt_means_queued():
     assert claim.status == QUEUED and claim.legacy_keyword == "debt"
 
 
-def test_na_with_a_queued_part_keeps_both_claims():
+def test_prose_status_scope_in_a_na_reason_is_not_split_into_claims():
     line = parse_line(
         "n/a for the published rates themselves (inputs). The determination rules are queued: "
         "TheAxiomFoundation/rulespec-uk#415 queued"
     )
-    assert [c.status for c in line.claims] == [NA, QUEUED]
-    assert line.claims[1].rulespec_refs[0].number == 415
+    # The prose before the first queued status is outside the claim grammar;
+    # its scope cannot be dropped just because another status follows it.
+    assert [c.status for c in line.claims] == [NA]
 
 
 def test_na_is_a_claim_wherever_it_sits():
@@ -148,8 +153,11 @@ def test_bullet_continuation_inherits_status():
         "All are dispatch-ready.\n"
     )
     (line,) = parse_body(body)
-    assert [c.status for c in line.claims] == [ENCODED_CORRECT, QUEUED, QUEUED]
-    assert [c.rulespec_refs[0].number for c in line.claims[1:]] == [355, 428]
+    # These prose bullets no longer inherit: the same strict reference/status
+    # grammar applies to inherited and explicit claims.
+    assert [c.status for c in line.claims] == [ENCODED_CORRECT]
+    inherited = parse_line("The rest is queued:", items=["rulespec-uk#355", "rulespec-uk#428"])
+    assert [c.rulespec_refs[0].number for c in inherited.claims] == [355, 428]
 
 
 def test_prose_line_starting_with_axiom_is_a_note_not_a_problem():
@@ -229,10 +237,8 @@ def test_a_denial_anywhere_before_the_status_in_its_piece_means_no_claim():
         "rulespec-us#1416 is not (yet) encoded but queued",
     ):
         assert not parse_line(line).claims, line
-    # Each status is judged in its own piece, so a denied claim doesn't take its neighbour with it.
-    assert [c.status for c in parse_line("rulespec-us#9 is not encoded, rulespec-us#1416 queued").claims] == [QUEUED]
-    claims = parse_line("rulespec-us#9 is not encoded, rulespec-us#1416 queued").claims
-    assert [r.number for r in claims[0].rulespec_refs] == [1416]
+    # A noncanonical first head keeps the scope that splitting would discard.
+    assert not parse_line("rulespec-us#9 is not encoded, rulespec-us#1416 queued").claims
 
 
 def test_bold_na_after_a_claim_is_still_a_claim():
@@ -264,10 +270,8 @@ def test_property_emphasis_and_dated_asides_do_not_make_a_denial_a_claim(aside, 
     assert not parse_line("rulespec-us#1416 " + wording.format(a=aside)).claims
 
 
-def test_a_denial_ends_with_its_own_piece():
-    assert [c.status for c in parse_line("rulespec-us#9 is not (yet) encoded; rulespec-us#1416 **queued**").claims] == [
-        QUEUED
-    ]
+def test_a_denial_keeps_its_scope_when_statuses_are_split():
+    assert not parse_line("rulespec-us#9 is not (yet) encoded; rulespec-us#1416 **queued**").claims
     assert not parse_line("rulespec-us#1416 will (per rulespec-us#5) be queued").claims
     assert not parse_line("rulespec-us#1416 is not, as of rulespec-us#5, queued").claims
-    assert [c.status for c in parse_line("It is not, in fact, encoded, rulespec-us#1416 queued").claims] == [QUEUED]
+    assert not parse_line("It is not, in fact, encoded, rulespec-us#1416 queued").claims

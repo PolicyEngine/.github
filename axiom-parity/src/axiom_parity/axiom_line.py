@@ -47,7 +47,7 @@ _STATUS_WORD = re.compile(r"(?<![\w/-])(encoded-correct|encoded|queued|debt)(?![
 _CLAIM_TAIL = re.compile(
     r"(?:[\s`'\")\]:\-]|\b(?:is|are|was|were|now|already|also|both|all|each|fully)\b)+$", re.IGNORECASE
 )
-_CITATION_TOKEN = re.compile(r"[\w.§(),/-]*\d[\w.§(),/-]*(?<!,)")  # "129(a)(2)", "43-1041(A),(H)"
+_CITATION = re.compile(r"(?:\d+\s+(?:U\.?S\.?C\.?|CFR)\s+)?\d[\w.§(),/-]*", re.IGNORECASE)
 # And nothing before it in its piece may deny, defer or condition it. This is a
 # second guard: a denial between the reference and the status already breaks
 # the adjacency above, whatever its punctuation.
@@ -194,6 +194,76 @@ def _split_top(text: str, pattern: re.Pattern[str]) -> list[str]:
 _SEPARATOR = re.compile(r"\s*(?:;|\|\||\s\|\s)\s*")
 _SENTENCE = re.compile(r"(?<=[.)])\s+(?=[A-Z`*])")
 
+# A clause begins with its reference/citation, or an explicit connector. Free
+# prose before a reference may qualify everything that follows it, so do not
+# guess its meaning from a list of denying words.
+_CLAIM_PREFIX = re.compile(r"[\s>`'\"([{,:.\-+#]*(?:(?:and|see)\b[\s>`'\"([{,:.\-+#]+)?$", re.IGNORECASE)
+_CITATION_START = re.compile(r"[\s>`'\"([{,:.\-+#]*(?:and\s+|see\s+)?\d", re.IGNORECASE)
+_REFERENCE_LIST = re.compile(
+    r"(?:[\s`'\"\[\](){} ,:;.\-+&/]|\b(?:and|see)\b|\((?:\d+|[a-z]|[ivxlcdm]+)\)?)*", re.IGNORECASE
+)
+
+
+def _first_reference(text: str) -> int | None:
+    """The first reference's offset, including repeated references in notes.
+
+    The reference parsers deduplicate an issue and its comment URL, so inspect
+    tokens too: a later URL must not hide an earlier short reference.
+    """
+    starts = [r.start for r in (*parse_rulespec_refs(text), *parse_legal_refs(text))]
+    first = min(starts) if starts else None
+    for token in re.finditer(r"\S+", text):
+        if first is not None and token.start() >= first:
+            return first
+        token_starts = [
+            token.start() + r.start for r in (*parse_rulespec_refs(token.group()), *parse_legal_refs(token.group()))
+        ]
+        if token_starts:
+            return min(token_starts + ([] if first is None else [first]))
+    return first
+
+
+def _canonical_prefix(head: str) -> bool:
+    # A link's visible reference is its head, even when its URL names the
+    # same issue and the reference parser deduplicates the two spellings.
+    head = re.sub(r"\[([^\]]+)\]\([^()\s]*\)", r"\1", head)
+    start = _first_reference(head)
+    if start is not None:
+        return bool(_CLAIM_PREFIX.fullmatch(head[:start]))
+    return bool(_CLAIM_PREFIX.fullmatch(head) or _CITATION_START.match(head))
+
+
+def _reference_list(core: str) -> bool:
+    """References may form a list; arbitrary prose between them is not a list."""
+    if re.search(r"\b(?:and|see)\s*$", core, re.IGNORECASE):
+        return False
+    core = re.sub(r"\[([^\]]+)\]\([^()\s]*\)?", r"\1", core)
+    endpoint = re.sub(r"(?:\s*\((?:\d+|[a-z]|[ivxlcdm]+)\)?)+$", "", core, flags=re.IGNORECASE)
+    endpoint = _CLAIM_TAIL.sub("", endpoint)
+    if not _ends_with_reference(endpoint):
+        return False
+    refs = [*parse_rulespec_refs(core), *parse_legal_refs(core)]
+    for token in core.split():
+        refs.extend((*parse_rulespec_refs(token), *parse_legal_refs(token)))
+    if not refs:
+        return False
+    for raw in sorted({ref.raw for ref in refs}, key=len, reverse=True):
+        core = core.replace(raw, " ")
+    return bool(_REFERENCE_LIST.fullmatch(core))
+
+
+def _qualified_scope(text: str) -> bool:
+    """A noncanonical first head keeps its scope when claims are split.
+
+    Every first head must have the complete affirmative structure. Otherwise
+    splitting statuses, sentences or claim separators could discard a condition
+    between the first reference and status as well as one before the reference.
+    """
+    if _NA_START.match(text):
+        return False
+    words = _status_words(text)
+    return bool(words and not _claimed(text, words[0]))
+
 
 def _status_words(text: str) -> list[re.Match[str]]:
     """Status keywords at nesting depth zero: inside brackets or backticks they are notes."""
@@ -211,6 +281,8 @@ def _ends_with_reference(core: str) -> bool:
     """
     # A Markdown link reads as its text: "[rulespec-uk#380](https://…/issues/380) queued".
     core = re.sub(r"\]\([^()\s]*\)?$", "", core)  # the closing ")" may already be gone
+    if not core.strip():
+        return False
     token = core.split()[-1].lstrip("([{`'\"")
     for found in (parse_rulespec_refs(token), parse_legal_refs(token)):
         if any(r.start == 0 and len(r.raw) == len(token) for r in found):
@@ -228,14 +300,19 @@ def _claimed(piece: str, m: re.Match[str]) -> bool:
     ``_CLAIM_TAIL`` stands between the reference and the status.
     """
     head = piece[: m.start()]
-    if _DENIES.search(head):
+    if not _canonical_prefix(head) or _DENIES.search(head):
         return False
     core = _CLAIM_TAIL.sub("", head)
     if not core.strip(" \t>-+#.,([{"):
-        return True  # the status opens its piece; its references follow it
-    if _ends_with_reference(core):
+        # An opening status cannot skip conditioning prose before its reference.
+        # Keep reference-free statuses so the checker can diagnose the omission.
+        following = piece[m.end() :]
+        return _first_reference(following) is None or _canonical_prefix(following)
+    if _reference_list(core):
         return True
-    return bool(_CITATION_TOKEN.fullmatch(core.split()[-1]))
+    citation = core.strip(" \t>-+#.,([{`'\"")
+    citation = re.sub(r"^(?:and|see)\s+", "", citation, flags=re.IGNORECASE)
+    return bool(_CITATION.fullmatch(citation))
 
 
 def _status_hits(text: str) -> list[re.Match[str]]:
@@ -263,12 +340,14 @@ _NOTE = re.compile(r"\s*\([^()]*(?:\([^()]*\)[^()]*)*\)")
 def _pieces(sentence: str) -> list[tuple[str, int]]:
     """(piece, offset): the sentence cut after every top-level status keyword.
 
-    Each piece runs from the end of the previous status (and the parenthetical
-    note right after it) to the end of its own; the last piece takes the rest
-    of the sentence. So "rulespec-us#9 is not encoded, rulespec-us#1416 queued"
-    is two pieces, and the denied first one keeps its reference to itself.
+    Each affirmative piece runs from the end of the previous status (and the
+    parenthetical note right after it) to the end of its own. A noncanonical
+    head keeps the remaining sentence together, so splitting cannot discard
+    a denial or condition and promote a later status to an affirmative claim.
     """
     words = _status_words(sentence)
+    if _qualified_scope(sentence):
+        return [(sentence, 0)]
     if len(words) <= 1:
         return [(sentence, 0)]
     out, start = [], 0
@@ -279,6 +358,9 @@ def _pieces(sentence: str) -> list[tuple[str, int]]:
             note = _NOTE.match(sentence, end)
             if note:
                 end = note.end()
+        if _qualified_scope(sentence[start:end]):
+            out.append((sentence[start:], start))
+            break
         out.append((sentence[start:end], start))
         start = end
     return out
@@ -307,17 +389,33 @@ _NA_INLINE = re.compile(
 
 def _segments(rest: str) -> list[str]:
     """Split a line into pieces that each hold at most one status keyword."""
+    if _qualified_scope(rest):
+        return [rest]
     out = []
     # "X queued and n/a: metadata" and "X queued. n/a: metadata": an n/a that
     # opens a clause is its own claim wherever it sits.
     parts = []
     for seg in _split_top(rest, _SEPARATOR):
         parts.extend(_split_top(seg, _NA_INLINE))
-    for seg in parts:
+    for index, seg in enumerate(parts):
+        remainder = "; ".join(parts[index:])
+        if _qualified_scope(remainder):
+            out.append(remainder)
+            break
+        if _NA_START.match(seg):
+            # The n/a reason is parsed recursively with its own scope; splitting
+            # its status words here would remove the reason's leading prose.
+            out.append(seg)
+            continue
         if len(_status_words(seg)) <= 1:
             out.append(seg)
             continue
-        for sentence in _merge_statusless(_split_top(seg, _SENTENCE)):
+        sentences = _merge_statusless(_split_top(seg, _SENTENCE))
+        for index, sentence in enumerate(sentences):
+            remainder = " ".join(sentences[index:])
+            if _qualified_scope(remainder):
+                out.append(remainder)
+                break
             out.extend(piece for piece, _ in _pieces(sentence))
     return out
 
@@ -378,7 +476,19 @@ def _unclaimed(rest: str) -> list[str]:
     return out
 
 
-_LEAD_STATUS = re.compile(r"(?<![\w/-])(encoded-correct|encoded|queued|debt)\s*:\s*$", re.IGNORECASE)
+_LEAD_STATUS = re.compile(r"(?:The\s+rest\s+is\s+)?(encoded-correct|encoded|queued|debt)\s*:\s*", re.IGNORECASE)
+
+
+def _complete_claim_clause(text: str, line_no: int) -> bool:
+    """A preceding claim cannot leave free prose to qualify a bullet lead."""
+    claims = _claims_from(text, line_no)
+    words = _status_words(text)
+    if not claims or not words:
+        return False
+    tail = text[words[-1].end() :]
+    while note := _NOTE.match(tail):
+        tail = tail[note.end() :]
+    return not tail.strip(" \t.,;:")
 
 
 def parse_line(rest: str, line_no: int = 0, items: list[str] | tuple[str, ...] = ()) -> AxiomLine:
@@ -399,23 +509,31 @@ def parse_line(rest: str, line_no: int = 0, items: list[str] | tuple[str, ...] =
     if items:
         # "The rest is queued:" gives its status to the bullets below it, unless
         # anything in it denies, defers or conditions that status.
-        tail = _LEAD_STATUS.search(rest)
+        # Split only explicit sentence/claim boundaries here. Splitting after a
+        # status would turn "The rest is almost encoded, queued:" into a bare
+        # "queued:" and discard the qualification again.
+        clauses = [sentence for segment in _split_top(rest, _SEPARATOR) for sentence in _split_top(segment, _SENTENCE)]
+        tail = _LEAD_STATUS.fullmatch(clauses[-1].strip())
         inherited = None
-        if tail and not _DENIES.search(rest[: tail.start()]):
+        if tail and all(_complete_claim_clause(clause, line_no) for clause in clauses[:-1]):
             word = tail.group(1).lower()
             inherited = LEGACY_ALIASES.get(word, word)
         if lead and inherited and lead[-1].status == inherited and not (lead[-1].rulespec_refs or lead[-1].legal_refs):
             lead = lead[:-1]
         for item in items:
-            own = _claims_from(item, line_no)
+            own = _claims_from(item, line_no) if inherited else []
             if own:
                 lead.extend(own)
             # A bullet that says anything about a status speaks for itself: "- #5 is not
             # queued" must not inherit "queued" from the line above.
             elif inherited and _has_refs(item) and not _STATUS_WORD.search(item):
-                lead.append(_claim(inherited, item, line_no))
+                # Inheritance must satisfy exactly the same reference/status
+                # grammar as an explicit claim, including the item's suffix.
+                explicit = f"{item} {inherited}"
+                if _claimed(explicit, _STATUS_WORD.search(explicit)):
+                    lead.append(_claim(inherited, item, line_no))
     line.claims.extend(lead)
-    for word in _unclaimed(rest):
+    for word in (word for text in [rest, *items] for word in _unclaimed(text)):
         line.notes.append(
             f"`{word}` here is not read as a claim: write the reference right before it, e.g. "
             f"`rulespec-us#123 {word.lower()}` or `us:statutes/26/24/d {word.lower()}`"

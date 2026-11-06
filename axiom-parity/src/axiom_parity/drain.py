@@ -171,6 +171,9 @@ _DEFERS = re.compile(
 )
 _DEFERRED_AFTER = re.compile(r"^\s+(?:cannot|can't|must not|should not|is not to) be imported", re.IGNORECASE)
 _INTO = re.compile(r"\binto\s*$", re.IGNORECASE)  # "import it into X": X is edited
+# "Remove a rule from X" edits X. The same "from" after another request
+# ("add a rule from X") names a source to import instead.
+_FROM = re.compile(r"\bfrom\b[^,;()]*$", re.IGNORECASE)
 # The import word must govern X: "import X", "importing the rule X", "Imports: X", "… from X".
 # "Add the import to X" edits X.
 _IMPORTS = re.compile(
@@ -261,6 +264,12 @@ def normal_module(name: str) -> str:
     return stem + ".yaml"
 
 
+def module_jurisdiction(module: str) -> str:
+    """The jurisdiction in either ``us/programs/…`` or ``programs/us/…`` layout."""
+    parts = normal_module(module).split("/")
+    return parts[1] if parts[0] == "programs" else parts[0]
+
+
 def _spelled_citation(module: str) -> str | None:
     """The citation a statute or regulation module's path spells, whatever the jurisdiction."""
     juris, kind, *rest = normal_module(module)[: -len(".yaml")].split("/")
@@ -328,6 +337,8 @@ def _modules_in(sentence: str) -> list[tuple[str, str]]:
             if _DEFERS.search(tail) or _DEFERRED_AFTER.match(after):
                 kind = DEFERRED
             elif _INTO.search(lead):
+                kind = WORK
+            elif requests and requests[-1].group(0).lower() in {"remove", "delete"} and _FROM.search(tail):
                 kind = WORK
             elif _IMPORTS.search(tail):
                 kind = IMPORT
@@ -411,7 +422,7 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     for line in joined.splitlines():
         line_modules, line_cites = _pair_line(line)
         for module in line_modules:
-            same = [c for c in line_cites if c.split("/")[0] == module.split("/")[0]]
+            same = [c for c in line_cites if c.split("/")[0] == module_jurisdiction(module)]
             if same:
                 add(same, paired.setdefault(module, []))
                 add([module], modules)
@@ -422,7 +433,7 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     for sentence in _sentences(asked):
         here = _corpus_citations(sentence)
         for module, kind in _modules_in(sentence):
-            same = [c for c in here if c.split("/")[0] == module.split("/")[0]]
+            same = [c for c in here if c.split("/")[0] == module_jurisdiction(module)]
             if kind == WORK and same and module not in paired:
                 paired[module] = same
     # Every module a finding names is work unless its clause says otherwise. Its

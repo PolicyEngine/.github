@@ -19,11 +19,13 @@ A PR needs a line only when it changes a file under `<package>/parameters/`, `<p
 | `axiom: n/a: <category>: <reason>` | It is the PR's only claim, and the category is allowed. For `metadata` and `docs-tests`, no changed policy file may change a parameter value or formula; every changed file is checked. |
 | `axiom: needed` | Never passes. It is a placeholder for a maintainer to replace. |
 
-A line can hold several claims separated by `;` or `|`, or there can be several `axiom:` lines. Every claim must pass. Notes in parentheses after a status are fine. A line ending in a colon continues in the bullet list below it.
+A line can hold several claims separated by `;` or `|`, or there can be several `axiom:` lines. Every claim must pass. Notes in parentheses after a status are fine. A line ending in a colon continues in the bullet list below it. A bare status lead (`queued:`) or `The rest is queued:` can give that status to bullets containing only references, separators and the allowed connecting words. A qualified lead (`The rest is almost queued:`) or bullet (`not rulespec-us#1416`, `rulespec-us#1416 subject to approval`) gives no claim. Other statuses use the same forms.
 
 A status is claimed only in the canonical shape: right after the reference or legal citation it is claimed for (`rulespec-us#1416 queued`, `` `us:statutes/26/24/d` encoded-correct ``, `26 USC 129(a)(2) queued`), or opening its clause with the references after it (`queued: rulespec-uk#415`).
+- A reference list begins directly, optionally introduced by `and` or `see`, with only separators, connecting words and numeric subsection references between its references. When a status opens its clause, the first reference must also follow directly through that prefix grammar. Arbitrary prose before or between references is not a declaration.
 - Only separators, closing marks and the words is, are, was, were, now, already, also, both, all, each and fully may stand between the reference and the status.
 - Nothing before the status in its clause may deny or condition it (not, never, no, will, may, until, if, pending and the like).
+- An unrecognised head before a status keeps its scope through later statuses and separators on the same line. Splitting cannot turn `If rulespec-us#9 encoded, rulespec-us#1416 queued` into a claim. Put qualifying prose in the PR description and write an unconditional claim on its own `axiom:` line. A continuation lead after another claim also requires that earlier claim to end at its status or parenthetical note.
 - So "rulespec-us#1416 is not [yet] queued", "rulespec-us#1416 isn’t queued" and "Not in Axiom yet, rulespec-us#1416 queued" claim nothing. A status that stands in prose with a reference after it ("The rates are already encoded-correct: …") is noted in the summary, not claimed.
 
 **What the check does not do.** It verifies the claims a PR makes. It cannot tell that every provision the PR changes has a claim: a PR that changes two provisions and claims one passes. The finder comment lists every citation the changed files reference, so a reviewer can compare. The n/a categories other than `metadata` and `docs-tests` are the author's statement and a reviewer's to check.
@@ -67,6 +69,25 @@ Each element is found under a heading that names it (`## Law (verbatim)`, `## Re
 
 The lint checks presence, not legal completeness. An issue that leaves a question of interpretation open can still pass.
 
+For a test-only handoff, list the **existing** rules that the new cases assert under `## Required outputs`. This declares the outputs to exercise; it does not ask for new rules. Keep the case inputs and expected values under `## Companion tests` and say in the finding that the existing rules should be preserved. For example:
+
+```text
+## Required outputs
+
+Existing outputs to exercise (no new rules):
+- us:statutes/26/32#eitc_demographic_eligible
+- us:statutes/26/32#eitc_allowed
+- us:statutes/26/32#eitc
+
+## review_finding (paste as-is)
+
+> Add a companion case to us/statutes/26/32.test.yaml for a section 911 claimant.
+> Expected: eitc_demographic_eligible not_holds, eitc_allowed not_holds, eitc 0.
+> Do not change the existing rules.
+```
+
+This is the form needed by test-only handoffs such as rulespec-us#1484 (PolicyEngine-US #9750) and #1502 (#9643). Their expected assertions alone do not declare required outputs. Repeat each module's existing output names in the declaration, including the second module when an issue covers two modules.
+
 ## Limits
 
 The `axiom:` line, the issues and their findings are free text, and the tools read them with rules, not understanding. Where a rule has to guess, it guesses towards the safe side: an issue is not ready, a claim is not made, a module is requested work, a target is not in the pin. The limits that remain:
@@ -77,9 +98,9 @@ The `axiom:` line, the issues and their findings are free text, and the tools re
 - **Presence, not substance.** The lint finds each element and checks that it is finished. It does not judge whether the law is right, whether the outputs are the right ones, or whether a stated outcome is correct.
   - A described case followed by a number after a colon counts as stating its result, and so does a table with a filled-in expected, output or result column. Cells under a column headed as input, given or facts are inputs.
   - A heading, label or cue that says the finding is pending, unavailable or to follow hands over nothing. A finding that is simply wrong or thin still counts.
-  - An output named in a finding counts only in a few declared shapes: "Output Money x_y_z", "Outputs: `x_y_z`", "Judgment x_y_z", "Add `x_y_z` Money …", "Name them x_y_z", "Add … to 9.yaml#rule". A bare "Add x_y_z" doesn't count, nor a name whose clause speaks of an input or that is followed by an input designation ("as a scoped leaf input").
+  - An output named in a finding counts only in a few declared shapes: "Output Money x_y_z", "Outputs: `x_y_z`", "Judgment x_y_z", "Add `x_y_z` Money …", "Name them x_y_z", "Add … to 9.yaml#rule". A bare "Add x_y_z" doesn't count, nor a name whose clause speaks of an input or whose complete declaration signature is followed by an input designation ("as a scoped leaf input"). Optional type, entity and period annotations, such as "Money (TaxUnit) (Week)", remain part of that signature.
   - A finding that starts on its label's line counts unless its first sentence defers it ("Coming soon when …"), however long it is.
-- **Targets.** `drain-plan` reads targets and modules out of findings. It treats a module as requested work unless its own clause marks an import, a deferral, a precedent or a description, and a request in that clause wins over a description. An import counts only when the import word governs the module ("import X", "importing X", "Imports: X", "from X"); "add the import to X" is work on X. A path may be wrapped in code ticks or emphasis, and a program module may sit at the root (`programs/us-ar/tanf/fy-2026.yaml`). It holds an issue when it can't find a citation for requested work. A module it wrongly counts adds a target or a hold. A module a finding only describes ("X currently carries the amount as an input") is not counted, even where the description implies it must change. The encoder owner confirms the targets before dispatching, and its preparation, not the plan, decides what is dispatched.
+- **Targets.** `drain-plan` reads targets and modules out of findings. It treats a module as requested work unless its own clause marks an import, a deferral, a precedent or a description, and a request in that clause wins over a description. An import counts only when the import word governs the module ("import X", "importing X", "Imports: X", "from X"); "add the import to X" and "remove a rule from X" are work on X. A path may be wrapped in code ticks or emphasis, and a program module may sit at the root (`programs/us-ar/tanf/fy-2026.yaml`), including brace groups (`programs/us-ca/{snap,tanf}/fy-2026.yaml`). Either layout keeps its jurisdiction when pairing a module with a citation. It holds an issue when it can't find a citation for requested work. A module it wrongly counts adds a target or a hold. A module a finding only describes ("X currently carries the amount as an input") is not counted, even where the description implies it must change. The encoder owner confirms the targets before dispatching, and its preparation, not the plan, decides what is dispatched.
 - **Rulespec state.** Lookups use rulespec `main` today, so a claim can pass because a module landed after the PR merged.
 
 ## Rollout

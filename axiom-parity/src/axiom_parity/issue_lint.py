@@ -77,7 +77,10 @@ _INLINE = {
 }
 # Issues write several provisions of one document as "uk/regulation/uksi/2006/213/{2,19,13D}",
 # sometimes with more than one group: "…/{6,9}/{1,2}.yaml".
-_BRACED = re.compile(r"(?<![\w/-])[a-z]{2}(?:-[a-z0-9]+)*[/:][\w.:\-/]*(?:\{[^{}\n]{1,200}\}[\w.:\-/]*)+")
+_BRACED = re.compile(
+    rf"(?<![\w/-])(?:{_JURIS}[/:]|programs/{_JURIS}/)"
+    r"[\w.:\-/]*(?:\{[^{}\n]{1,200}\}[\w.:\-/]*)+"
+)
 _GROUP = re.compile(r"\{([^{}]*)\}")
 
 
@@ -572,6 +575,14 @@ _DESIGNATED_INPUT = re.compile(
     r"(?:[\w-]+\s+){0,3}inputs?\b",  # "as a new input", "as a scoped leaf input", "as a Date input"
     re.IGNORECASE,
 )
+# A declaration can put its type after the name, then annotate the entity and
+# period: "a_b_c Money (TaxUnit) (Week)" or "a_b_c Money (TaxUnit, Week)".
+# Inspect a designation after that whole signature, rather than stopping at
+# the name or type and overlooking "as an input" beyond its annotations.
+_SIGNATURE_TAIL = re.compile(
+    rf"^(?:\s+{_TYPES}\b)?(?:\s*\([A-Za-z][\w.-]*(?:\s*,\s*[A-Za-z][\w.-]*)*\))*",
+    re.IGNORECASE,
+)
 
 
 def _named_output(finding: str) -> re.Match[str] | None:
@@ -579,14 +590,16 @@ def _named_output(finding: str) -> re.Match[str] | None:
 
     A declaration is skipped when its clause speaks of an input or an import
     before the name ("Add an input rule a_b_c", "the rule imported from …"), or
-    when the words right after the name make it an input ("Add a rule a_b_c as
-    a new input").
+    when the words after its complete signature make it an input ("Add a rule
+    a_b_c Money (TaxUnit) as a new input").
     """
     for m in _NAMED_OUTPUT.finditer(finding):
         clause = re.split(r"[.!?;:]\s|\n", finding[: m.start()])[-1] + m.group(0)
         if re.search(r"\binputs?\b|\bimport\w*\b", clause, re.IGNORECASE):
             continue
-        if _DESIGNATED_INPUT.match(finding[m.end() :]):
+        tail = finding[m.end() :]
+        signature_end = _SIGNATURE_TAIL.match(tail).end()
+        if _DESIGNATED_INPUT.match(tail) or _DESIGNATED_INPUT.match(tail[signature_end:]):
             continue
         return m
     return None
