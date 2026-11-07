@@ -576,12 +576,15 @@ _DESIGNATED_INPUT = re.compile(
     r"(?:[\w-]+\s+){0,3}(?:inputs?\b|\[inputs?\])",  # includes a shortcut link around "input"
     re.IGNORECASE,
 )
-# A declaration can put its type after the name, then annotate the entity and
-# period: "a_b_c Money (TaxUnit) (Week)" or "a_b_c Money (TaxUnit, Week)".
-# Inspect a designation after that whole signature, rather than stopping at
-# the name or type and overlooking "as an input" beyond its annotations.
-_SIGNATURE_TAIL = re.compile(
-    rf"^(?:\s+{_TYPES}\b)?(?:\s*\([A-Za-z][\w.-]*(?:\s*,\s*[A-Za-z][\w.-]*)*\))*",
+# Invariant: a name designated as an input in its declaring sentence never
+# supplies a required output, regardless of whitespace or Markdown at any
+# name, type, entity or period token boundary. A designation is a predicate,
+# not a successful parse of the preceding type or annotation signature.
+# "using the leaf input wages" describes another rule and is not one.
+_SENTENCE_INPUT_DESIGNATION = re.compile(
+    r"(?:\b(?:as|is|are|being|to be|will be|to|among|in|into)\s+"
+    r"|[,(]\s*(?=(?:an?|the)\s)|(?<=\))\s+)"
+    r"(?:(?:an?|the)\s+)?(?:[\w-]+\s+){0,3}(?:inputs?\b|\[inputs?\])",
     re.IGNORECASE,
 )
 _DECLARATION_LINK = re.compile(r"\[([^\]\n]*)\](?:\((?:[^()\n]|\([^()\n]*\))*\)|\[[^\]\n]*\])")
@@ -595,7 +598,10 @@ def _declaration_text(finding: str) -> str:
 
     The name, type, entity, period and input designation belong to one
     declaration even when their words use different Markdown formatting.
+    Normalize the whole declaration before any output or designation pattern
+    reads it; a line break or Unicode space never changes its classification.
     """
+    finding = " ".join(finding.split())
     finding = _DECLARATION_LINK.sub(r"\1", finding)
     finding = _DECLARATION_EMPHASIS.sub("", finding.replace("`", "").replace("*", ""))
     # A shortcut link's definition may be outside the extracted finding.
@@ -609,17 +615,17 @@ def _named_output(finding: str) -> re.Match[str] | None:
 
     A declaration is skipped when its clause speaks of an input or an import
     before the name ("Add an input rule a_b_c", "the rule imported from …"), or
-    when the words after its complete signature make it an input ("Add a rule
-    a_b_c Money (TaxUnit) as a new input").
+    when its declaring sentence designates it an input ("Add a rule a_b_c
+    Money (TaxUnit) as a new input"). An annotation parse cannot hide that
+    designation, and a designation in a later sentence cannot reach back.
     """
     finding = _declaration_text(finding)
     for m in _NAMED_OUTPUT.finditer(finding):
         clause = re.split(r"[.!?;:]\s|\n", finding[: m.start()])[-1] + m.group(0)
         if re.search(r"\binputs?\b|\bimport\w*\b", clause, re.IGNORECASE):
             continue
-        tail = finding[m.end() :]
-        signature_end = _SIGNATURE_TAIL.match(tail).end()
-        if _DESIGNATED_INPUT.match(tail) or _DESIGNATED_INPUT.match(tail[signature_end:]):
+        tail = re.split(r"[.!?](?:\s|$)", finding[m.end() :], maxsplit=1)[0]
+        if _DESIGNATED_INPUT.match(tail) or _SENTENCE_INPUT_DESIGNATION.search(tail):
             continue
         return m
     return None
