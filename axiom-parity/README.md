@@ -14,7 +14,7 @@ A PR needs a line only when it changes a file under `<package>/parameters/`, `<p
 | Claim | Passes when |
 |---|---|
 | `axiom: <rulespec issue> queued` | The issue exists in a `TheAxiomFoundation/rulespec-*` repo, has the `pe-parity` label, is open (or closed as completed), and is dispatch-ready (see below). |
-| `axiom: <rulespec PR> encoded` | The PR exists and is open or merged. A warning is raised if it carries no encoder manifest under `.axiom/`. |
+| `axiom: <rulespec PR> encoded` | The PR exists and is open or merged. A warning is raised if it carries no encoder manifest at `.axiom/encoding-manifests/**/*.json`. |
 | `axiom: <legal id> encoded-correct (<test>)` | Every module named exists on rulespec `main`, and so does any `#rule` cited. For each module, a cited companion test case or file exists and outputs a rule of that module. |
 | `axiom: n/a: <category>: <reason>` | It is the PR's only claim, and the category is allowed. For `metadata` and `docs-tests`, no changed policy file may change a parameter value or formula; every changed file is checked. |
 | `axiom: needed` | Never passes. It is a placeholder for a maintainer to replace. |
@@ -98,7 +98,7 @@ The `axiom:` line, the issues and their findings are free text, and the tools re
 - **Presence, not substance.** The lint finds each element and checks that it is finished. It does not judge whether the law is right, whether the outputs are the right ones, or whether a stated outcome is correct.
   - A described case followed by a number after a colon counts as stating its result, and so does a table with a filled-in expected, output or result column. Cells under a column headed as input, given or facts are inputs.
   - A heading, label or cue that says the finding is pending, unavailable or to follow hands over nothing. A finding that is simply wrong or thin still counts.
-  - An output named in a finding counts only in a few declared shapes: "Output Money x_y_z", "Outputs: `x_y_z`", "Judgment x_y_z", "Add `x_y_z` Money …", "Name them x_y_z", "Add … to 9.yaml#rule". A bare "Add x_y_z" doesn't count, nor a name whose clause speaks of an input or whose complete declaration signature is followed by an input designation ("as a scoped leaf input"). Optional type, entity and period annotations, such as "Money (TaxUnit) (Week)", remain part of that signature.
+  - An output named in a finding counts only in a few declared shapes: "Output Money x_y_z", "Outputs: `x_y_z`", "Judgment x_y_z", "Add `x_y_z` Money …", "Name them x_y_z", "Add … to 9.yaml#rule". A bare "Add x_y_z" doesn't count, nor a name whose clause speaks of an input or whose declaring sentence designates it an input ("as a scoped leaf input"). Whitespace and Markdown are normalized across the declaration; optional type, entity and period annotations, such as "Money (TaxUnit) (Week)", cannot hide that designation.
   - A finding that starts on its label's line counts unless its first sentence defers it ("Coming soon when …"), however long it is.
 - **Targets.** `drain-plan` reads targets and modules out of findings. It treats a module as requested work unless its own clause marks an import, a deferral, a precedent or a description, and a request in that clause wins over a description. An import counts only when the import word governs the module ("import X", "importing X", "Imports: X", "from X"); "add the import to X" and "remove a rule from X" are work on X. A path may be wrapped in code ticks or emphasis, and a program module may sit at the root (`programs/us-ar/tanf/fy-2026.yaml`), including brace groups (`programs/us-ca/{snap,tanf}/fy-2026.yaml`). Either layout keeps its jurisdiction when pairing a module with a citation. It holds an issue when it can't find a citation for requested work. A module it wrongly counts adds a target or a hold. A module a finding only describes ("X currently carries the amount as an input") is not counted, even where the description implies it must change. The encoder owner confirms the targets before dispatching, and its preparation, not the plan, decides what is dispatched.
 - **Rulespec state.** Lookups use rulespec `main` today, so a claim can pass because a module landed after the PR merged.
@@ -143,5 +143,7 @@ The tests use an in-memory GitHub. Besides example cases, they include property 
 - an aside or emphasis never cancels a negation: "is not (…) queued", "is not, …, queued" and "is not **queued**" claim nothing;
 - an input is never an expected outcome, however many are listed, and a named input is never a required output;
 - the URL mapper never contradicts 427 URL-to-citation pairs checked against the corpus (differential; `tests/fixtures/url_vectors.json`).
+
+Correctness properties use `deadline=None` so scheduler delays on loaded machines do not become functional failures. The bracket-scan regression checks its one-second elapsed-time limit explicitly.
 
 `scripts/replay_history.py` replays the check over merged PRs to measure compliance and calibrate the parser. With `--rulespec-dir` and `--issues-file` it reads rulespec and the open issues from local copies, and uses the API only for closed issues and rulespec PRs.

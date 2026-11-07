@@ -330,12 +330,14 @@ class Checker:
                 files = [f["filename"] for f in self.ctx.gh.pull_files(f"{ref.owner}/{ref.repo}", ref.number)]
             except (NotFound, GitHubError):
                 files = []
-            if files and not any("/.axiom/encoding-manifests/" in f"/{f}" or f.startswith(".axiom/") for f in files):
+            # Only JSON files in the signed encoder's repository-root manifest
+            # directory count; unrelated .axiom metadata never supplies a manifest.
+            if files and not any(f.startswith(".axiom/encoding-manifests/") and f.endswith(".json") for f in files):
                 res.findings.append(
                     Finding(
                         WARNING,
                         "no-encoding-manifest",
-                        f"{ref.slug} carries no encoder manifest under .axiom/; is it from the signed encoder?",
+                        f"{ref.slug} carries no encoder manifest at .axiom/encoding-manifests/**/*.json; is it from the signed encoder?",
                     )
                 )
         if pulls == 0 and not any(f.code == "not-found" for f in res.findings):
