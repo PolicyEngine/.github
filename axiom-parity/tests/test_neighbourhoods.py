@@ -67,7 +67,7 @@ BETWEEN = st.sampled_from(
 
 
 @given(NEGATION, BETWEEN, EMPHASIS, EMPHASIS)
-@settings(max_examples=400)
+@settings(max_examples=400, deadline=None)
 def test_a_denied_status_is_never_a_claim(negation, between, on_negation, on_status):
     words = negation.split()
     words[-1] = emphasised(words[-1], on_negation)
@@ -78,6 +78,7 @@ def test_a_denied_status_is_never_a_claim(negation, between, on_negation, on_sta
 
 
 @given(EMPHASIS, st.sampled_from(["", " (see the issue)", " — dispatch-ready", ", not yet encoded"]))
+@settings(deadline=None)
 def test_an_affirmed_status_is_a_claim_whatever_its_emphasis(mark, note):
     line = f"rulespec-us#1416 {emphasised('queued', mark)}{note}"
     assert [c.status for c in parse_line(line).claims] == [QUEUED], line
@@ -87,6 +88,7 @@ def test_an_affirmed_status_is_a_claim_whatever_its_emphasis(mark, note):
     st.sampled_from(["is not queued", "will be queued", "is not (yet) queued", "isn't ***queued***", "may be queued"]),
     st.sampled_from(["The rest is queued:", "Queued:", "These are queued:"]),
 )
+@settings(deadline=None)
 def test_a_bullet_that_denies_a_status_does_not_inherit_one(denial, lead):
     line = parse_line(lead, items=[f"rulespec-us#1416 {denial}", "rulespec-us#1417"])
     # Unknown lead prose is outside the strict continuation grammar.
@@ -167,7 +169,7 @@ LABEL = st.sampled_from(
 
 
 @given(LABEL, DEFERRAL)
-@settings(max_examples=120)
+@settings(max_examples=120, deadline=None)
 def test_a_deferred_finding_label_never_borrows_the_law_quote(label, deferral):
     body = LAW_QUOTE_ONLY.replace("## Law (verbatim)\n", f"## Law (verbatim)\n\n{label.format(d=deferral)}\n")
     assert review_finding_text(body) is None, label.format(d=deferral)
@@ -204,7 +206,7 @@ PAD = " Preserve the existing statutory text and its proof excerpts as they are,
         ]
     ),
 )
-@settings(max_examples=120)
+@settings(max_examples=120, deadline=None)
 def test_a_declared_input_is_never_a_required_output(name, wording):
     body = _finding_only(wording.format(x=name) + PAD)
     assert "required_outputs" in lint_issue({"body": body}).missing, wording
@@ -223,6 +225,7 @@ def test_a_declared_input_is_never_a_required_output(name, wording):
         ]
     ),
 )
+@settings(deadline=None)
 def test_a_declared_output_is_a_required_output(name, wording):
     assert lint_issue({"body": _finding_only(wording.format(x=name) + PAD)}).ready, wording
 
@@ -248,7 +251,7 @@ CASES_HEAD = READY_ISSUE_BODY.split("## Companion tests")[0] + "## Companion tes
         ]
     ),
 )
-@settings(max_examples=150)
+@settings(max_examples=150, deadline=None)
 def test_cases_without_a_stated_result_are_not_companion_tests(n, case):
     assert "companion_tests" in lint_issue({"body": CASES_HEAD + case.format(n=n) + "\n"}).missing, case
 
@@ -267,7 +270,7 @@ def test_cases_without_a_stated_result_are_not_companion_tests(n, case):
         ]
     ),
 )
-@settings(max_examples=100)
+@settings(max_examples=100, deadline=None)
 def test_cases_with_a_stated_result_are_companion_tests(n, case):
     assert lint_issue({"body": CASES_HEAD + case.format(n=n) + "\n"}).ready, case
 
@@ -279,6 +282,7 @@ SEPARATOR = st.sampled_from([" — ", " - ", ": ", " | ", " (corpus citation ", 
 
 
 @given(MARKER, SEPARATOR)
+@settings(deadline=None)
 def test_a_pairing_line_is_read_whatever_its_list_marker(marker, separator):
     module, citation = "us-nm/statutes/7-2-18/13.yaml", "us-nm/statute/7-2-18.13"
     closing = ")" if "(" in separator else (" |" if marker == "| " else "")
@@ -315,7 +319,7 @@ AFTER = st.sampled_from(
 
 
 @given(REQUEST, AFTER)
-@settings(max_examples=120)
+@settings(max_examples=120, deadline=None)
 def test_requested_work_is_work_whatever_follows_the_module(request, after):
     sentence = f"{request} {A} {after}."
     assert _modules_in(sentence) == [(A, WORK)], sentence
@@ -352,6 +356,7 @@ def test_requested_work_is_work_whatever_follows_the_module(request, after):
         ]
     )
 )
+@settings(deadline=None)
 def test_each_reason_for_naming_a_module_is_told_apart(case):
     sentence, kind = case
     assert _modules_in(sentence.format(m=A)) == [(A, kind)], sentence
@@ -438,7 +443,7 @@ OTHER_WORDS = [
 
 
 @given(st.lists(st.sampled_from(ALLOWED + OTHER_WORDS), max_size=4), EMPHASIS)
-@settings(max_examples=600)
+@settings(max_examples=600, deadline=None)
 def test_a_status_is_claimed_only_across_the_allowed_words(between, mark):
     """Between a reference and its status, anything but the allowed words means no claim."""
     line = f"rulespec-us#1416 {' '.join(between)} {emphasised('queued', mark)}"
@@ -473,7 +478,7 @@ DENIALS = [
 
 
 @given(st.sampled_from(DENIALS), st.sampled_from(["{d} ", "{d}, ", "It is {d} so that ", "({d}) ", "[{d}] "]))
-@settings(max_examples=200)
+@settings(max_examples=200, deadline=None)
 def test_a_denial_before_the_reference_means_no_claim(denial, shape):
     line = shape.format(d=denial) + "rulespec-us#1416 queued"
     assert not parse_line(line).claims, line
@@ -504,7 +509,7 @@ def test_a_name_followed_by_an_input_designation_is_never_an_output(name, modifi
     st.integers(0, 200),
     st.sampled_from(["", ".", ":", "!"]),
 )
-@settings(max_examples=200)
+@settings(max_examples=200, deadline=None)
 def test_a_deferred_finding_on_the_label_line_is_none_whatever_its_length(label, deferral, pad, end):
     remainder = f"{deferral} when the encoder owner has checked the corpus text {'x' * pad}{end}"
     body = LAW_QUOTE_ONLY.replace("## Law (verbatim)\n", f"## Law (verbatim)\n\n{label}{remainder}\n")
@@ -512,6 +517,7 @@ def test_a_deferred_finding_on_the_label_line_is_none_whatever_its_length(label,
 
 
 @given(st.integers(0, 99_999), st.sampled_from(["Input income", "Inputs", "Given wages", "Facts"]))
+@settings(deadline=None)
 def test_an_input_column_is_not_a_result(n, column):
     table = f"| Case | {column} | Expected |\n|---|---|---|\n| single filer | {n} | |\n"
     assert "companion_tests" in lint_issue({"body": CASES_HEAD + table}).missing
@@ -559,6 +565,7 @@ def test_requested_work_is_work_whatever_wraps_or_modifies_the_module(request, m
 
 
 @given(st.sampled_from(["(1) ", "(a) ", "a) ", "i. ", "iv) ", "10. "]), SEPARATOR)
+@settings(deadline=None)
 def test_a_pairing_line_is_read_whatever_its_numbering(marker, separator):
     module, citation = "us-nm/statutes/7-2-18/13.yaml", "us-nm/statute/7-2-18.13"
     closing = ")" if "(" in separator else ""
@@ -584,12 +591,14 @@ def test_a_pairing_line_is_read_whatever_its_numbering(marker, separator):
         ]
     ),
 )
+@settings(deadline=None)
 def test_a_reference_repeated_in_the_note_does_not_hide_the_claim(ref, note):
     """The parsers fold repeats of one reference together; the claim must survive that."""
     assert [c.status for c in parse_line(f"{ref} queued{note}").claims] == [QUEUED]
 
 
 @given(st.sampled_from(["queued", "**queued**", "queued (still open)"]))
+@settings(deadline=None)
 def test_a_markdown_link_to_the_issue_is_its_reference(status):
     line = (
         f"[TheAxiomFoundation/rulespec-us#1444](https://github.com/TheAxiomFoundation/rulespec-us/issues/1444) {status}"

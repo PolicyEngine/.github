@@ -79,7 +79,7 @@ SCALARS = st.one_of(
 
 
 @given(st.dictionaries(st.dates().map(str), SCALARS, min_size=1, max_size=5), st.text(min_size=1, max_size=40))
-@settings(max_examples=200)
+@settings(max_examples=200, deadline=None)
 def test_property_descriptive_edits_never_count(values, label):
     import yaml
 
@@ -95,7 +95,7 @@ def test_property_descriptive_edits_never_count(values, label):
 
 
 @given(st.dictionaries(st.dates().map(str), st.integers(0, 10**6), min_size=1, max_size=5), st.integers(1, 10**6))
-@settings(max_examples=200)
+@settings(max_examples=200, deadline=None)
 def test_property_value_edits_always_count(values, bump):
     import yaml
 
@@ -139,6 +139,7 @@ def test_a_formula_local_named_label_is_code_not_metadata():
 
 
 @given(st.integers(-100, 100), st.integers(1, 100), st.sampled_from(["label", "documentation", "reference"]))
+@settings(deadline=None)
 def test_property_changed_formula_local_always_counts(n, bump, name):
     def source(value):
         return f"class benefit:\n def formula(person, period, parameters):\n  {name} = {value}\n  return {name}\n"

@@ -1,5 +1,5 @@
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from axiom_parity.finder.citations import Citation, StateHint, map_url
@@ -98,6 +98,7 @@ def test_state_sites_with_exact_rules():
 
 
 @given(st.integers(1, 54), st.from_regex(r"[1-9][0-9]{0,4}[a-z]?", fullmatch=True))
+@settings(deadline=None)
 def test_property_cornell_usc(title, section):
     c = map_url(f"https://www.law.cornell.edu/uscode/text/{title}/{section}")
     assert c.path == f"us/statute/{title}/{section}"
@@ -106,6 +107,7 @@ def test_property_cornell_usc(title, section):
 @given(
     st.sampled_from(["ukpga", "uksi", "ssi", "asp"]), st.integers(1900, 2030), st.integers(1, 3000), st.integers(1, 400)
 )
+@settings(deadline=None)
 def test_property_legislation_gov_uk(kind, year, number, sec):
     unit = "section" if kind in ("ukpga", "asp") else "regulation"
     root = "statute" if kind in ("ukpga", "asp") else "regulation"

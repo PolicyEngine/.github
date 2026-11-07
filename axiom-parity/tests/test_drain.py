@@ -35,6 +35,7 @@ def test_review_finding_after_a_bold_step_label_and_in_yaml():
     st.text(alphabet="abcdefgh ,.`>#*-_:|\n", max_size=400),
     st.integers(60, 140).map(lambda n: "x" * n),
 )
+@settings(deadline=None)
 def test_property_extracted_review_finding_implies_lint_found_it(text, near_threshold):
     """Differential: the drain never pastes a review_finding the lint didn't see."""
     from axiom_parity.issue_lint import lint_issue

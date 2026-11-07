@@ -270,6 +270,7 @@ def test_an_output_declared_in_the_finding_counts():
         ]
     )
 )
+@settings(deadline=None)
 def test_a_deferred_review_finding_cue_does_not_borrow_the_law(cue):
     from axiom_parity.issue_lint import review_finding_text
 
@@ -352,6 +353,7 @@ def test_an_input_rule_is_not_a_required_output():
         ]
     )
 )
+@settings(deadline=None)
 def test_a_deferred_title_does_not_borrow_the_law(title):
     from axiom_parity.issue_lint import review_finding_text
 

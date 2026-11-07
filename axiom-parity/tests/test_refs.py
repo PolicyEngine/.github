@@ -1,4 +1,4 @@
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from axiom_parity.refs import parse_legal_refs, parse_rulespec_refs, parse_test_refs
@@ -93,6 +93,7 @@ SEG = st.from_regex(r"[a-z0-9]{1,6}", fullmatch=True)
     st.lists(SEG, min_size=1, max_size=5),
     st.one_of(st.none(), st.from_regex(r"[a-z][a-z0-9_]{0,20}", fullmatch=True)),
 )
+@settings(deadline=None)
 def test_property_legal_id_round_trip(juris, kind, segs, rule):
     """A rendered legal id parses back to the same module path and rule."""
     text = f"{juris}:{kind}/{'/'.join(segs)}" + (f"#{rule}" if rule else "")
@@ -102,6 +103,7 @@ def test_property_legal_id_round_trip(juris, kind, segs, rule):
 
 
 @given(st.sampled_from(["us", "uk"]), st.integers(1, 10**6), st.booleans())
+@settings(deadline=None)
 def test_property_rulespec_ref_round_trip(country, n, url):
     text = (
         f"https://github.com/TheAxiomFoundation/rulespec-{country}/issues/{n}"

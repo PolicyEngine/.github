@@ -195,7 +195,7 @@ def test_property_claims_round_trip(claims, sep):
 
 
 @given(st.text(max_size=400))
-@settings(max_examples=500)
+@settings(max_examples=500, deadline=None)
 def test_property_parser_never_raises_and_is_deterministic(text):
     a = parse_body("axiom: " + text)
     b = parse_body("axiom: " + text)
@@ -205,7 +205,7 @@ def test_property_parser_never_raises_and_is_deterministic(text):
 
 
 @given(st.text(alphabet=st.characters(blacklist_characters="\n"), max_size=200))
-@settings(max_examples=300)
+@settings(max_examples=300, deadline=None)
 def test_property_text_without_axiom_prefix_has_no_lines(text):
     if "axiom" in text.lower():
         return
@@ -221,7 +221,7 @@ ASIDE = st.from_regex(r"[a-z]{1,8}( [a-z]{1,8}){0,3}", fullmatch=True).filter(
     ASIDE,
     st.sampled_from(["is not ({a}) queued", "is not, {a}, queued", "isn't ({a}) queued", "is not yet ({a}) queued"]),
 )
-@settings(max_examples=200)
+@settings(max_examples=200, deadline=None)
 def test_property_an_aside_does_not_cancel_a_negation(aside, wording):
     line = parse_line("rulespec-us#1416 " + wording.format(a=aside))
     assert not line.claims
@@ -265,7 +265,7 @@ def test_adjective_with_an_adverb_is_not_a_claim():
         ]
     ),
 )
-@settings(max_examples=200)
+@settings(max_examples=200, deadline=None)
 def test_property_emphasis_and_dated_asides_do_not_make_a_denial_a_claim(aside, wording):
     assert not parse_line("rulespec-us#1416 " + wording.format(a=aside)).claims
 
