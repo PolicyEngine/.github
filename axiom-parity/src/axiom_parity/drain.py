@@ -152,7 +152,7 @@ _MODULE_NAME = re.compile(
 # module is work for the encoder: that is the safe reading, because a plan that
 # misses requested work calls an issue ready when it is not.
 WORK, IMPORT, MENTION, DEFERRED = "work", "import", "mention", "deferred"
-_CLAUSE_STARTS = re.compile(r"[,;]|\b(?:but|and|then)\b", re.IGNORECASE)
+_CLAUSE_STARTS = re.compile(r"[,;]|\b(?:but|and|or|then)\b", re.IGNORECASE)
 _LIST_GOES_ON = re.compile(r"^[\s,()/]*(?:(?:and|or|&|to)[\s,()/]*)?$", re.IGNORECASE)
 # A request for work. When one stands between the start of the sentence (or the
 # module before) and this module, the module is work whatever describes it:
@@ -172,9 +172,6 @@ _IMPORT_DEFERRAL = re.compile(
 _DEFERS = re.compile(r"deferred dependenc|" + _IMPORT_DEFERRAL.pattern, re.IGNORECASE)
 _DEFERRED_AFTER = re.compile(r"^\s+(?:cannot|can't|must not|should not|is not to) be imported", re.IGNORECASE)
 _INTO = re.compile(r"\binto\s*$", re.IGNORECASE)  # "import it into X": X is edited
-# "Remove a rule from X" edits X. The same "from" after another request
-# ("add a rule from X") names a source to import instead.
-_FROM = re.compile(r"\bfrom\b[^,;()]*$", re.IGNORECASE)
 # The import word must govern X: "import X", "importing the rule X", "Imports: X", "… from X".
 # "Add the import to X" edits X.
 _IMPORTS = re.compile(
@@ -211,67 +208,102 @@ _PRECEDENT_ANYWHERE = re.compile(r"\b(?:precedents?|existing|mirror(?:s|ing)?|ma
 # These start a new source clause after a request: "remove a rule, importing
 # from X". A noun coordination ("and its imports") does not start one.
 _SOURCE_CLAUSE = re.compile(
-    r"^\s*(?:(?:now|also|instead)\s+)*(?:imports\s*:|(?:import(?:ing)?|read(?:ing)?|us(?:e|ing))\b)",
+    r"\s*(?:(?:now|also|instead)\s+)*(?:imports\s*:|(?:import(?:ing)?|read(?:ing)?|us(?:e|ing))\b)",
     re.IGNORECASE,
 )
 _OTHER_VERBAL_CLAUSE = re.compile(r"(?:keep|leave|preserve|retain|declare|defer)\b", re.IGNORECASE)
 
 
-def _new_removal_clause(text: str) -> bool:
+def _new_removal_clause(text: str, start: int = 0) -> bool:
     """An explicit new predicate, rather than another removal object."""
-    text = text.lstrip()
+    start = re.compile(r"\s*").match(text, start).end()
+    deferral = _IMPORT_DEFERRAL.match(text, start)
+    if deferral and deferral.group(0).lower() == "blocked_by":
+        # A metadata field immediately introducing a module is an affirmative
+        # deferral. A noun phrase naming the removed metadata is another object.
+        target = re.compile(r"\s*[:=]?\s*[\[(]*\s*").match(text, deferral.end()).end()
+        deferral = _MODULE_NAME.match(text, target)
     return bool(
-        _REQUESTS.match(text)
-        or _SOURCE_CLAUSE.match(text)
-        or _IMPORT_DEFERRAL.match(text)
-        or _OTHER_VERBAL_CLAUSE.match(text)
+        _REQUESTS.match(text, start)
+        or _SOURCE_CLAUSE.match(text, start)
+        or deferral
+        or _OTHER_VERBAL_CLAUSE.match(text, start)
     )
 
 
-def _removal_request(text: str) -> bool:
-    requests = list(_REQUESTS.finditer(text))
-    return bool(requests and requests[-1].group(0).lower() in {"remove", "delete"})
-
-
-def _closing_bracket(text: str, start: int) -> int | None:
+def _clause_structure(text: str) -> tuple[dict[int, int], dict[int, int]]:
+    """Match each bracket and the next top-level comma once, including malformed text."""
     pairs = {"(": ")", "[": "]"}
-    stack: list[str] = []
-    for i in range(start, len(text)):
-        if text[i] in pairs:
-            stack.append(pairs[text[i]])
-        elif stack and text[i] == stack[-1]:
-            stack.pop()
-            if not stack:
-                return i
-    return None
-
-
-def _next_comma(text: str, start: int) -> int | None:
+    stack: list[tuple[str, int]] = []
+    brackets: dict[int, int] = {}
+    commas: dict[int, int] = {}
+    previous_comma = None
     depth = 0
-    for i in range(start, len(text)):
-        if text[i] in "([":
+    for i, ch in enumerate(text):
+        if ch in pairs:
+            stack.append((pairs[ch], i))
             depth += 1
-        elif text[i] in ")]":
+        elif ch in ")]":
+            if stack and ch == stack[-1][0]:
+                _, opening = stack.pop()
+                brackets[opening] = i
             depth = max(0, depth - 1)
         elif depth == 0:
-            if text[i] == ",":
-                return i
-            if text[i] == ";":
-                break
-    return None
+            if ch == ",":
+                if previous_comma is not None:
+                    commas[previous_comma] = i
+                previous_comma = i
+            elif ch == ";":
+                previous_comma = None
+    return brackets, commas
 
 
-def _own_clause(gap: str) -> str:
-    """The module's governing clause, keeping a removal's objects and asides."""
-    depth, i, lead = 0, 0, ""
+@dataclass(frozen=True)
+class _ClauseLead:
+    text: str
+    request_end: int | None
+    removal: bool
+
+
+def _clause_leads(gap: str, modules: list[re.Match[str]]) -> list[_ClauseLead]:
+    """Scan the sentence once, retaining the predicate across module objects.
+
+    Invariant: bracket matching visits each character once; unmatched openers
+    never trigger another scan of the suffix.
+    """
+    depth, i, removal = 0, 0, False
+    lead: list[str] = []
+    lead_length = 0
+    request_end: int | None = None
+    brackets, commas = _clause_structure(gap)
     breaks = {m.start(): m for m in _CLAUSE_STARTS.finditer(gap)}
+    requests = {m.start(): m for m in _REQUESTS.finditer(gap)}
+    leads: list[_ClauseLead] = []
+    module_index = 0
     while i < len(gap):
+        next_module = modules[module_index] if module_index < len(modules) else None
+        next_start = next_module.start() if next_module else len(gap)
+        if i == next_start and next_module:
+            # Removal alone decides WORK: avoid copying an ever-growing lead
+            # for each member of a long removal list.
+            leads.append(_ClauseLead("" if removal else "".join(lead), request_end, removal))
+            # A path is an object, never another predicate. Carry its governing
+            # clause forward instead of starting again after every module.
+            lead.append(" ")
+            lead_length += 1
+            i = next_module.end()
+            module_index += 1
+            continue
         ch = gap[i]
+        if i in requests and not removal:
+            removal = requests[i].group(0).lower() in {"remove", "delete"}
+            request_end = lead_length + len(requests[i].group(0))
         if ch in "([":
-            if _removal_request(lead):
-                closing = _closing_bracket(gap, i)
-                if closing is not None:
-                    lead += " "
+            if removal:
+                closing = brackets.get(i)
+                if closing is not None and closing < next_start:
+                    lead.append(" ")
+                    lead_length += 1
                     i = closing + 1
                     continue
             depth += 1
@@ -279,30 +311,42 @@ def _own_clause(gap: str) -> str:
             depth = max(0, depth - 1)
         elif depth == 0 and i in breaks:
             boundary = breaks[i]
-            removal = _removal_request(lead)
-            following = gap[boundary.end() :].lstrip()
             if removal and ch == ",":
-                closing = _next_comma(gap, boundary.end())
-                if closing is not None:
-                    continuation = gap[closing + 1 :].lstrip()
-                    continuation = re.sub(r"^(?:and|or)\b\s*", "", continuation, flags=re.IGNORECASE)
+                closing = commas.get(i)
+                if closing is not None and closing < next_start:
+                    continuation = re.compile(r"\s*(?:(?:and|or)\b\s*)?", re.I).match(gap, closing + 1).end()
                     # A paired aside can precede or follow coordinated objects.
                     # Its own verbs do not replace the governing removal.
-                    if not _new_removal_clause(continuation):
-                        lead += " "
+                    if not _new_removal_clause(gap, continuation):
+                        lead.append(" ")
+                        lead_length += 1
                         i = closing + 1
                         continue
             # Adjectives such as "existing", "matching" and "deferred"
             # describe coordinated objects. Only a new predicate ends removal.
-            if not (removal and boundary.group(0).lower() in {",", "and"} and not _new_removal_clause(following)):
-                lead = ""
+            if not (
+                removal and boundary.group(0).lower() in {",", "and", "or"}
+                and not _new_removal_clause(gap, boundary.end())
+            ):
+                lead.clear()
+                lead_length = 0
+                request_end = None
+                removal = False
             else:
-                lead += boundary.group(0)
+                lead.append(boundary.group(0))
+                lead_length += len(boundary.group(0))
             i = boundary.end()
             continue
-        lead += ch
+        lead.append(ch)
+        lead_length += 1
         i += 1
-    return lead
+    leads.append(_ClauseLead("".join(lead), request_end, removal))
+    return leads
+
+
+def _own_clause(gap: str) -> str:
+    """The clause at the end of a text fragment (also used by scan regressions)."""
+    return _clause_leads(gap, [])[-1].text
 
 
 # "uk/statutes/ukpga/1992/14/6.yaml, 9.yaml and 77.yaml": the short names are siblings of the first.
@@ -401,30 +445,31 @@ def _modules_in(sentence: str) -> list[tuple[str, str]]:
     ("a.yaml, b.yaml and c.yaml") shares the first module's kind.
     """
     out: list[tuple[str, str]] = []
+    matches = [m for m in _MODULE_NAME.finditer(sentence) if not m.group("dir")]
+    # Invariant P1.2: a removal governs every subsequent module until a genuine
+    # new predicate starts a clause, regardless of coordination or prepositions.
+    leads = _clause_leads(sentence, matches)
     last_end, kind = 0, WORK
-    for m in _MODULE_NAME.finditer(sentence):
-        if m.group("dir"):
-            continue
-        gap = sentence[last_end : m.start()]
-        after = sentence[m.end() :]
-        if out and _LIST_GOES_ON.match(gap):
+    for m, governing in zip(matches, leads, strict=False):
+        gap = "" if governing.removal else sentence[last_end : m.start()]
+        after = "" if governing.removal else sentence[m.end() :]
+        if governing.removal:
+            # Invariant P1.3: a removal's source module is WORK whatever the
+            # object names, including blocked_by metadata and deferrals. Only
+            # an affirmative deferral predicate can make a module DEFERRED.
+            kind = WORK
+        elif out and _LIST_GOES_ON.match(gap):
             pass  # the list's first module decided
         else:
             # The module's own clause decides. A request in it makes the module work
             # unless what stands between the request and the module says otherwise.
-            lead = _own_clause(gap)
-            requests = list(_REQUESTS.finditer(lead))
-            tail = lead[requests[-1].end() :] if requests else lead
-            removal = requests and requests[-1].group(0).lower() in {"remove", "delete"}
+            lead = governing.text
+            requests = governing.request_end is not None
+            tail = lead[governing.request_end :] if requests else lead
             comparison = re.search(r"\bas\s*$", lead) and re.match(r"\s+(?:does|do|did)\b", after)
-            # A "deferred dependency" can itself be the object removed. An
-            # explicit refusal to import the module still gives a deferral.
-            defers = _IMPORT_DEFERRAL if removal else _DEFERS
-            if defers.search(tail) or _DEFERRED_AFTER.match(after):
+            if _DEFERS.search(tail) or _DEFERRED_AFTER.match(after):
                 kind = DEFERRED
             elif _INTO.search(lead):
-                kind = WORK
-            elif removal and _FROM.search(tail):
                 kind = WORK
             elif _IMPORTS.search(tail):
                 kind = IMPORT
