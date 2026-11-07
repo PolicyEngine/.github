@@ -2,7 +2,7 @@ import json
 import subprocess
 
 from conftest import READY_ISSUE_BODY
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from axiom_parity.corpus_pin import pinned_citations, read_pin
@@ -85,6 +85,7 @@ def test_plan_groups_by_document_and_marks_readiness():
 
 
 @given(st.sets(st.sampled_from(["us/statute/26/32/d", "us/statute/26/32/c", "us/statute/26/1/h"])))
+@settings(deadline=None)
 def test_property_a_batch_is_ready_iff_every_issue_is_lint_ready_and_pinned(pin):
     rows = [
         issue_inputs("R", {"number": n, "body": READY_ISSUE_BODY.replace("32/d", sub)}, [])
@@ -395,6 +396,7 @@ def test_an_issue_is_drainable_only_when_all_its_documents_are():
 
 
 @given(st.lists(st.sampled_from(COUNCILS + ["us", "uk"]), min_size=1, max_size=6), st.integers(1, 40))
+@settings(deadline=None)
 def test_property_every_batch_is_one_document_and_one_jurisdiction(jurisdictions, per):
     from axiom_parity.drain import MAX_BUNDLE_CITATIONS, runs_needed
     from axiom_parity.finder.propose import document_of

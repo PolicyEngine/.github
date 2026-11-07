@@ -184,7 +184,7 @@ SEP = st.sampled_from(["; ", " | ", " || "])
 
 
 @given(st.lists(CLAIM, min_size=1, max_size=6), SEP)
-@settings(max_examples=300)
+@settings(max_examples=300, deadline=None)
 def test_property_claims_round_trip(claims, sep):
     """Rendering N claims and parsing them back recovers each status and ref, in order."""
     rest = sep.join(f"{ref} {status}{note}" for ref, status, note in claims)

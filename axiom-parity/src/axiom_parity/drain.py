@@ -164,11 +164,12 @@ _REQUESTS = re.compile(
 )
 # "Declare a deferred dependency on X", "do not import X", "without importing X", "62.yaml defers X".
 # The bare adjective is not one: "encode the deferred X" asks for X.
-_DEFERS = re.compile(
-    r"deferred dependenc|\bdefers\b|\bdeferring\b|\bblocked_by\b|do(?:es)? not import|don't import|"
+_IMPORT_DEFERRAL = re.compile(
+    r"\bdefers\b|\bdeferring\b|\bblocked_by\b|do(?:es)? not import|don't import|"
     r"must not import|never import|not import\b|without importing|rather than import|instead of import",
     re.IGNORECASE,
 )
+_DEFERS = re.compile(r"deferred dependenc|" + _IMPORT_DEFERRAL.pattern, re.IGNORECASE)
 _DEFERRED_AFTER = re.compile(r"^\s+(?:cannot|can't|must not|should not|is not to) be imported", re.IGNORECASE)
 _INTO = re.compile(r"\binto\s*$", re.IGNORECASE)  # "import it into X": X is edited
 # "Remove a rule from X" edits X. The same "from" after another request
@@ -207,20 +208,101 @@ _MENTIONED_AFTER = re.compile(
 )
 # "following the precedent min(a, 3) in X": within its clause the precedent word reaches X across brackets.
 _PRECEDENT_ANYWHERE = re.compile(r"\b(?:precedents?|existing|mirror(?:s|ing)?|matching)\b", re.IGNORECASE)
+# These start a new source clause after a request: "remove a rule, importing
+# from X". A noun coordination ("and its imports") does not start one.
+_SOURCE_CLAUSE = re.compile(
+    r"^\s*(?:(?:now|also|instead)\s+)*(?:imports\s*:|(?:import(?:ing)?|read(?:ing)?|us(?:e|ing))\b)",
+    re.IGNORECASE,
+)
+_OTHER_VERBAL_CLAUSE = re.compile(r"(?:keep|leave|preserve|retain|declare|defer)\b", re.IGNORECASE)
+
+
+def _new_removal_clause(text: str) -> bool:
+    """An explicit new predicate, rather than another removal object."""
+    text = text.lstrip()
+    return bool(
+        _REQUESTS.match(text)
+        or _SOURCE_CLAUSE.match(text)
+        or _IMPORT_DEFERRAL.match(text)
+        or _OTHER_VERBAL_CLAUSE.match(text)
+    )
+
+
+def _removal_request(text: str) -> bool:
+    requests = list(_REQUESTS.finditer(text))
+    return bool(requests and requests[-1].group(0).lower() in {"remove", "delete"})
+
+
+def _closing_bracket(text: str, start: int) -> int | None:
+    pairs = {"(": ")", "[": "]"}
+    stack: list[str] = []
+    for i in range(start, len(text)):
+        if text[i] in pairs:
+            stack.append(pairs[text[i]])
+        elif stack and text[i] == stack[-1]:
+            stack.pop()
+            if not stack:
+                return i
+    return None
+
+
+def _next_comma(text: str, start: int) -> int | None:
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] in "([":
+            depth += 1
+        elif text[i] in ")]":
+            depth = max(0, depth - 1)
+        elif depth == 0:
+            if text[i] == ",":
+                return i
+            if text[i] == ";":
+                break
+    return None
 
 
 def _own_clause(gap: str) -> str:
-    """The part of ``gap`` after its last clause start that is not inside brackets."""
-    depth, start = 0, 0
-    breaks = {m.start(): m.end() for m in _CLAUSE_STARTS.finditer(gap)}
-    for i, ch in enumerate(gap):
+    """The module's governing clause, keeping a removal's objects and asides."""
+    depth, i, lead = 0, 0, ""
+    breaks = {m.start(): m for m in _CLAUSE_STARTS.finditer(gap)}
+    while i < len(gap):
+        ch = gap[i]
         if ch in "([":
+            if _removal_request(lead):
+                closing = _closing_bracket(gap, i)
+                if closing is not None:
+                    lead += " "
+                    i = closing + 1
+                    continue
             depth += 1
         elif ch in ")]":
             depth = max(0, depth - 1)
         elif depth == 0 and i in breaks:
-            start = breaks[i]
-    return gap[start:]
+            boundary = breaks[i]
+            removal = _removal_request(lead)
+            following = gap[boundary.end() :].lstrip()
+            if removal and ch == ",":
+                closing = _next_comma(gap, boundary.end())
+                if closing is not None:
+                    continuation = gap[closing + 1 :].lstrip()
+                    continuation = re.sub(r"^(?:and|or)\b\s*", "", continuation, flags=re.IGNORECASE)
+                    # A paired aside can precede or follow coordinated objects.
+                    # Its own verbs do not replace the governing removal.
+                    if not _new_removal_clause(continuation):
+                        lead += " "
+                        i = closing + 1
+                        continue
+            # Adjectives such as "existing", "matching" and "deferred"
+            # describe coordinated objects. Only a new predicate ends removal.
+            if not (removal and boundary.group(0).lower() in {",", "and"} and not _new_removal_clause(following)):
+                lead = ""
+            else:
+                lead += boundary.group(0)
+            i = boundary.end()
+            continue
+        lead += ch
+        i += 1
+    return lead
 
 
 # "uk/statutes/ukpga/1992/14/6.yaml, 9.yaml and 77.yaml": the short names are siblings of the first.
@@ -241,7 +323,7 @@ def expand_siblings(text: str) -> str:
     return _SIBLINGS.sub(spell, text)
 
 
-_EDGE_EMPHASIS = re.compile(r"(?<![\w/])[_*]+(?=[\w/])|(?<=[\w/])[_*]+(?![\w/])")
+_EDGE_EMPHASIS = re.compile(r"(?<![\w/{}])[_*]+(?=[\w/{}])|(?<=[\w/{}])[_*]+(?![\w/{}])")
 
 
 def plain(text: str) -> str:
@@ -333,12 +415,16 @@ def _modules_in(sentence: str) -> list[tuple[str, str]]:
             lead = _own_clause(gap)
             requests = list(_REQUESTS.finditer(lead))
             tail = lead[requests[-1].end() :] if requests else lead
+            removal = requests and requests[-1].group(0).lower() in {"remove", "delete"}
             comparison = re.search(r"\bas\s*$", lead) and re.match(r"\s+(?:does|do|did)\b", after)
-            if _DEFERS.search(tail) or _DEFERRED_AFTER.match(after):
+            # A "deferred dependency" can itself be the object removed. An
+            # explicit refusal to import the module still gives a deferral.
+            defers = _IMPORT_DEFERRAL if removal else _DEFERS
+            if defers.search(tail) or _DEFERRED_AFTER.match(after):
                 kind = DEFERRED
             elif _INTO.search(lead):
                 kind = WORK
-            elif requests and requests[-1].group(0).lower() in {"remove", "delete"} and _FROM.search(tail):
+            elif removal and _FROM.search(tail):
                 kind = WORK
             elif _IMPORTS.search(tail):
                 kind = IMPORT

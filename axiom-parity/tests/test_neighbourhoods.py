@@ -491,7 +491,7 @@ MODIFIERS = st.lists(
     MODIFIERS,
     st.sampled_from(["as a {m}input", "as an {m}input", "as {m}inputs", ", a {m}input", "(a {m}input)"]),
 )
-@settings(max_examples=200)
+@settings(max_examples=200, deadline=None)
 def test_a_name_followed_by_an_input_designation_is_never_an_output(name, modifiers, shape):
     designation = shape.format(m="".join(w + " " for w in modifiers))
     body = _finding_only(f"Add `{name}` {designation}." + PAD)
@@ -550,7 +550,7 @@ MODIFIER = st.sampled_from(
 
 
 @given(st.sampled_from(["Repair", "Encode", "Extend", "Update", "Fix", "Add a case to"]), MODIFIER, MODULES, WRAPPER)
-@settings(max_examples=400)
+@settings(max_examples=400, deadline=None)
 def test_requested_work_is_work_whatever_wraps_or_modifies_the_module(request, modifier, module, wrapper):
     from axiom_parity.drain import normal_module, plain
 

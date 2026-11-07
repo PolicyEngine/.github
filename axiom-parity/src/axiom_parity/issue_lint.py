@@ -76,12 +76,11 @@ _INLINE = {
     "companion_tests": re.compile(r"companion (?:tests?|cases?)", re.IGNORECASE),
 }
 # Issues write several provisions of one document as "uk/regulation/uksi/2006/213/{2,19,13D}",
-# sometimes with more than one group: "…/{6,9}/{1,2}.yaml".
-_BRACED = re.compile(
-    rf"(?<![\w/-])(?:{_JURIS}[/:]|programs/{_JURIS}/)"
-    r"[\w.:\-/]*(?:\{[^{}\n]{1,200}\}[\w.:\-/]*)+"
-)
+# sometimes with more than one group: "…/{6,9}/{1,2}.yaml". The jurisdiction
+# itself can be grouped, so expand path candidates before checking their head.
+_BRACED = re.compile(r"(?<![\w/{}-])[\w.:\-/]*(?:\{[^{}\n]{1,200}\}[\w.:\-/]*)+")
 _GROUP = re.compile(r"\{([^{}]*)\}")
+_EXPANDED_PATH = re.compile(rf"(?:{_JURIS}[/:]|programs/{_JURIS}/)[\w.:\-/]+")
 
 
 def expand_braces(text: str) -> str:
@@ -94,7 +93,9 @@ def expand_braces(text: str) -> str:
             alts = [alt.strip() for alt in g.group(1).split(",") if alt.strip()] or [""]
             paths = [p + m.group(0)[last : g.start()] + alt for p in paths for alt in alts]
             last = g.end()
-        return ", ".join(p + m.group(0)[last:] for p in paths)
+        expanded = [p + m.group(0)[last:] for p in paths]
+        valid = [p for p in expanded if _EXPANDED_PATH.fullmatch(p)]
+        return ", ".join(valid) if valid else m.group(0)
 
     return _BRACED.sub(spell, text)
 
@@ -572,7 +573,7 @@ _NAMED_OUTPUT = re.compile(
 # What follows a name can make it an input after all: "a_b_c as a new input", "a_b_c, a leaf input".
 _DESIGNATED_INPUT = re.compile(
     r"^`?\s*(?:[,(]\s*)?(?:(?:as|is|are|being|to be|will be|to|among|in|into)\s+)?(?:(?:an?|the)\s+)?"
-    r"(?:[\w-]+\s+){0,3}inputs?\b",  # "as a new input", "as a scoped leaf input", "as a Date input"
+    r"(?:[\w-]+\s+){0,3}(?:inputs?\b|\[inputs?\])",  # includes a shortcut link around "input"
     re.IGNORECASE,
 )
 # A declaration can put its type after the name, then annotate the entity and
@@ -583,6 +584,24 @@ _SIGNATURE_TAIL = re.compile(
     rf"^(?:\s+{_TYPES}\b)?(?:\s*\([A-Za-z][\w.-]*(?:\s*,\s*[A-Za-z][\w.-]*)*\))*",
     re.IGNORECASE,
 )
+_DECLARATION_LINK = re.compile(r"\[([^\]\n]*)\](?:\((?:[^()\n]|\([^()\n]*\))*\)|\[[^\]\n]*\])")
+_DECLARATION_EMPHASIS = re.compile(r"(?<!\w)_+(?=\S)|(?<=\S)_+(?!\w)")
+_ANNOTATION_TOKEN = r"(?:[A-Za-z][\w.-]*|\[[A-Za-z][\w.-]*\])"
+_DECLARATION_ANNOTATION = re.compile(rf"\(\s*{_ANNOTATION_TOKEN}(?:\s*,\s*{_ANNOTATION_TOKEN})*\s*\)")
+
+
+def _declaration_text(finding: str) -> str:
+    """Read displayed Markdown words, retaining underscores inside rule names.
+
+    The name, type, entity, period and input designation belong to one
+    declaration even when their words use different Markdown formatting.
+    """
+    finding = _DECLARATION_LINK.sub(r"\1", finding)
+    finding = _DECLARATION_EMPHASIS.sub("", finding.replace("`", "").replace("*", ""))
+    # A shortcut link's definition may be outside the extracted finding.
+    # Within an annotation, read bracketed entity/period tokens conservatively;
+    # their closed identifier-list grammar cannot introduce an output declaration.
+    return _DECLARATION_ANNOTATION.sub(lambda m: m[0].replace("[", "").replace("]", ""), finding)
 
 
 def _named_output(finding: str) -> re.Match[str] | None:
@@ -593,6 +612,7 @@ def _named_output(finding: str) -> re.Match[str] | None:
     when the words after its complete signature make it an input ("Add a rule
     a_b_c Money (TaxUnit) as a new input").
     """
+    finding = _declaration_text(finding)
     for m in _NAMED_OUTPUT.finditer(finding):
         clause = re.split(r"[.!?;:]\s|\n", finding[: m.start()])[-1] + m.group(0)
         if re.search(r"\binputs?\b|\bimport\w*\b", clause, re.IGNORECASE):

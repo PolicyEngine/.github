@@ -476,6 +476,14 @@ def _unclaimed(rest: str) -> list[str]:
     return out
 
 
+_DECLARATION_GUIDANCE = (
+    "a declaration must start with its reference or status. Use complete references, with only the allowed "
+    "separators, connecting words and numeric subsections before a following status. Put legal-citation labels "
+    "and explanatory prose in parentheses after the status, e.g. "
+    "`axiom: rulespec-uk#370 queued (SI 2014/1230 reg 6A(4))` or `axiom: queued: rulespec-uk#370`"
+)
+
+
 _LEAD_STATUS = re.compile(r"(?:The\s+rest\s+is\s+)?(encoded-correct|encoded|queued|debt)\s*:\s*", re.IGNORECASE)
 
 
@@ -534,12 +542,12 @@ def parse_line(rest: str, line_no: int = 0, items: list[str] | tuple[str, ...] =
                     lead.append(_claim(inherited, item, line_no))
     line.claims.extend(lead)
     for word in (word for text in [rest, *items] for word in _unclaimed(text)):
-        line.notes.append(
-            f"`{word}` here is not read as a claim: write the reference right before it, e.g. "
-            f"`rulespec-us#123 {word.lower()}` or `us:statutes/26/24/d {word.lower()}`"
-        )
+        line.notes.append(f"`{word}` here is not read as a claim: {_DECLARATION_GUIDANCE}")
     if not line.claims:
-        msg = "no claim found: write a status (encoded-correct, encoded, queued, or n/a: <category>: <reason>)"
+        if _status_words(rest):
+            msg = f"no claim found: {_DECLARATION_GUIDANCE}"
+        else:
+            msg = "no claim found: write a status (encoded-correct, encoded, queued, or n/a: <category>: <reason>)"
         # A line that cites rulespec work but states no status is a broken
         # claim; a prose line that happens to start with "Axiom:" is not.
         (line.problems if _has_refs(rest) or not rest else line.notes).append(msg)
