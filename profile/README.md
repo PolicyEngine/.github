@@ -29,7 +29,7 @@ We welcome contributions to our repositories, especially our core ones:
 - [`policyengine-api`](https://github.com/PolicyEngine/policyengine-api) — REST API (Python)
 
 **Data and validation**
-- [`policyengine-us-data`](https://github.com/PolicyEngine/policyengine-us-data) — Enhanced US microdata with ML-based imputation
+- `microcosm` — PolicyEngine's default US and UK microdata: survey data with imputed variables, calibrated to official statistics
 - [`policyengine-uk-data`](https://github.com/PolicyEngine/policyengine-uk-data) — Enhanced UK microdata with local area estimates
 - [`policyengine-taxsim`](https://github.com/PolicyEngine/policyengine-taxsim) — NBER TAXSIM emulator
 
