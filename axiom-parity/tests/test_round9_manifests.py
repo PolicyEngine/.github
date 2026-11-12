@@ -49,7 +49,7 @@ def test_four_landed_signed_manifests_still_count(pr, path):
 )
 @settings(max_examples=100, deadline=None)
 def test_only_signed_encoder_manifest_paths_suppress_the_warning(parts, placement):
-    """Only JSON files in the root manifest directory suppress its warning."""
+    """Root manifest JSON counts; arbitrary metadata or nested roots do not."""
     prefix, suffix, is_manifest = placement
     path = prefix + "/".join(parts) + suffix
     assert bool(manifest_warnings(["us/statutes/x.yaml", path])) is not is_manifest

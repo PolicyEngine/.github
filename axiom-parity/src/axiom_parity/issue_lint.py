@@ -22,6 +22,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from textwrap import dedent
+
+from .text_units import markdown_units, split_sentences
 
 ELEMENTS = (
     "module_path",
@@ -299,7 +302,8 @@ def _has_content(element: str, lines: list[str]) -> bool:
     if element == "review_finding":
         return _quoted_chars(lines) >= 80 or _content_chars(lines) >= 120
     if element == "required_outputs":
-        return _items(lines) >= 1 or _content_chars(lines) >= 80
+        units = _output_units("\n".join(lines))
+        return any(re.search(r"\w", unit) for unit in units) and (_items(lines) >= 1 or sum(map(len, units)) >= 80)
     if element == "companion_tests":
         return _items(lines) >= 1 or _quoted_chars(lines) >= 80 or _content_chars(lines) >= 120
     return False
@@ -339,8 +343,12 @@ def _introduces_content(element: str, line: str, following: list[str]) -> bool:
     text = " ".join(b.strip() for b in block).strip()
     if element == "companion_tests":
         return len(text) >= 40 and _states_outcome(block)
-    # Outputs: a named output ("`a`, `b`") or a sentence describing them.
-    return bool(re.search(r"`[^`\n]{2,}`", text)) or len(text) >= 20
+    # The cue declares outputs, but cannot override a designation in their own
+    # unit. Keep Markdown boundaries until the same exclusion used by findings.
+    units = _output_units("\n".join(block))
+    return any(re.search(r"\w", unit) for unit in units) and (
+        bool(re.search(r"`[^`\n]{2,}`", text)) or sum(map(len, units)) >= 20
+    )
 
 
 def _snippet(text: str, n: int = 90) -> str:
@@ -385,7 +393,7 @@ def _introduces_finding(line: str) -> bool:
     Only the sentence that names the field is judged, so a "not" or "need"
     earlier in a long paragraph doesn't cancel a cue at its end.
     """
-    sentences = re.split(r"(?<=[.!?])\s+", line.strip())
+    sentences = split_sentences(line.strip())
     cue = [s for s in sentences if _FIELD.search(s)]
     if not cue or _FINDING_NEGATED.search(cue[-1]) or _FINDING_DEFERRED.search(cue[-1]):
         return False
@@ -410,9 +418,9 @@ def _yaml_value(lines: list[str], i: int) -> tuple[str, int]:
     for n, nxt in enumerate(lines[i + 1 :], start=i + 1):
         if nxt.strip() and len(nxt) - len(nxt.lstrip()) <= indent:
             break
-        block.append(nxt.strip())
+        block.append(nxt)
         end = n + 1
-    return " ".join(t for t in block if t).strip(), end
+    return dedent("\n".join(block)).strip(), end
 
 
 def _names_finding(line: str) -> bool:
@@ -459,7 +467,7 @@ def _finding_at(lines: list[str], i: int) -> tuple[str | None, int]:
             inline = after
         # A finding that starts on the label's line is judged by its first sentence:
         # "Coming soon when the owner has checked the text." gives no finding, however long.
-        opening = re.split(r"(?<=[.!?])\s+", inline, maxsplit=1)[0]
+        opening = next(iter(split_sentences(inline)), "")
         if (
             _FINDING_NEGATED.search(title)
             or _FINDING_DEFERRED.search(title)
@@ -473,7 +481,7 @@ def _finding_at(lines: list[str], i: int) -> tuple[str | None, int]:
     quoted_end = plain_end = i + 1
     if label and titled and label.group("after").strip():
         plain.append(label.group("after").strip())
-    for n, nxt in enumerate(lines[i + 1 : i + 80], start=i + 1):
+    for n, nxt in enumerate(lines[i + 1 :], start=i + 1):
         if inline and (re.match(r"^\s*(```|~~~)", nxt) or _QUOTE.match(nxt)):
             break  # the label's own line began the finding; a quote below it is something else
         if re.match(r"^\s*(```|~~~)", nxt):
@@ -503,10 +511,10 @@ def _finding_at(lines: list[str], i: int) -> tuple[str | None, int]:
             quoted.append("")
             continue
         if titled and nxt.strip() and not _LABEL.match(nxt):
-            plain.append(nxt.strip())
+            plain.append(nxt)
             plain_end = n + 1
-        elif titled and plain and not nxt.strip() and len(" ".join(plain)) >= 120:
-            break
+        elif titled and plain and not nxt.strip():
+            plain.append("")
         elif not titled and nxt.strip():
             break  # an inline cue hands over the block right below it, not one further down
     block = [q for q in quoted]
@@ -519,7 +527,7 @@ def _finding_at(lines: list[str], i: int) -> tuple[str | None, int]:
             block = [value]
     for candidate, minimum, end in (
         ("\n".join(block).strip(), 80, quoted_end),
-        (" ".join(plain).strip(), 120, plain_end),
+        ("\n".join(plain).strip(), 120, plain_end),
     ):
         if len(candidate) >= minimum and not _TODO.search(candidate):
             return candidate, end
@@ -570,23 +578,6 @@ _NAMED_OUTPUT = re.compile(
 )
 
 
-# What follows a name can make it an input after all: "a_b_c as a new input", "a_b_c, a leaf input".
-_DESIGNATED_INPUT = re.compile(
-    r"^`?\s*(?:[,(]\s*)?(?:(?:as|is|are|being|to be|will be|to|among|in|into)\s+)?(?:(?:an?|the)\s+)?"
-    r"(?:[\w-]+\s+){0,3}(?:inputs?\b|\[inputs?\])",  # includes a shortcut link around "input"
-    re.IGNORECASE,
-)
-# Invariant: a name designated as an input in its declaring sentence never
-# supplies a required output, regardless of whitespace or Markdown at any
-# name, type, entity or period token boundary. A designation is a predicate,
-# not a successful parse of the preceding type or annotation signature.
-# "using the leaf input wages" describes another rule and is not one.
-_SENTENCE_INPUT_DESIGNATION = re.compile(
-    r"(?:\b(?:as|is|are|being|to be|will be|to|among|in|into)\s+"
-    r"|[,(]\s*(?=(?:an?|the)\s)|(?<=\))\s+)"
-    r"(?:(?:an?|the)\s+)?(?:[\w-]+\s+){0,3}(?:inputs?\b|\[inputs?\])",
-    re.IGNORECASE,
-)
 _DECLARATION_LINK = re.compile(r"\[([^\]\n]*)\](?:\((?:[^()\n]|\([^()\n]*\))*\)|\[[^\]\n]*\])")
 _DECLARATION_EMPHASIS = re.compile(r"(?<!\w)_+(?=\S)|(?<=\S)_+(?!\w)")
 _ANNOTATION_TOKEN = r"(?:[A-Za-z][\w.-]*|\[[A-Za-z][\w.-]*\])"
@@ -598,8 +589,8 @@ def _declaration_text(finding: str) -> str:
 
     The name, type, entity, period and input designation belong to one
     declaration even when their words use different Markdown formatting.
-    Normalize the whole declaration before any output or designation pattern
-    reads it; a line break or Unicode space never changes its classification.
+    Normalize inside a structural unit before any output or designation pattern
+    reads it; a line break or Unicode space inside it never changes its classification.
     """
     finding = " ".join(finding.split())
     finding = _DECLARATION_LINK.sub(r"\1", finding)
@@ -608,6 +599,48 @@ def _declaration_text(finding: str) -> str:
     # Within an annotation, read bracketed entity/period tokens conservatively;
     # their closed identifier-list grammar cannot introduce an output declaration.
     return _DECLARATION_ANNOTATION.sub(lambda m: m[0].replace("[", "").replace("]", ""), finding)
+
+
+def _output_units(finding: str) -> list[str]:
+    """Declarations can supply evidence only in units with no input designation.
+
+    An unresolved designation excludes every declaration in its unit, including
+    under an explicit output heading or cue. Only a source predicate naming a
+    distinct input can establish that it designates another name.
+    """
+    out: list[str] = []
+    for block in markdown_units(finding):
+        if block.table_header:
+            continue
+        text = _declaration_text(block.text)
+        units = split_sentences(text) if block.paragraph else [text]
+        for unit in units:
+            matches = list(_NAMED_OUTPUT.finditer(unit))
+            declared = {
+                name.lower()
+                for match in matches
+                for name in re.findall(r"\b[a-z][a-z0-9]*_[a-z0-9_]+\b|(?<=#)[a-z][a-z0-9_]*", match[0], re.I)
+            }
+            sources = [
+                source
+                for source in re.finditer(
+                    r"\busing\s+(?:(?:the|an?|existing)\s+)?(?:[\w-]+\s+){0,3}input\s+([a-z][a-z0-9_]*)\b",
+                    unit,
+                    re.I,
+                )
+                if declared
+                and source[1].lower() not in declared | {"as", "is", "are", "for", "to", "from", "and", "or"}
+            ]
+            if any(
+                not any(source.start() <= label.start() < source.end() for source in sources)
+                for label in re.finditer(r"\binputs?\b", unit, re.I)
+            ) or any(re.search(r"\bimport\w*\b", unit[: match.end()], re.I) for match in matches):
+                continue
+            # A table's header and separator are structure, not declarations.
+            if block.cells and all(not re.search(r"\w", cell) for cell in block.cells):
+                continue
+            out.append(unit)
+    return out
 
 
 def _named_output(finding: str) -> re.Match[str] | None:
@@ -619,15 +652,9 @@ def _named_output(finding: str) -> re.Match[str] | None:
     Money (TaxUnit) as a new input"). An annotation parse cannot hide that
     designation, and a designation in a later sentence cannot reach back.
     """
-    finding = _declaration_text(finding)
-    for m in _NAMED_OUTPUT.finditer(finding):
-        clause = re.split(r"[.!?;:]\s|\n", finding[: m.start()])[-1] + m.group(0)
-        if re.search(r"\binputs?\b|\bimport\w*\b", clause, re.IGNORECASE):
-            continue
-        tail = re.split(r"[.!?](?:\s|$)", finding[m.end() :], maxsplit=1)[0]
-        if _DESIGNATED_INPUT.match(tail) or _SENTENCE_INPUT_DESIGNATION.search(tail):
-            continue
-        return m
+    for unit in _output_units(finding):
+        if match := _NAMED_OUTPUT.search(unit):
+            return match
     return None
 
 

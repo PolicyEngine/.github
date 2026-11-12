@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from conftest import RS_US, FakeHub
 from hypothesis import given, settings
@@ -71,6 +73,10 @@ def test_property_input_designation_survives_every_signature_token_boundary(
             rendered += separator + token
         if boundary == len(parts):
             rendered += whitespace
+        # This grid varies whitespace *inside* one declaration. Adjacent token
+        # padding must not accidentally create a separate Markdown paragraph;
+        # paragraph boundaries are independently checked in test_round10_units.
+        rendered = re.sub(r"\n(?:[^\S\n]*\n)+", "\n", rendered)
         declaration = ("Add " if typed else "Output ") + rendered
         # The designation is the only semantic difference from the control.
         assert lint_issue({"body": finding_only(declaration + " = 1." + PAD)}).ready, declaration

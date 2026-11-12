@@ -42,6 +42,13 @@ PE_PARITY_LABEL = "pe-parity"
 
 ERROR, WARNING, NOTICE = "error", "warning", "notice"
 
+# A jurisdiction has the same two-letter country and optional subdivision
+# shape used in module references. Only one such top-level directory may
+# precede .axiom; arbitrary nested .axiom metadata is not manifest evidence.
+_ENCODING_MANIFEST = re.compile(
+    r"(?:[a-z]{2}(?:-[a-z0-9]+)*/)?\.axiom/encoding-manifests/.+\.json\Z"
+)
+
 
 @dataclass
 class Finding:
@@ -330,14 +337,25 @@ class Checker:
                 files = [f["filename"] for f in self.ctx.gh.pull_files(f"{ref.owner}/{ref.repo}", ref.number)]
             except (NotFound, GitHubError):
                 files = []
-            # Only JSON files in the signed encoder's repository-root manifest
-            # directory count; unrelated .axiom metadata never supplies a manifest.
-            if files and not any(f.startswith(".axiom/encoding-manifests/") and f.endswith(".json") for f in files):
+            # Unavailable file evidence always warns and never blocks an encoded
+            # claim; an empty list cannot establish that a manifest was supplied.
+            if not files:
+                res.findings.append(
+                    Finding(
+                        WARNING,
+                        "encoding-manifest-unavailable",
+                        f"{ref.slug}'s file list is empty or unavailable; encoder manifest evidence cannot be checked",
+                    )
+                )
+            # A manifest is JSON below the root or one top-level jurisdiction's
+            # manifest directory; unrelated .axiom metadata never supplies one.
+            elif not any(_ENCODING_MANIFEST.fullmatch(f) for f in files):
                 res.findings.append(
                     Finding(
                         WARNING,
                         "no-encoding-manifest",
-                        f"{ref.slug} carries no encoder manifest at .axiom/encoding-manifests/**/*.json; is it from the signed encoder?",
+                        f"{ref.slug} carries no encoder manifest at .axiom/encoding-manifests/**/*.json "
+                        "or <jurisdiction>/.axiom/encoding-manifests/**/*.json; is it from the signed encoder?",
                     )
                 )
         if pulls == 0 and not any(f.code == "not-found" for f in res.findings):

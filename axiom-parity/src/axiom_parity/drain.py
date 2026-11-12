@@ -30,6 +30,7 @@ from .issue_lint import (
     review_findings,
 )
 from .refs import norm_dashes
+from .text_units import markdown_units, split_sentences
 
 # Measured model spend per completed targeted-signed-reencode run, GPT-6 Luna
 # with Sol escalation (axiom-encode#1699), 2026-09-25 to 2026-10-10: 121 runs,
@@ -153,13 +154,13 @@ _MODULE_NAME = re.compile(
 # misses requested work calls an issue ready when it is not.
 WORK, IMPORT, MENTION, DEFERRED = "work", "import", "mention", "deferred"
 _CLAUSE_STARTS = re.compile(r"[,;]|\b(?:but|and|or|then)\b", re.IGNORECASE)
-_LIST_GOES_ON = re.compile(r"^[\s,()/]*(?:(?:and|or|&|to)[\s,()/]*)?$", re.IGNORECASE)
+_LIST_GOES_ON = re.compile(r"^[\s,()/]*(?:(?:and|or|&)[\s,()/]*)?$", re.IGNORECASE)
 # A request for work. When one stands between the start of the sentence (or the
 # module before) and this module, the module is work whatever describes it:
 # "encode the deferred X", "add it to the guarantee that X composes", "encode X as a module".
 _REQUESTS = re.compile(
     r"\b(?:re-?encode|encode|create|write|add|repair|replace|extend|change|correct|update|compose|wire|complete|"
-    r"finali[sz]e|fix|split|move|rename|remove|delete)\b",
+    r"finali[sz]e|fix|split|move|rename|remove|delete|declare|record)\b",
     re.IGNORECASE,
 )
 # "Declare a deferred dependency on X", "do not import X", "without importing X", "62.yaml defers X".
@@ -169,9 +170,28 @@ _IMPORT_DEFERRAL = re.compile(
     r"must not import|never import|not import\b|without importing|rather than import|instead of import",
     re.IGNORECASE,
 )
-_DEFERS = re.compile(r"deferred dependenc|" + _IMPORT_DEFERRAL.pattern, re.IGNORECASE)
-_DEFERRED_AFTER = re.compile(r"^\s+(?:cannot|can't|must not|should not|is not to) be imported", re.IGNORECASE)
-_INTO = re.compile(r"\binto\s*$", re.IGNORECASE)  # "import it into X": X is edited
+_DEFERS = re.compile(
+    r"(?:\bdeferred dependenc(?:y|ies)\s+on|\bdeferrals?\s+of|"
+    r"\bblocked_by\s+entr(?:y|ies)\s+for|" + _IMPORT_DEFERRAL.pattern + r")\s*[:=]?\s*[\[(]*\s*$",
+    re.IGNORECASE,
+)
+# A nominal dependency names a deferral only under an affirmative declaration.
+# Match the whole lead, before request slicing can hide "do not declare".
+_AFFIRMATIVE_DEFERRAL = re.compile(
+    r"\s*(?:(?:declare|add|record|write)\s+(?:(?:a|an|the)\s+)?"
+    r"(?:deferred dependenc(?:y|ies)\s+on|deferrals?\s+of|blocked_by\s+entr(?:y|ies)\s+for)"
+    r"|(?:" + _IMPORT_DEFERRAL.pattern + r")"
+    r"|(?:re-?encode|encode)\s+it\s+(?:without importing|rather than import|instead of import))"
+    r"\s*[:=]?\s*[\[(]*\s*",
+    re.IGNORECASE,
+)
+_DEFERRED_AFTER = re.compile(
+    r"\s+(?:cannot|can't|must not|should not|is not to) be imported[.!?]?\s*", re.IGNORECASE
+)
+_INTO = re.compile(r"\binto\s*$", re.IGNORECASE)
+# Destination scope reaches through modifiers and wrappers. If they leave the
+# object ambiguous, retaining WORK is preferable to releasing its owner hold.
+_DESTINATION = re.compile(r"\b(?:in|into|to)\b[^,;]*$", re.IGNORECASE)
 # The import word must govern X: "import X", "importing the rule X", "Imports: X", "… from X".
 # "Add the import to X" edits X.
 _IMPORTS = re.compile(
@@ -179,39 +199,70 @@ _IMPORTS = re.compile(
     r"|\bfrom\b[^,;()]{0,30}$",
     re.IGNORECASE,
 )
-# After a request, only a word that makes X the model to copy turns it into a mention:
-# "encode it mirroring the existing X".
+# Only an affirmative source predicate can release a module from requested
+# work. Unknown preambles are not stripped to expose an apparently valid from.
+_SOURCE_OBJECT = (
+    r"(?:(?:the|a|an|its|their)\s+)?(?:(?:declared|existing|scoped)\s+)?"
+    r"(?:module|rule|amount|value|rate|input|output|X)s?"
+)
+_AFFIRMATIVE_IMPORT = re.compile(
+    r"\s*(?:import(?:s|ed|ing)?\b\s*:?\s*(?:" + _SOURCE_OBJECT + r")?"
+    r"|from\b\s*(?:" + _SOURCE_OBJECT + r")?"
+    r"|(?:import(?:ing)?|read(?:ing)?|us(?:e|ing)|tak(?:e|ing)|draw(?:ing)?|declar(?:e|ing)|add)\s+"
+    r"(?:" + _SOURCE_OBJECT + r"\s+)?from"
+    r"|(?:re-?encode|encode)\s+it\s+by\s+importing"
+    r"|(?:the|a)\s+(?:(?:separated-spouse|eligibility|existing|statutory|new)\s+){0,3}"
+    r"rule\s+must\s+be\s+stated\s+by\s+importing)\s*[\[(]*\s*",
+    re.IGNORECASE,
+)
+# Invariant P1.1: a reference head accepts only finite reference words. Unknown
+# words cannot hide an edit predicate after "see", "matching" or another head.
+# Conditional heads do not establish an affirmative description and stay WORK.
+_REFERENCE_WORDS = frozenset({
+    "a", "an", "the", "its", "their", "of", "for", "existing", "matching", "sibling",
+    "statutory", "lawful", "current", "england", "module", "modules", "rule", "rules",
+    "amount", "value", "rate", "input", "inputs", "output", "outputs", "precedent", "precedents",
+})
+_PRECEDENT_HEADS = (
+    "matching", "mirror", "mirrors", "mirroring", "like", "unlike", "precedent", "precedents",
+    "same as", "as in", "modeled on", "modelled on", "following",
+)
+_MENTION_HEADS = _PRECEDENT_HEADS + (
+    "existing", "sibling", "follow", "follows", "see", "cf", "cf.", "compare", "defined in", "declared in",
+    "keep", "leave", "preserve", "retain", "stay in", "stays in", "remain in", "remains in",
+    "live in", "lives in", "kept in", "left in", "it is defined in", "it is declared in",
+)
+_REFERENCE_TAIL = r"(?:\s+(?:" + "|".join(sorted(_REFERENCE_WORDS)) + r"))*"
 _PRECEDENT = re.compile(
-    r"\b(?:matching|mirror(?:s|ing)?|like|unlike|precedents?|same as|as in|model+ed on|following)\b"
-    r"[^,;:()]*$",  # "existing" alone is not one: "repair the existing X" asks for work on X
+    "(?:" + "|".join(re.escape(head).replace(r"\ ", r"\s+") for head in _PRECEDENT_HEADS) + ")"
+    + _REFERENCE_TAIL + r"\Z",
     re.IGNORECASE,
 )
-# With no request in sight, these make X a description, a precedent or a condition:
-# "matching the existing England module X", "defined in X", "once X has …", "keep X".
 _MENTIONS = re.compile(
-    r"\b(?:existing|matching|mirror(?:s|ing)?|like|unlike|precedents?|sibling|same as|as in|model+ed on|"
-    r"follow(?:s|ing)?|see|cf|compare|defined in|declared in|once|until|when|if|unless|because|since|whereas|"
-    r"while|keep|leave|preserve|retain|stays? in|remains? in|lives? in|kept in|left in)\b[^,;:()]*$",
+    "(?:" + "|".join(re.escape(head).replace(r"\ ", r"\s+") for head in _MENTION_HEADS) + ")"
+    + _REFERENCE_TAIL + r"\Z",
     re.IGNORECASE,
 )
-# "X does", "X currently defers …", "X carries the aggregate", "X's blocked_by": X is the
-# subject of a description. The verbs are listed: "X as a module" and "X needs a rule" are not here.
+# A complete current-state predicate can describe X. Generic auxiliaries such
+# as "is" and "now" cannot: they also introduce work such as "is to be amended".
 _MENTIONED_AFTER = re.compile(
-    r"^(?:'s\b|\s+(?:does|do|did|already|currently|still|now|today|has|have|had|is|are|was|were|carries|outputs|"
-    r"defines|states|takes|uses|reads|imports|exposes|encodes|covers|models|labels|composes|holds|contains|"
-    r"includes|gives|provides|sets|keeps|treats|applies|computes|derives|returns|remains|stays|"
-    r"must (?:still )?pass)\b)",
+    r"\s+(?:(?:already|currently|still|now|today)\s+)?carries\s+(?:the|a|an)\s+"
+    r"(?:amount|rate|value)\s+as\s+(?:a|an)\s+input[.!?]?\s*",
     re.IGNORECASE,
 )
 # "following the precedent min(a, 3) in X": within its clause the precedent word reaches X across brackets.
 _PRECEDENT_ANYWHERE = re.compile(r"\b(?:precedents?|existing|mirror(?:s|ing)?|matching)\b", re.IGNORECASE)
-# These start a new source clause after a request: "remove a rule, importing
-# from X". A noun coordination ("and its imports") does not start one.
+# These start a new source clause after a request: "remove a rule, taking the
+# rate from X". They are read only at a clause boundary, so a participle inside
+# the removed object ("remove the rule taking its value from X") keeps WORK.
+# A noun coordination ("and its imports") does not start a source clause.
 _SOURCE_CLAUSE = re.compile(
-    r"\s*(?:(?:now|also|instead)\s+)*(?:imports\s*:|(?:import(?:ing)?|read(?:ing)?|us(?:e|ing))\b)",
+    r"\s*(?:(?:now|also|instead)\s+)*(?:imports\s*:|"
+    r"(?:import(?:ing)?|read(?:ing)?|us(?:e|ing)|taking|drawing|declaring)\b)",
     re.IGNORECASE,
 )
 _OTHER_VERBAL_CLAUSE = re.compile(r"(?:keep|leave|preserve|retain|declare|defer)\b", re.IGNORECASE)
+_INITIAL_REMOVAL = re.compile(r"^\s*(?:remove|delete)\s+(?:a|an|the)\s+(?:obsolete\s+)?rule\b", re.I)
 
 
 def _new_removal_clause(text: str, start: int = 0) -> bool:
@@ -266,7 +317,7 @@ class _ClauseLead:
 
 
 def _clause_leads(gap: str, modules: list[re.Match[str]]) -> list[_ClauseLead]:
-    """Scan the sentence once, retaining the predicate across module objects.
+    """Scan the sentence once, retaining only removal scope across module objects.
 
     Invariant: bracket matching visits each character once; unmatched openers
     never trigger another scan of the suffix.
@@ -274,6 +325,9 @@ def _clause_leads(gap: str, modules: list[re.Match[str]]) -> list[_ClauseLead]:
     depth, i, removal = 0, 0, False
     lead: list[str] = []
     lead_length = 0
+    meaningful = False
+    initial_removal = _INITIAL_REMOVAL.match(gap)
+    initial_removal_clean = bool(initial_removal)
     request_end: int | None = None
     brackets, commas = _clause_structure(gap)
     breaks = {m.start(): m for m in _CLAUSE_STARTS.finditer(gap)}
@@ -287,10 +341,15 @@ def _clause_leads(gap: str, modules: list[re.Match[str]]) -> list[_ClauseLead]:
             # Removal alone decides WORK: avoid copying an ever-growing lead
             # for each member of a long removal list.
             leads.append(_ClauseLead("" if removal else "".join(lead), request_end, removal))
-            # A path is an object, never another predicate. Carry its governing
-            # clause forward instead of starting again after every module.
-            lead.append(" ")
-            lead_length += 1
+            # Invariant P1.1: a deferral or import governs its own object only.
+            # The next module needs its own affirmative predicate; explicit
+            # module-list inheritance is handled separately by _LIST_GOES_ON.
+            # Removal scope alone persists until a genuine new clause starts.
+            lead.clear()
+            lead_length = 0
+            meaningful = False
+            initial_removal_clean = False
+            request_end = None
             i = next_module.end()
             module_index += 1
             continue
@@ -302,8 +361,13 @@ def _clause_leads(gap: str, modules: list[re.Match[str]]) -> list[_ClauseLead]:
             if removal:
                 closing = brackets.get(i)
                 if closing is not None and closing < next_start:
-                    lead.append(" ")
-                    lead_length += 1
+                    # Keep unparsed context so a later clause cannot regain an
+                    # affirmative reading after an unknown or denying aside.
+                    aside = gap[i : closing + 1]
+                    lead.append(aside)
+                    lead_length += len(aside)
+                    meaningful = True
+                    initial_removal_clean = False
                     i = closing + 1
                     continue
             depth += 1
@@ -318,13 +382,20 @@ def _clause_leads(gap: str, modules: list[re.Match[str]]) -> list[_ClauseLead]:
                     # A paired aside can precede or follow coordinated objects.
                     # Its own verbs do not replace the governing removal.
                     if not _new_removal_clause(gap, continuation):
-                        lead.append(" ")
-                        lead_length += 1
+                        aside = gap[i : closing + 1]
+                        lead.append(aside)
+                        lead_length += len(aside)
+                        meaningful = True
+                        initial_removal_clean = False
                         i = closing + 1
                         continue
             # Adjectives such as "existing", "matching" and "deferred"
             # describe coordinated objects. Only a new predicate ends removal.
-            if not (
+            # A complete first removal clause also admits a genuine new
+            # predicate. Any unknown word/aside after it invalidates this
+            # evidence; finding a later comma cannot discard that context.
+            resettable = not meaningful or (removal and module_index == 0 and initial_removal_clean)
+            if resettable and not (
                 removal and boundary.group(0).lower() in {",", "and", "or"}
                 and not _new_removal_clause(gap, boundary.end())
             ):
@@ -332,6 +403,7 @@ def _clause_leads(gap: str, modules: list[re.Match[str]]) -> list[_ClauseLead]:
                 lead_length = 0
                 request_end = None
                 removal = False
+                meaningful = False
             else:
                 lead.append(boundary.group(0))
                 lead_length += len(boundary.group(0))
@@ -339,6 +411,9 @@ def _clause_leads(gap: str, modules: list[re.Match[str]]) -> list[_ClauseLead]:
             continue
         lead.append(ch)
         lead_length += 1
+        meaningful = meaningful or not ch.isspace()
+        if initial_removal and i >= initial_removal.end() and not ch.isspace():
+            initial_removal_clean = False
         i += 1
     leads.append(_ClauseLead("".join(lead), request_end, removal))
     return leads
@@ -434,7 +509,15 @@ def cited_above(module: str, cites: list[str]) -> str | None:
 
 
 def _sentences(text: str) -> list[str]:
-    return [t for t in re.split(r"(?<=[.!?;])\s+|\n+", text) if t.strip()]
+    # Markdown units preserve wrapped predicates and their denials. Semicolons
+    # still bound citation-pairing clauses inside each grammatical sentence.
+    return [
+        clause
+        for unit in markdown_units(text)
+        for sentence in split_sentences(unit.text)
+        for clause in re.split(r";\s*", sentence)
+        if clause.strip()
+    ]
 
 
 def _modules_in(sentence: str) -> list[tuple[str, str]]:
@@ -466,20 +549,40 @@ def _modules_in(sentence: str) -> list[tuple[str, str]]:
             lead = governing.text
             requests = governing.request_end is not None
             tail = lead[governing.request_end :] if requests else lead
-            comparison = re.search(r"\bas\s*$", lead) and re.match(r"\s+(?:does|do|did)\b", after)
-            if _DEFERS.search(tail) or _DEFERRED_AFTER.match(after):
-                kind = DEFERRED
-            elif _INTO.search(lead):
+            comparison = re.fullmatch(r"as", lead.strip(), re.I) and re.fullmatch(
+                r"\s+(?:does|do|did)[.!?]?\s*", after, re.I
+            )
+            if _DESTINATION.search(gap) and (requests or out):
                 kind = WORK
-            elif _IMPORTS.search(tail):
+            elif _AFFIRMATIVE_DEFERRAL.fullmatch(lead) or (not lead.strip() and _DEFERRED_AFTER.fullmatch(after)):
+                kind = DEFERRED
+            elif _AFFIRMATIVE_IMPORT.fullmatch(lead):
                 kind = IMPORT
+            elif _DEFERS.search(tail) or _IMPORTS.search(tail) or _DEFERRED_AFTER.match(after):
+                # A rejected source/deferral predicate remains ambiguous work;
+                # descriptive words cannot turn that rejection into MENTION.
+                kind = WORK
             elif requests:
-                kind = MENTION if _PRECEDENT.search(tail) or comparison else WORK
+                # A request's target is WORK unless a complete predicate makes
+                # this module the precedent for an explicitly separate "it".
+                precedent = re.fullmatch(
+                    _REQUESTS.pattern + r"\s+it\s+" + _PRECEDENT.pattern, lead.strip(), re.I
+                )
+                kind = MENTION if precedent else WORK
             else:
                 # "(X)" on its own is a pointer to where something lives.
-                aside = lead.rstrip().endswith("(") and after.lstrip().startswith(")")
-                described = _MENTIONS.search(lead.rstrip("( ") + " ") or _MENTIONED_AFTER.match(after)
-                kind = MENTION if described or aside or _PRECEDENT_ANYWHERE.search(lead) else WORK
+                own_lead = lead.strip()
+                aside = own_lead == "(" and re.fullmatch(r"\)\s*[.!?]?\s*", after)
+                relation = re.fullmatch(r"using (?:the )?relation\s*\(", own_lead, re.I) and re.fullmatch(
+                    r"\)\s+for the total[.!?]?\s*", after, re.I
+                )
+                described = (
+                    _MENTIONS.fullmatch(own_lead)
+                    or (not own_lead and _MENTIONED_AFTER.fullmatch(after))
+                )
+                # Unknown predicates never become descriptions merely because
+                # they contain "existing" or the module later says "is".
+                kind = MENTION if described or aside or relation or comparison else WORK
         out.append((normal_module(m.group(0)), kind))
         last_end = m.end()
     return out

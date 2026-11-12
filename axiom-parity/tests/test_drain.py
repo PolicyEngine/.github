@@ -492,7 +492,7 @@ def test_braced_citations_are_all_targets():
 
 def test_a_modules_line_lists_targets_and_a_precedent_is_not_one():
     finding = (
-        "Encode whose income counts in Scotland and Wales, matching the existing England module "
+        "Encode it matching the existing England module "
         "uk/regulations/uksi/2012/2885/schedule/1/paragraph/11.yaml. Modules: uk/regulations/ssi/2012/319/21.yaml, "
         "uk/regulations/ssi/2021/249/36.yaml and uk/regulations/wsi/2013/3029/schedule/1/paragraph/5.yaml."
     )
@@ -507,6 +507,11 @@ def test_a_modules_line_lists_targets_and_a_precedent_is_not_one():
     ]
     # A precedent is neither written nor imported, so a block on it doesn't hold the issue.
     assert "uk/regulations/uksi/2012/2885/schedule/1/paragraph/11.yaml" not in row.modules
+    # A preceding open prose request does not establish that this is only a
+    # precedent. Keep ambiguous requested work until it is declared explicitly.
+    ambiguous = body.replace("Encode it matching", "Encode whose income counts in Scotland and Wales, matching")
+    conservative = issue_inputs("R", {"number": 1, "body": ambiguous}, [])
+    assert "uk/regulations/uksi/2012/2885/schedule/1/paragraph/11.yaml" in conservative.work_modules
 
 
 def test_sibling_module_names_are_spelled_out():
