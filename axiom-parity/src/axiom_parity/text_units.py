@@ -24,19 +24,39 @@ _BLOCK_START = re.compile(r"^\s{0,3}(?:#{1,6}(?:\s|$)|```|~~~)")
 _FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 _HTML_TABLE = re.compile(r"<table\b", re.IGNORECASE)
 _HTML_TABLE_END = re.compile(r"</table\s*>", re.IGNORECASE)
+# Extra coverage for longer abbreviations; the rule in split_sentences covers
+# every one- or two-letter token and any period before lower case or a number.
+# An entry starts its token: the "s." of "applicant's." is a possessive, not a section.
 _ABBREVIATION = re.compile(
-    r"(?<!\w)(?:i\.e\.|e\.g\.|cf\.|etc\.|ss?\.|regs?\.|paras?\.|art\.|No\.|Sch\.)",
+    r"(?<![\w'’])(?:i\.e\.|e\.g\.|cf\.|etc\.|viz\.|ss?\.|regs?\.|paras?\.|arts?\.|Nos?\.|Sch\.|secs?\.|subs?\.|"
+    r"subsec\.|ch\.|cl\.|pt\.|pp?\.|c\.|v\.|vs\.|al\.|Rev\.|Proc\.|Pub\.|Stat\.|Ann\.|Fed\.|Supp\.|Cir\.|App\.|"
+    r"Ct\.|Co\.|Inc\.|Ltd\.|Corp\.|Dept\.|Govt?\.|Admin\.|Ord\.|Div\.|Jan\.|Feb\.|Mar\.|Apr\.|Jun\.|Jul\.|"
+    r"Aug\.|Sept?\.|Oct\.|Nov\.|Dec\.|Mrs?\.|Ms\.|Dr\.|St\.|vol\.|eds?\.|approx\.|incl\.|excl\.|est\.|ibid\.)",
     re.IGNORECASE,
 )
+# The whole token before a period (the run of non-space characters, without
+# opening brackets, quotes or emphasis) is one or two letters, or an initialism
+# of such groups ("v", "No", "U.S.C", "e.g"): "applicant's" and "55a" are not.
+_SHORT_TOKEN = re.compile(r"(?:[A-Za-z]{1,2}\.)*[A-Za-z]{1,2}")
+_TOKEN_BEFORE = re.compile(r"\S*$")
 _SENTENCE_END = re.compile(r"[.!?]+[\"'”’)\]}`*_]*(?=\s|$)")
 
 
-def split_sentences(text: str) -> list[str]:
+def split_sentences(text: str, joins: bool = True) -> list[str]:
     """Split grammatical sentences, preserving abbreviations and legal locators.
 
-    Invariant: an abbreviation, legal locator or decimal never ends a sentence;
-    a designation after it remains in the declaring sentence. The same splitter
-    bounds both lint evidence and drain module readings.
+    Invariant: an abbreviation, legal locator, initial or decimal never ends a
+    sentence; a designation after it remains in the declaring sentence. As a
+    rule (round 11, P1.6), a period followed by a lower-case letter, a digit,
+    an opening bracket or a section sign does not end a sentence, and neither
+    does a period after a whole token of one or two letters or an initialism
+    of them ("U.S.C.", "c.", "v.", "No."; not "applicant's." or "55a."); the
+    enumerated list adds longer abbreviations. Lint evidence reads this widest
+    sentence. With ``joins=False`` only the enumerated list and decimals keep a
+    period inside. That narrowest sentence ends at every end of the widest one
+    and also where only the rule joins ("as a.yaml. b.yaml computes"). The
+    drain pairs citations and reads clause leads in the narrowest sentence and
+    reads what follows a module to the end of the widest.
     """
     protected = {
         index
@@ -51,6 +71,13 @@ def split_sentences(text: str) -> list[str]:
         if pos in protected:
             continue
         if text[pos] == "." and pos and text[pos - 1].isdigit() and text[pos + 1 : pos + 2].isdigit():
+            continue
+        token = _TOKEN_BEFORE.search(text[max(0, pos - 40) : pos])[0].lstrip("([{\"'“‘*_`")
+        if (
+            joins
+            and text[pos] == "."
+            and (_SHORT_TOKEN.fullmatch(token) or re.match(r"\s*[a-z0-9(\[{§]", text[end.end() :]))
+        ):
             continue
         if part := text[start : end.end()].strip():
             parts.append(part)

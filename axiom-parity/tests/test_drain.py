@@ -564,7 +564,8 @@ def test_a_deferral_covers_only_its_own_clause():
     without = issue_inputs(
         "R",
         _with_finding(
-            "Encode us/statutes/26/32/e.yaml without importing us/statutes/26/1/h.yaml, from the " + "text. " * 20
+            # Filler sentences start with a capital: a period before lower case does not end a sentence.
+            "Encode us/statutes/26/32/e.yaml without importing us/statutes/26/1/h.yaml, from the text. " + "Text. " * 19
         ),
         [],
     )

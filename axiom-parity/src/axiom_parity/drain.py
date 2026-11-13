@@ -509,11 +509,24 @@ def cited_above(module: str, cites: list[str]) -> str | None:
 
 
 def _clauses(text: str) -> list[tuple[str, str]]:
-    """(clause, the rest of its grammatical sentence after it) for each semicolon clause."""
+    """(clause, the rest of its grammatical sentence after it) for each semicolon clause.
+
+    Invariant (round 11, P1.6): a clause is a semicolon part of the narrowest
+    sentence, so a period that only the general abbreviation rule keeps inside
+    a sentence ("as a.yaml. b.yaml computes") never lets a module pair with a
+    citation, or take its lead, across it. The rest runs to the end of the
+    widest sentence, so a predicate after a legal locator ("26 U.S.C. 32 and
+    fix it") still reaches the module.
+    """
     out: list[tuple[str, str]] = []
     for unit in markdown_units(text):
         for sentence in split_sentences(unit.text):
-            parts = [part for part in re.split(r";\s*", sentence) if part.strip()]
+            parts = [
+                part
+                for narrow in split_sentences(sentence, joins=False)
+                for part in re.split(r";\s*", narrow)
+                if part.strip()
+            ]
             out.extend((part, "; ".join(parts[n + 1 :])) for n, part in enumerate(parts))
     return out
 
