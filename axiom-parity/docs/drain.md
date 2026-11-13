@@ -1,18 +1,18 @@
 # Draining the pe-parity backlog
 
-The PR check stops new parity debt from slipping through. This document covers the debt already queued: the open `pe-parity` issues in `TheAxiomFoundation/rulespec-*`, none of which had been closed in the saved 2026-10-10 evidence. Dispatch figures were reconstructed on 2026-11-11 with those same issue exports, corpus pins and dated owner holds. Other historical measurements retain their stated dates. Rerun the commands below for current evidence.
+The PR check stops new parity debt from slipping through. This document covers the debt already queued: the open `pe-parity` issues in `TheAxiomFoundation/rulespec-*`, none of which had been closed in the saved 2026-10-10 evidence. Dispatch figures were reconstructed on 2026-11-13 with those same issue exports, corpus pins and dated owner holds. Other historical measurements retain their stated dates. Rerun the commands below for current evidence.
 
 ## Where things stand
 
 | | rulespec-uk | rulespec-us |
 |---|---|---|
 | Open pe-parity issues (ever closed) | 83 (0) | 175 (0) |
-| Pass the dispatch-ready lint | 79 | 84 |
-| Lint-ready, every target citation in the pinned corpus release, and no hold on the work it asks for | 14 | 37 |
-| Also clear of the encoder owner's blocked-module list | 14 | 21 |
-| Also clear of the encoder owner's blocked citations and the pause on manual paths | 12 | 18 |
-| Also clear of the encoder owner's dispatch-preparation verdicts | 9 | 8 |
-| Also clear of its hold on the rulespec-uk route | 0 | 8 |
+| Pass the dispatch-ready lint | 79 | 80 |
+| Lint-ready, every target citation in the pinned corpus release, and no hold on the work it asks for | 14 | 35 |
+| Also clear of the encoder owner's blocked-module list | 14 | 19 |
+| Also clear of the encoder owner's blocked citations and the pause on manual paths | 12 | 16 |
+| Also clear of the encoder owner's dispatch-preparation verdicts | 9 | 6 |
+| Also clear of its hold on the rulespec-uk route | 0 | 6 |
 | Pinned corpus release | `uk-rulespec-2026-09-07` | `us-rulespec-2026-08-08-obbb-alien-snap` |
 
 The main lint failures:
@@ -20,15 +20,17 @@ The main lint failures:
 - 85 US issues have no pasteable `review_finding`. 60 of them are among the 71 issues filed on 2026-10-09 (#1554–#1625).
 - 21 US issues name no target module.
 - 6 US issues have no companion cases with an expected outcome.
-- 6 US and 2 UK issues have no required outputs.
+- 15 US and 2 UK issues have no required outputs.
 
 The unit of work is the source document. A signed run takes up to 16 citations including its primary citation, and the encoder refuses a bundle that leaves the primary's jurisdiction (`parse_source_bundle` in axiom-encode's `prepare_signed_backfill.py`). So the plan gives each document its own run. A document is ready when every issue with a target in it is. An issue whose targets span several documents needs all of them.
 
-The plan's own checks leave 15 documents: 4 UK and 11 US, holding 16 citations, one run each. Those 15 runs would complete 10 issues. Without the holds of 2026-10-10 (blocked citations, and manual paths paused), 21 documents and 24 citations pass, and their runs would complete 14 issues.
+The plan's own checks leave 16 documents: 4 UK and 12 US, holding 17 citations, one run each. Those 16 runs would complete 10 issues. Without the holds of 2026-10-10 (blocked citations, and manual paths paused), 22 documents and 25 citations pass, and their runs would complete 14 issues.
 
-The 2026-11-11 reconstruction reads ambiguous predicates as work and requires affirmative import or deferral evidence. This retains additional holds at one or more stages for rulespec-uk #351, #383, #392 and #404, and rulespec-us #1358, #1400, #1421, #1424, #1492, #1496, #1500, #1501 and #1529. These conservative readings include real imports and descriptions the grammar cannot affirm; all seven issues whose findings supply their outputs remain lint-ready. The final plan has 210 documents and 255 target-bearing issues: 228 blocked and 92 lint-unready, with no ready document after every dated hold is applied.
+The reconstruction reads ambiguous predicates as work and requires affirmative import or deferral evidence. This retains additional holds at one or more stages for rulespec-uk #351, #383, #392 and #404, and rulespec-us #1358, #1400, #1421, #1424, #1492, #1496, #1500, #1501 and #1529. These conservative readings include real imports and descriptions the grammar cannot affirm; all seven issues whose findings supply their outputs remain lint-ready.
 
-**Passing the plan is necessary, not sufficient.** On 2026-10-10 the encoder owner prepared the 16 documents that the earlier reading passed. The current reading additionally holds the two Indiana documents in rulespec-us #1421 and adds `us/statute/42/1396b` to the documents passing that stage. By the owner's account, preparation means reading the pinned source text against the finding, and checking the existing module and manifest, the import closure and the encoder's admission code. Its historical verdicts (`prep-verdicts.json`, as it stood at 20:28Z):
+It also reads the rest of a released module's sentence. Thirteen issues gain work modules that way (rulespec-uk #355, #356, #362, #392, #429 and #432; rulespec-us #1452, #1475, #1478, #1494, #1515, #1521 and #1525). That holds rulespec-us #1452, whose new module has no citation, and #1525, whose new module is on the blocked list. It also adds one document that passes every hold, `us/statute/26/86`: rulespec-us#1475 asks for a deferred dependency on that module ("; do not import it"), and the grammar reads the clause after it as possible work. Output evidence comes only from units that survive the input exclusion, so rulespec-us #1445, #1497, #1509 and #1625 fail the lint: each declares its outputs only in units that also designate inputs, or in unnamed items before such a unit. The final plan has 211 documents and 255 target-bearing issues: 230 blocked and 96 lint-unready. After every dated hold one document is ready, `us/statute/26/86`, which only that conservative reading targets.
+
+**Passing the plan is necessary, not sufficient.** On 2026-10-10 the encoder owner prepared the 16 documents that the earlier reading passed. The current reading additionally holds the two Indiana documents in rulespec-us #1421 and adds `us/statute/42/1396b` and `us/statute/26/86` to the documents passing that stage. By the owner's account, preparation means reading the pinned source text against the finding, and checking the existing module and manifest, the import closure and the encoder's admission code. Its historical verdicts (`prep-verdicts.json`, as it stood at 20:28Z):
 
 | Verdict | Documents |
 |---|---|
@@ -47,12 +49,12 @@ So 4 of the 16 were dispatched that day, and none of the other 12 can be. The pl
 
 The encoder owner has queued the route question for Max as one decision. Until it is settled every rulespec-uk issue is held, whatever the plan's other checks say. `drain-plan` carries that as `--blocked-citation-pattern '^uk[-/]'`.
 
-`drain-plan` reads the verdicts back as holds (`--blocked-citations` takes that file too). With the verdicts and the UK hold applied, it lists no document that is ready and not already dispatched.
+`drain-plan` reads the verdicts back as holds (`--blocked-citations` takes that file too). With the verdicts and the UK hold applied, it lists one document that is ready and not already dispatched: `us/statute/26/86`, which no verdict covers because the earlier reading never targeted it.
 
 Some lint-ready issues are held for the work they ask for, whatever their citations:
 
 - 12 ask for a change to an assembled pipeline, which the encoder owner says a signed run does not make (`--work-holds`, below). Examples are the Universal Credit and Housing Benefit composed pipelines and `us/policies/income_tax/taxable_income_pipeline.yaml`.
-- 21 ask for work on a module and give no corpus citation for it. These include state statute, guidance, program and resident-core modules, and imports that the conservative grammar cannot affirm.
+- 22 ask for work on a module and give no corpus citation for it. These include state statute, guidance, program and resident-core modules, and imports that the conservative grammar cannot affirm.
 - Three issues, rulespec-uk#390, #396 and #434, are in both groups.
 
 Two earlier versions of this plan overcounted, at 25 documents and then at 16 documents completing 15 issues. The first grouped an issue under its first citation's document only, so one run could mix jurisdictions, and it read targets from an issue's last comment only. The second took a module as a target only when its own sentence had a verb such as "encode", so a numbered list of modules under one "Encode these:" line went unread (rulespec-uk#429).
@@ -170,15 +172,15 @@ The plan's order is a starting point. On 2026-10-10 the encoder owner added thre
 
 The scarce resource is the signing approval, so the budget counts approvals. Ten approvals a week cover up to 160 citations. Every measured run so far encoded one citation, so the per-citation figures are:
 
-| | Per citation | The 16 citations that pass the plan's own checks | A full week (160 citations) |
+| | Per citation | The 17 citations that pass the plan's own checks | A full week (160 citations) |
 |---|---|---|---|
-| Mean | $0.058 | $0.93 | $9.28 |
-| p90 | $0.150 | $2.40 | $24.00 |
-| Most any run has cost | $0.496 | $7.94 | $79.36 |
+| Mean | $0.058 | $0.99 | $9.28 |
+| p90 | $0.150 | $2.55 | $24.00 |
+| Most any run has cost | $0.496 | $8.43 | $79.36 |
 
 Bundled runs have not been measured yet; the pilot will give the first figures. A hard cap of $40 a week sits above the p90 for a full week.
 
-The 15 documents that pass the plan's own checks hold at most 2 citations each. The owner's historical preparation dispatched 4 of the 16 documents it reviewed; the complete dated holds leave no ready document. The drain is limited by encoder fixes, sources, the rulespec-uk route and the issues themselves, well before it reaches 10 approvals a week or the 160-citation ceiling.
+The 16 documents that pass the plan's own checks hold at most 2 citations each. The owner's historical preparation dispatched 4 of the 16 documents it reviewed; the complete dated holds leave one ready document, `us/statute/26/86`, which only the conservative reading of rulespec-us#1475 targets. The drain is limited by encoder fixes, sources, the rulespec-uk route and the issues themselves, well before it reaches 10 approvals a week or the 160-citation ceiling.
 
 The measured spend per successful run is $0.64. One of the 11 successful GPT-6 runs has its output on `main`, which puts the window's whole spend, $7.08, against one landed encode. One is too few to call a rate; the pilot's merged PRs will give the first usable figure.
 
