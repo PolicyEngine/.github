@@ -70,7 +70,7 @@ Model spend is taken from the "Model spend for this run" summary that every `tar
 
 A run with no spend summary stopped before the model step; it counts as $0 in the mean.
 
-The 453 runs covered 98 citations. Four of those citations have a manifest record on rulespec-us `main` (at `16a6677`, counting records nested inside a manifest file):
+The 453 runs covered 98 citations. Eight of those citations have a manifest record on rulespec-us `main` at `16a6677`. The count reads all 5,237 manifest files, 1,310 under the root `.axiom/encoding-manifests/` and 3,927 under `<jurisdiction>/.axiom/encoding-manifests/`, including records nested inside a manifest file. Measured runs wrote four of the eight records:
 
 | Citation | Runs (succeeded) | Model spend | Manifest generated | By run |
 |---|---|---|---|---|
@@ -78,6 +78,15 @@ The 453 runs covered 98 citations. Four of those citations have a manifest recor
 | `us/guidance/irs/rev-proc-2025-32/page-15` | 8 (1) | $1.46 | 2026-09-15, GPT-5.6 Terra | 34912099966 |
 | `us/regulation/7/273/4` | 88 (9) | $38.12 | 2026-09-25, no model named | 36166100091 |
 | `us/guidance/usda/fns/snap-fy2024-cola/page-2` | 12 (6) | $0.97 | 2026-10-01, GPT-6 Sol | 36924316695 |
+
+The other four records predate the measured runs. GPT-5.5 wrote them in June and July, and no measured run spans their `generated_at`:
+
+| Citation | Runs (succeeded) | Model spend | Manifest generated |
+|---|---|---|---|
+| `us-az/manual/des/faa5/na-eligibility-and-benefit-determination/block-9` | 6 (0) | $0.35 | 2026-06-03, GPT-5.5 |
+| `us/regulation/42/435/603/b` | 1 (0) | $0.00 | 2026-06-28, GPT-5.5 |
+| `us-va/statute/58.1/58.1-322.03` | 1 (0) | $0.05 | 2026-07-08, GPT-5.5 |
+| `us-az/statute/43-1072` | 1 (0) | $0.08 | 2026-07-08, GPT-5.5 |
 
 A record is matched to a run by its citation and by its `generated_at` falling inside the run. The 273.4 record names no model: its run promoted an already reviewed candidate. The SNAP COLA record sits under `replacement_manifest` in `us/policies/usda/snap/fy-2024-cola/income-eligibility-standards.json` and landed in rulespec-us `201b0e5` on 2026-10-01.
 
