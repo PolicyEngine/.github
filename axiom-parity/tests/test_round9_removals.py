@@ -24,14 +24,27 @@ MODULES = [
     "uk/policies/housing_benefit_composed_award_pipeline.yaml",
 ]
 JOINERS = [
-    ", ", " and ", " or ", " and from ", " or from ", " and also from ",
-    " and its imports from ", " (now obsolete) and from ",
-    " [including its imports] or from ", ", now obsolete, and from ",
+    ", ",
+    " and ",
+    " or ",
+    " and from ",
+    " or from ",
+    " and also from ",
+    " and its imports from ",
+    " (now obsolete) and from ",
+    " [including its imports] or from ",
+    ", now obsolete, and from ",
     ", imported last year, and from ",
 ]
 OBJECTS = [
-    "rule", "its imports", "blocked_by declaration", "deferred dependency", "deferral",
-    "rule and blocked_by declaration", "change", "update",
+    "rule",
+    "its imports",
+    "blocked_by declaration",
+    "deferred dependency",
+    "deferral",
+    "rule and blocked_by declaration",
+    "change",
+    "update",
 ]
 
 
@@ -62,7 +75,8 @@ def test_round9_removing_blocked_by_keeps_the_owner_hold():
 
 
 @given(
-    st.sampled_from(["Remove", "Delete"]), st.integers(1, 4),
+    st.sampled_from(["Remove", "Delete"]),
+    st.integers(1, 4),
     st.lists(st.sampled_from(JOINERS), min_size=3, max_size=3),
     st.sampled_from(["a rule", "a rule and its imports", "a rule, now obsolete,", "the change", "the update"]),
 )
@@ -77,8 +91,11 @@ def test_removal_governs_every_coordinated_module_until_a_new_predicate(verb, co
 
 
 @given(
-    st.sampled_from(["Remove", "Delete"]), st.sampled_from(OBJECTS),
-    st.sampled_from(["", "a ", "the "]), st.sampled_from(JOINERS), st.integers(1, 4),
+    st.sampled_from(["Remove", "Delete"]),
+    st.sampled_from(OBJECTS),
+    st.sampled_from(["", "a ", "the "]),
+    st.sampled_from(JOINERS),
+    st.integers(1, 4),
     st.sampled_from([("", ""), ("(", ")"), ("[", "]")]),
 )
 @settings(deadline=None, database=None, max_examples=220)
@@ -86,31 +103,46 @@ def test_removing_metadata_never_affirms_a_deferral(verb, object_name, determine
     # Invariant P1.3: the module a removal takes something from is WORK,
     # whatever the removed object names; only an affirmative deferral defers it.
     opening, closing = brackets
-    request = f"{verb} {determiner}{object_name} from " + joiner.join(
-        opening + module + closing for module in MODULES[:count]
-    ) + "."
+    request = (
+        f"{verb} {determiner}{object_name} from "
+        + joiner.join(opening + module + closing for module in MODULES[:count])
+        + "."
+    )
     assert _modules_in(plain(request)) == [(m, WORK) for m in MODULES[:count]], request
 
 
 @given(
     st.sampled_from([", and ", " and ", " or ", ", then ", " but ", "; "]),
-    st.sampled_from([
-        ("import X from", IMPORT), ("importing from", IMPORT), ("read X from", IMPORT),
-        ("using a rule from", IMPORT), ("add a rule from", IMPORT),
-        ("declare a deferred dependency on", DEFERRED), ("do not import", DEFERRED),
-        ("never import", DEFERRED), ("without importing", DEFERRED),
-        ("defers", DEFERRED), ("deferring", DEFERRED), ("blocked_by", DEFERRED),
-        ("blocked_by:", DEFERRED), ("does not import", DEFERRED),
-        ("don't import", DEFERRED), ("must not import", DEFERRED),
-        ("not import", DEFERRED), ("rather than import", DEFERRED),
-        ("instead of import", DEFERRED),
-    ]),
-    st.integers(2, 4), st.sampled_from(JOINERS),
+    st.sampled_from(
+        [
+            ("import X from", IMPORT),
+            ("importing from", IMPORT),
+            ("read X from", IMPORT),
+            ("using a rule from", IMPORT),
+            ("add a rule from", IMPORT),
+            ("declare a deferred dependency on", DEFERRED),
+            ("do not import", DEFERRED),
+            ("never import", DEFERRED),
+            ("without importing", DEFERRED),
+            ("defers", DEFERRED),
+            ("deferring", DEFERRED),
+            ("blocked_by", DEFERRED),
+            ("blocked_by:", DEFERRED),
+            ("does not import", DEFERRED),
+            ("don't import", DEFERRED),
+            ("must not import", DEFERRED),
+            ("not import", DEFERRED),
+            ("rather than import", DEFERRED),
+            ("instead of import", DEFERRED),
+        ]
+    ),
+    st.integers(2, 4),
+    st.sampled_from(JOINERS),
 )
 @settings(deadline=None, database=None, max_examples=150)
 def test_a_genuine_new_predicate_ends_removal_scope(joiner, predicate, count, earlier_joiner):
     lead, expected = predicate
-    earlier = MODULES[:count - 1]
+    earlier = MODULES[: count - 1]
     last = MODULES[count - 1]
     request = f"Remove a rule from {earlier_joiner.join(earlier)}{joiner}{lead} {last}."
     assert _modules_in(plain(request)) == [(m, WORK) for m in earlier] + [(last, expected)], request

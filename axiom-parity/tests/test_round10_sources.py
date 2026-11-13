@@ -16,9 +16,11 @@ def test_taking_a_rate_starts_a_source_clause_after_the_removal_object():
 
 
 @given(
-    st.sampled_from(["Remove", "Delete"]), st.sampled_from(PARTICIPLES),
+    st.sampled_from(["Remove", "Delete"]),
+    st.sampled_from(PARTICIPLES),
     st.sampled_from([", ", " and ", ", then ", " but ", "; "]),
-    st.integers(1, 3), st.sampled_from([", ", " and from ", " or from "]),
+    st.integers(1, 3),
+    st.sampled_from([", ", " and from ", " or from "]),
     st.sampled_from(["the rate", "a rule", "a declared value"]),
 )
 @settings(deadline=None, database=None, max_examples=240)
@@ -37,12 +39,15 @@ def test_a_participial_source_predicate_starts_after_the_removal_object(
     destination = "us/policies/income_tax/additional_medicare_tax_pipeline.yaml"
     routed = request.removesuffix(".") + f" into {destination}."
     assert _modules_in(plain(routed)) == [
-        *((module, WORK) for module in removed), (SOURCE, IMPORT), (destination, WORK),
+        *((module, WORK) for module in removed),
+        (SOURCE, IMPORT),
+        (destination, WORK),
     ], routed
 
 
 @given(
-    st.sampled_from(["Remove", "Delete"]), st.sampled_from(["a", "an", "the"]),
+    st.sampled_from(["Remove", "Delete"]),
+    st.sampled_from(["a", "an", "the"]),
     st.sampled_from(["", "obsolete "]),
     st.sampled_from(["import a rule from", "read a rule from", "using a rule from", "taking the rate from"]),
     st.sampled_from(["Do not", "Never", "Unconfirmed", "It is premature to", "not", "(not)"]),

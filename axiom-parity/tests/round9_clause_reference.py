@@ -1,4 +1,5 @@
 """Bounded round-8 clause oracle for the linear-scan differential property."""
+
 import re
 
 from axiom_parity.drain import (
@@ -24,6 +25,7 @@ from axiom_parity.drain import (
 )
 
 _CLAUSE_STARTS = re.compile(r"[,;]|\b(?:but|and|then)\b", re.I)
+
 
 def _new_removal_clause(text: str) -> bool:
     """An explicit new predicate, rather than another removal object."""
@@ -115,6 +117,7 @@ def _own_clause(gap: str) -> str:
 
 _FROM = re.compile(r"\bfrom\b[^,;()]*$", re.I)
 
+
 def _modules_in(sentence: str) -> list[tuple[str, str]]:
     """(module, WORK | IMPORT | MENTION | DEFERRED) for each module one sentence of plain text names.
 
@@ -160,4 +163,3 @@ def _modules_in(sentence: str) -> list[tuple[str, str]]:
         out.append((normal_module(m.group(0)), kind))
         last_end = m.end()
     return out
-

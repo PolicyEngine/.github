@@ -185,9 +185,7 @@ _AFFIRMATIVE_DEFERRAL = re.compile(
     r"\s*[:=]?\s*[\[(]*\s*",
     re.IGNORECASE,
 )
-_DEFERRED_AFTER = re.compile(
-    r"\s+(?:cannot|can't|must not|should not|is not to) be imported[.!?]?\s*", re.IGNORECASE
-)
+_DEFERRED_AFTER = re.compile(r"\s+(?:cannot|can't|must not|should not|is not to) be imported[.!?]?\s*", re.IGNORECASE)
 _INTO = re.compile(r"\binto\s*$", re.IGNORECASE)
 # Destination scope reaches through modifiers and wrappers. If they leave the
 # object ambiguous, retaining WORK is preferable to releasing its owner hold.
@@ -218,29 +216,89 @@ _AFFIRMATIVE_IMPORT = re.compile(
 # Invariant P1.1: a reference head accepts only finite reference words. Unknown
 # words cannot hide an edit predicate after "see", "matching" or another head.
 # Conditional heads do not establish an affirmative description and stay WORK.
-_REFERENCE_WORDS = frozenset({
-    "a", "an", "the", "its", "their", "of", "for", "existing", "matching", "sibling",
-    "statutory", "lawful", "current", "england", "module", "modules", "rule", "rules",
-    "amount", "value", "rate", "input", "inputs", "output", "outputs", "precedent", "precedents",
-})
+_REFERENCE_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "its",
+        "their",
+        "of",
+        "for",
+        "existing",
+        "matching",
+        "sibling",
+        "statutory",
+        "lawful",
+        "current",
+        "england",
+        "module",
+        "modules",
+        "rule",
+        "rules",
+        "amount",
+        "value",
+        "rate",
+        "input",
+        "inputs",
+        "output",
+        "outputs",
+        "precedent",
+        "precedents",
+    }
+)
 _PRECEDENT_HEADS = (
-    "matching", "mirror", "mirrors", "mirroring", "like", "unlike", "precedent", "precedents",
-    "same as", "as in", "modeled on", "modelled on", "following",
+    "matching",
+    "mirror",
+    "mirrors",
+    "mirroring",
+    "like",
+    "unlike",
+    "precedent",
+    "precedents",
+    "same as",
+    "as in",
+    "modeled on",
+    "modelled on",
+    "following",
 )
 _MENTION_HEADS = _PRECEDENT_HEADS + (
-    "existing", "sibling", "follow", "follows", "see", "cf", "cf.", "compare", "defined in", "declared in",
-    "keep", "leave", "preserve", "retain", "stay in", "stays in", "remain in", "remains in",
-    "live in", "lives in", "kept in", "left in", "it is defined in", "it is declared in",
+    "existing",
+    "sibling",
+    "follow",
+    "follows",
+    "see",
+    "cf",
+    "cf.",
+    "compare",
+    "defined in",
+    "declared in",
+    "keep",
+    "leave",
+    "preserve",
+    "retain",
+    "stay in",
+    "stays in",
+    "remain in",
+    "remains in",
+    "live in",
+    "lives in",
+    "kept in",
+    "left in",
+    "it is defined in",
+    "it is declared in",
 )
 _REFERENCE_TAIL = r"(?:\s+(?:" + "|".join(sorted(_REFERENCE_WORDS)) + r"))*"
 _PRECEDENT = re.compile(
-    "(?:" + "|".join(re.escape(head).replace(r"\ ", r"\s+") for head in _PRECEDENT_HEADS) + ")"
-    + _REFERENCE_TAIL + r"\Z",
+    "(?:"
+    + "|".join(re.escape(head).replace(r"\ ", r"\s+") for head in _PRECEDENT_HEADS)
+    + ")"
+    + _REFERENCE_TAIL
+    + r"\Z",
     re.IGNORECASE,
 )
 _MENTIONS = re.compile(
-    "(?:" + "|".join(re.escape(head).replace(r"\ ", r"\s+") for head in _MENTION_HEADS) + ")"
-    + _REFERENCE_TAIL + r"\Z",
+    "(?:" + "|".join(re.escape(head).replace(r"\ ", r"\s+") for head in _MENTION_HEADS) + ")" + _REFERENCE_TAIL + r"\Z",
     re.IGNORECASE,
 )
 # A complete current-state predicate can describe X. Generic auxiliaries such
@@ -396,7 +454,8 @@ def _clause_leads(gap: str, modules: list[re.Match[str]]) -> list[_ClauseLead]:
             # evidence; finding a later comma cannot discard that context.
             resettable = not meaningful or (removal and module_index == 0 and initial_removal_clean)
             if resettable and not (
-                removal and boundary.group(0).lower() in {",", "and", "or"}
+                removal
+                and boundary.group(0).lower() in {",", "and", "or"}
                 and not _new_removal_clause(gap, boundary.end())
             ):
                 lead.clear()
@@ -567,40 +626,201 @@ _TAIL_TOKEN = re.compile(
     re.IGNORECASE,
 )
 _TAIL_LIST = frozenset({"and", "or", "&"})
-_TAIL_DETERMINERS = frozenset({"a", "an", "the", "its", "their", "this", "these", "those", "each", "both", "all", "every"})
+_TAIL_DETERMINERS = frozenset(
+    {"a", "an", "the", "its", "their", "this", "these", "those", "each", "both", "all", "every"}
+)
 _TAIL_PREPOSITIONS = frozenset(
     {"for", "of", "in", "into", "on", "at", "under", "per", "with", "from", "by", "via", "as", "within", "over"}
 )
 # Prenominal adjectives that a participle test would reject; they must precede a noun.
-_TAIL_ADJECTIVES = frozenset({
-    "existing", "matching", "underlying", "corresponding", "remaining", "deferred", "scoped", "declared",
-    "related", "adjusted", "combined", "consolidated", "repealed", "amended",
-})
+_TAIL_ADJECTIVES = frozenset(
+    {
+        "existing",
+        "matching",
+        "underlying",
+        "corresponding",
+        "remaining",
+        "deferred",
+        "scoped",
+        "declared",
+        "related",
+        "adjusted",
+        "combined",
+        "consolidated",
+        "repealed",
+        "amended",
+    }
+)
 # Compound nouns that may follow a module or a noun ("X formulas", "its test contract").
-_TAIL_NOUNS = frozenset({
-    "module", "modules", "rule", "rules", "amount", "amounts", "value", "values", "rate", "rates", "input", "inputs",
-    "output", "outputs", "precedent", "precedents", "formula", "formulas", "version", "versions", "test", "tests",
-    "contract", "contracts", "case", "cases", "schedule", "schedules", "section", "sections", "subsection",
-    "subsections", "paragraph", "paragraphs", "provision", "provisions", "definition", "definitions", "limitation",
-    "limitations", "threshold", "thresholds", "parameter", "parameters", "table", "tables", "file", "files", "path",
-    "paths", "citation", "citations",
-})
+_TAIL_NOUNS = frozenset(
+    {
+        "module",
+        "modules",
+        "rule",
+        "rules",
+        "amount",
+        "amounts",
+        "value",
+        "values",
+        "rate",
+        "rates",
+        "input",
+        "inputs",
+        "output",
+        "outputs",
+        "precedent",
+        "precedents",
+        "formula",
+        "formulas",
+        "version",
+        "versions",
+        "test",
+        "tests",
+        "contract",
+        "contracts",
+        "case",
+        "cases",
+        "schedule",
+        "schedules",
+        "section",
+        "sections",
+        "subsection",
+        "subsections",
+        "paragraph",
+        "paragraphs",
+        "provision",
+        "provisions",
+        "definition",
+        "definitions",
+        "limitation",
+        "limitations",
+        "threshold",
+        "thresholds",
+        "parameter",
+        "parameters",
+        "table",
+        "tables",
+        "file",
+        "files",
+        "path",
+        "paths",
+        "citation",
+        "citations",
+    }
+)
 # Labels that only introduce a path or a rule name: "(X, corpus us/statute/26/32)".
 _TAIL_LABELS = frozenset({"corpus", "citation", "path", "module", "target"})
 # Complements that state the module stays as it is.
 _TAIL_COMPLEMENTS = frozenset({"unchanged", "intact", "untouched", "unedited", "unmodified", "active", "as-is"})
 # Function words never head a noun phrase: pronouns, relatives, subordinators,
 # auxiliaries, modals, negations and clause adverbs can each start a predicate.
-_TAIL_FUNCTION_WORDS = frozenset({
-    "i", "me", "we", "us", "you", "he", "him", "she", "her", "it", "they", "them", "one", "ones", "itself",
-    "themselves", "that", "which", "who", "whom", "whose", "what", "where", "when", "why", "how", "whether",
-    "if", "unless", "until", "once", "because", "since", "while", "whereas", "although", "though", "so", "than",
-    "rather", "after", "before", "be", "is", "are", "was", "were", "been", "being", "am", "do", "does", "did",
-    "done", "have", "has", "had", "will", "would", "shall", "should", "can", "could", "may", "might", "must",
-    "need", "needs", "ought", "not", "no", "never", "nor", "but", "yet", "then", "also", "too", "now", "still",
-    "already", "just", "only", "instead", "again", "further", "please", "first", "next", "later", "to", "let",
-    "and", "or", "there", "here", "else", "otherwise", "thus", "hence", "therefore", "either", "neither",
-})
+_TAIL_FUNCTION_WORDS = frozenset(
+    {
+        "i",
+        "me",
+        "we",
+        "us",
+        "you",
+        "he",
+        "him",
+        "she",
+        "her",
+        "it",
+        "they",
+        "them",
+        "one",
+        "ones",
+        "itself",
+        "themselves",
+        "that",
+        "which",
+        "who",
+        "whom",
+        "whose",
+        "what",
+        "where",
+        "when",
+        "why",
+        "how",
+        "whether",
+        "if",
+        "unless",
+        "until",
+        "once",
+        "because",
+        "since",
+        "while",
+        "whereas",
+        "although",
+        "though",
+        "so",
+        "than",
+        "rather",
+        "after",
+        "before",
+        "be",
+        "is",
+        "are",
+        "was",
+        "were",
+        "been",
+        "being",
+        "am",
+        "do",
+        "does",
+        "did",
+        "done",
+        "have",
+        "has",
+        "had",
+        "will",
+        "would",
+        "shall",
+        "should",
+        "can",
+        "could",
+        "may",
+        "might",
+        "must",
+        "need",
+        "needs",
+        "ought",
+        "not",
+        "no",
+        "never",
+        "nor",
+        "but",
+        "yet",
+        "then",
+        "also",
+        "too",
+        "now",
+        "still",
+        "already",
+        "just",
+        "only",
+        "instead",
+        "again",
+        "further",
+        "please",
+        "first",
+        "next",
+        "later",
+        "to",
+        "let",
+        "and",
+        "or",
+        "there",
+        "here",
+        "else",
+        "otherwise",
+        "thus",
+        "hence",
+        "therefore",
+        "either",
+        "neither",
+    }
+)
 # A new clause whose complete predicate names a later module as its object.
 _TAIL_OBJECT_REQUEST = re.compile(
     r"\s*(?:(?:then|also|and|or|but)\s+)*(?:" + _REQUESTS.pattern + r")\s+(?:(?:the|a|an)\s+)?",
@@ -778,9 +998,7 @@ def _modules_in(sentence: str, rest: str = "") -> list[tuple[str, str]]:
             elif requests:
                 # A request's target is WORK unless a complete predicate makes
                 # this module the precedent for an explicitly separate "it".
-                precedent = re.fullmatch(
-                    _REQUESTS.pattern + r"\s+it\s+" + _PRECEDENT.pattern, lead.strip(), re.I
-                )
+                precedent = re.fullmatch(_REQUESTS.pattern + r"\s+it\s+" + _PRECEDENT.pattern, lead.strip(), re.I)
                 kind = MENTION if precedent else WORK
             else:
                 # "(X)" on its own is a pointer to where something lives.

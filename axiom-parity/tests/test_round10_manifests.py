@@ -26,9 +26,7 @@ def test_country_root_manifest_supplies_encoder_evidence():
     assert not manifest_warnings(["us/statutes/x.yaml", "us/.axiom/encoding-manifests/a.json"])
 
 
-@pytest.mark.parametrize(
-    "files", [["us/statutes/x.yaml"], [".axiom/toolchain.toml"], ["us/.axiom/toolchain.toml"]]
-)
+@pytest.mark.parametrize("files", [["us/statutes/x.yaml"], [".axiom/toolchain.toml"], ["us/.axiom/toolchain.toml"]])
 def test_modules_and_unrelated_metadata_still_warn(files):
     assert manifest_warnings(files)
 

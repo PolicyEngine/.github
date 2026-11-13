@@ -45,9 +45,7 @@ ERROR, WARNING, NOTICE = "error", "warning", "notice"
 # A jurisdiction has the same two-letter country and optional subdivision
 # shape used in module references. Only one such top-level directory may
 # precede .axiom; arbitrary nested .axiom metadata is not manifest evidence.
-_ENCODING_MANIFEST = re.compile(
-    r"(?:[a-z]{2}(?:-[a-z0-9]+)*/)?\.axiom/encoding-manifests/.+\.json\Z"
-)
+_ENCODING_MANIFEST = re.compile(r"(?:[a-z]{2}(?:-[a-z0-9]+)*/)?\.axiom/encoding-manifests/.+\.json\Z")
 
 
 @dataclass

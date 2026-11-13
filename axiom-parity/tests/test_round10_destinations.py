@@ -38,8 +38,11 @@ def test_declaring_a_deferred_dependency_in_a_module_keeps_its_owner_hold():
 
 
 @given(
-    st.sampled_from(VERBS), st.sampled_from(OBJECTS), st.sampled_from(PREPOSITIONS),
-    st.sampled_from([" ", ", "]), st.integers(1, 3),
+    st.sampled_from(VERBS),
+    st.sampled_from(OBJECTS),
+    st.sampled_from(PREPOSITIONS),
+    st.sampled_from([" ", ", "]),
+    st.integers(1, 3),
     st.sampled_from([", ", " and ", " or "]),
     st.sampled_from(["", "existing ", "matching ", "preexisting ", "deferred ", "existing and matching "]),
     st.sampled_from(["", "`", "**", "_"]),
@@ -60,7 +63,8 @@ def test_deferred_objects_do_not_defer_the_destination(
 
 
 @given(
-    st.sampled_from(VERBS), st.sampled_from(OBJECTS),
+    st.sampled_from(VERBS),
+    st.sampled_from(OBJECTS),
     st.sampled_from(["Do not ", "Don't ", "Never ", "It is premature to ", "The text does not "]),
     st.sampled_from(DEPENDENCIES + [DESTINATION]),
 )
