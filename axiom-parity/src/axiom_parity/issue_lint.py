@@ -24,7 +24,7 @@ import re
 from dataclasses import dataclass, field
 from textwrap import dedent
 
-from .text_units import markdown_units, split_sentences
+from .text_units import markdown_units, protect_literal_stops, restore_literal_stops, split_sentences
 
 ELEMENTS = (
     "module_path",
@@ -614,7 +614,8 @@ def _input_column(block) -> bool:
     columns = [n for n, cell in enumerate(block.header) if re.search(r"\binputs?\b", _declaration_text(cell), re.I)]
     if not columns:
         return False
-    if not block.cells or len(block.cells) != len(block.header):
+    # Code joined from later lines sits outside every cell: its column is unknown.
+    if block.joined or not block.cells or len(block.cells) != len(block.header):
         return True
     cells = [_declaration_text(cell) for cell in block.cells]
     spans, text = [], ""
@@ -648,8 +649,9 @@ def _output_units(finding: str) -> list[str]:
     for block in markdown_units(finding):
         if block.table_header or _input_column(block):
             continue
-        text = _declaration_text(block.text)
-        units = split_sentences(text) if block.paragraph else [text]
+        # Punctuation inside code or an HTML table never ends a sentence.
+        text = _declaration_text(protect_literal_stops(block.text))
+        units = [restore_literal_stops(unit) for unit in (split_sentences(text) if block.paragraph else [text])]
         for unit in units:
             matches = list(_NAMED_OUTPUT.finditer(unit))
             declared = {
