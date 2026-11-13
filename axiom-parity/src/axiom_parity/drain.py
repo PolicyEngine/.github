@@ -646,6 +646,7 @@ def _tail_accounted(tail: str) -> bool:
     """
     tail = re.sub(r"\bas is\b", "as-is", tail, flags=re.IGNORECASE)
     state, pending = "after", False
+    head = False  # the last token was a head word of a phrase
     pos = 0
     while pos < len(tail):
         token = _TAIL_TOKEN.match(tail, pos)
@@ -654,6 +655,7 @@ def _tail_accounted(tail: str) -> bool:
         pos = token.end()
         if kind in ("space", "mark"):
             continue
+        after_head, head = head, False
         listing = kind == "separator" or (kind == "word" and word in _TAIL_LIST)
         if pending and listing and word in (",", "and", "or"):
             continue  # coordinated modifiers share the head that follows them
@@ -676,6 +678,11 @@ def _tail_accounted(tail: str) -> bool:
         elif word in _TAIL_COMPLEMENTS and state in ("after", "clause", "phrase") and not pending:
             state = "after"
         elif word in _TAIL_DETERMINERS:
+            # A prenominal modifier never precedes a determiner: in "the rule
+            # needing an update" the participle takes an object, so it is a
+            # predicate on the module, not a modifier (review r11).
+            if pending:
+                return False
             state = "pp" if state in ("pp", "phrase", "to") else "noun"
         elif word in _TAIL_PREPOSITIONS or word == "to":
             if pending:
@@ -690,10 +697,16 @@ def _tail_accounted(tail: str) -> bool:
         elif state in ("noun", "pp", "phrase"):
             if not _open_word(word):
                 return False
+            # A present participle right after a head word follows its noun:
+            # "the rule needing changes" is a reduced clause with an object,
+            # a predicate on the module, not a modifier (review r11).
+            if state == "phrase" and after_head and word.endswith("ing"):
+                return False
             if _modifier(word):
                 pending = True
             else:
                 state, pending = ("after" if state == "noun" else "phrase"), False
+                head = True
         elif state == "after":
             if word not in _TAIL_NOUNS:
                 return False
@@ -707,7 +720,10 @@ def _tail_accounted(tail: str) -> bool:
                 return False
             pos = module + len(_TAIL_MODULE)
             state = "after"
-    return state in ("after", "clause", "phrase") and not pending
+    # A sentence that stops after a separator, a list word or an opening bracket
+    # ("- See X:" over nested items, "See X and") hands its predicate to what
+    # follows, which this sentence cannot read (review r11).
+    return state in ("after", "phrase") and not pending
 
 
 def _modules_in(sentence: str, rest: str = "") -> list[tuple[str, str]]:

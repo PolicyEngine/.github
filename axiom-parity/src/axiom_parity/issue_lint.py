@@ -621,6 +621,13 @@ def _input_column(block) -> bool:
     # Code joined from later lines sits outside every cell: its column is unknown.
     if block.joined or not block.cells or len(block.cells) != len(block.header):
         return True
+    # GFM splits a row at every unescaped pipe, inside code spans too, and keeps
+    # an escaped pipe in its cell. Where that reading and this one could differ,
+    # the column is unknown: read input (review r11).
+    if "\\|" in block.text or any(cell.endswith("\\") for cell in block.header):
+        return True
+    if len(_cells(block.text)) != len(block.cells):
+        return True
     cells = [_declaration_text(cell) for cell in block.cells]
     spans, text = [], ""
     for cell in cells:
@@ -642,8 +649,8 @@ def _input_column(block) -> bool:
     return False
 
 
-# A source predicate names the input it reads: "using the leaf input wages".
-# One naming word may stand before the name ("input named wages"); the name
+# A source predicate names the input it reads: "using the leaf input gross_wages".
+# One naming word may stand before the name ("input named gross_wages"); the name
 # must then close the phrase, before punctuation, the end or a preposition.
 _SOURCE = re.compile(
     r"\busing\s+(?:(?:the|an?|existing)\s+)?(?:[\w-]+\s+){0,3}input\s+"
@@ -671,7 +678,10 @@ def _distinct_source(source: re.Match[str], declared: set[str], unit: str) -> bo
     name = source["name"].lower()
     if name in declared or name in _NOT_A_NAME:
         return False
-    if "_" not in name and re.search(r"(?:ed|ing)$", name):
+    # Only a rule identifier resolves: a plain word ("pattern", "rate", "type",
+    # "itself", "directly") may name the kind of input the declaration is, so it
+    # stays unresolved and the designation keeps its scope (review r11).
+    if "_" not in name:
         return False
     after = unit[source.start("name") :]
     return not any(re.search(rf"(?<![\w#]){re.escape(other)}(?!\w)", after, re.I) for other in declared)
@@ -686,7 +696,16 @@ class _Evidence:
     introduces: bool = False  # a list item that ends in a colon or holds nested items
 
 
-_NAME = re.compile(r"`[^`\n]{2,}`|\b[a-z][a-z0-9]*_[a-z0-9_]+\b|#[a-z][\w]*", re.IGNORECASE)
+# A rule name, but not a segment of a path ("us/policies/income_tax/x.yaml"):
+# a path names a file, not an output (review r11).
+_RULE_NAME = re.compile(
+    r"(?<![\w/.#-])[a-z][a-z0-9]*_[a-z0-9_]+\b(?![/-]|\.\w)|(?<=#)[a-z][\w]*",
+    re.IGNORECASE,
+)
+
+
+def _rule_names(text: str) -> set[str]:
+    return {match.group(0).lower() for match in _RULE_NAME.finditer(text)}
 
 
 def _retained_evidence(text: str) -> list[_Evidence]:
@@ -695,19 +714,21 @@ def _retained_evidence(text: str) -> list[_Evidence]:
     Invariant (round 11, P1.5): evidence for required outputs comes only from
     units that survive the exclusion. An excluded declaration supplies
     nothing, and no preamble stands in for it. Once a unit is excluded, a
-    retained unit that names no output (no declaration, code span or rule
-    name) counts only if it is a list item or table row that follows every
-    excluded unit and introduces nothing: no closing colon and no nested
-    items. A paragraph, an introducing item and any unit before an excluded
-    one may be a preamble ("The following:"), so none of them counts.
+    retained unit counts only if it names a rule that is not an excluded
+    unit's subject (what it declares, or a name before its designation), or
+    if it is a list item or table row that follows every excluded unit and
+    introduces nothing: no closing colon and no nested items. A code span that
+    holds no rule name (a path, a file) names no output, and a preamble that
+    repeats an excluded subject ("This adds a_b_c ...:") stands in for it, so
+    neither counts (review r11). A paragraph, an introducing item and any unit
+    before an excluded one may be a preamble ("The following:").
     """
-    units, last_excluded = _output_evidence(text)
+    units, last_excluded, excluded_names = _output_evidence(text)
     if last_excluded >= 0:
         units = [
             unit
             for unit in units
-            if _NAMED_OUTPUT.search(unit.text)
-            or _NAME.search(unit.raw + " " + unit.text)
+            if _rule_names(unit.raw + " " + unit.text) - excluded_names
             or (unit.item and not unit.introduces and unit.position > last_excluded)
         ]
     return units
@@ -717,7 +738,7 @@ def _output_units(finding: str) -> list[str]:
     return [unit.text for unit in _output_evidence(finding)[0]]
 
 
-def _output_evidence(finding: str) -> tuple[list[_Evidence], int]:
+def _output_evidence(finding: str) -> tuple[list[_Evidence], int, set[str]]:
     """Declarations can supply evidence only in units with no input designation.
 
     An unresolved designation excludes every declaration in its unit, including
@@ -725,13 +746,15 @@ def _output_evidence(finding: str) -> tuple[list[_Evidence], int]:
     distinct input can establish that it designates another name.
     """
     out: list[_Evidence] = []
-    last_excluded = -1  # the position of the last block with an excluded declaration
+    last_excluded = -1  # the position of the last block with a unit the input check excluded
+    excluded_names: set[str] = set()  # the rule names that excluded units declare or lead with
     blocks = markdown_units(finding)
     for position, block in enumerate(blocks):
         if block.table_header:
             continue
         if _input_column(block):
             last_excluded = position
+            excluded_names |= _rule_names(block.text)
             continue
         following = blocks[position + 1] if position + 1 < len(blocks) else None
         nested = following is not None and following.indent is not None and following.indent > (block.indent or 0)
@@ -751,11 +774,20 @@ def _output_evidence(finding: str) -> tuple[list[_Evidence], int]:
             sources = [
                 source for source in _SOURCE.finditer(unit) if declared and _distinct_source(source, declared, unit)
             ]
-            if any(
-                not any(source.start() <= label.start() < source.end() for source in sources)
+            designations = [
+                label.start()
                 for label in re.finditer(r"\binputs?\b", unit, re.I)
-            ) or any(re.search(r"\bimport\w*\b", unit[: match.end()], re.I) for match in matches):
+                if not any(source.start() <= label.start() < source.end() for source in sources)
+            ] + [
+                found.start() for match in matches if (found := re.search(r"\bimport\w*\b", unit[: match.end()], re.I))
+            ]
+            if designations:
                 block_excluded = True
+                # The excluded unit's own subject: what it declares, and any name
+                # before its designation. A name it only refers to after the
+                # designation ("leaf-input Judgments that gate `x_y_z`") is
+                # another unit's output, and stays evidence there (review r11).
+                excluded_names |= declared | _rule_names(unit[: min(designations)])
                 continue
             # A table's header and separator are structure, not declarations.
             if block.cells and all(not re.search(r"\w", cell) for cell in block.cells):
@@ -767,7 +799,7 @@ def _output_evidence(finding: str) -> tuple[list[_Evidence], int]:
         else:
             last_excluded = position
         out.extend(kept)
-    return out, last_excluded
+    return out, last_excluded, excluded_names
 
 
 def _named_output(finding: str) -> re.Match[str] | None:

@@ -96,5 +96,5 @@ def test_an_input_designation_in_the_same_sentence_keeps_its_scope_across_a_semi
 
 
 def test_using_another_leaf_input_does_not_reclassify_an_output():
-    finding = "Add a Judgment a_b_c that holds for the year, using the leaf input wages." + PAD
+    finding = "Add a Judgment a_b_c that holds for the year, using the leaf input gross_wages." + PAD
     assert lint_issue({"body": finding_only(finding)}).ready

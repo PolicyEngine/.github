@@ -55,7 +55,7 @@ def test_words_before_the_declared_name_never_make_it_a_distinct_input(words, mo
 
 
 @pytest.mark.parametrize("naming", ["", *(word + " " for word in NAMING)])
-@pytest.mark.parametrize("name", ["wages", "d_e_f", "another_input_value"])
+@pytest.mark.parametrize("name", ["gross_wages", "d_e_f", "another_input_value"])
 def test_a_named_distinct_input_keeps_the_output(naming, name):
     assert lint_issue({"body": finding_only(f"Add `a_b_c` Money using the leaf input {naming}{name}." + PAD)}).ready
     # Without a resolved name the designation stays unresolved.

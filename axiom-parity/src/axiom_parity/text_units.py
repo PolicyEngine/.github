@@ -26,12 +26,21 @@ _HTML_TABLE = re.compile(r"<table\b", re.IGNORECASE)
 _HTML_TABLE_END = re.compile(r"</table\s*>", re.IGNORECASE)
 # Extra coverage for longer abbreviations; the rule in split_sentences covers
 # every one- or two-letter token and any period before lower case or a number.
-# An entry starts its token: the "s." of "applicant's." is a possessive, not a section.
+# An entry starts its token: the "s." of "applicant's." is a possessive, not a section,
+# and the "c." of a citation path ("us/statute/26/32/c.") is the path's last segment,
+# so a sentence that ends in a citation still ends there (review r11).
 _ABBREVIATION = re.compile(
-    r"(?<![\w'’])(?:i\.e\.|e\.g\.|cf\.|etc\.|viz\.|ss?\.|regs?\.|paras?\.|arts?\.|Nos?\.|Sch\.|secs?\.|subs?\.|"
+    r"(?<![\w'’/:#\-])(?:i\.e\.|e\.g\.|cf\.|etc\.|viz\.|ss?\.|regs?\.|paras?\.|arts?\.|Nos?\.|Sch\.|secs?\.|subs?\.|"
     r"subsec\.|ch\.|cl\.|pt\.|pp?\.|c\.|v\.|vs\.|al\.|Rev\.|Proc\.|Pub\.|Stat\.|Ann\.|Fed\.|Supp\.|Cir\.|App\.|"
     r"Ct\.|Co\.|Inc\.|Ltd\.|Corp\.|Dept\.|Govt?\.|Admin\.|Ord\.|Div\.|Jan\.|Feb\.|Mar\.|Apr\.|Jun\.|Jul\.|"
-    r"Aug\.|Sept?\.|Oct\.|Nov\.|Dec\.|Mrs?\.|Ms\.|Dr\.|St\.|vol\.|eds?\.|approx\.|incl\.|excl\.|est\.|ibid\.)",
+    r"Aug\.|Sept?\.|Oct\.|Nov\.|Dec\.|Mrs?\.|Ms\.|Dr\.|St\.|vol\.|eds?\.|approx\.|incl\.|excl\.|est\.|ibid\.)"
+    # Capitalized legal abbreviations the issues use ("Treas. Reg.", "Miss. Code Ann.", "Cal. Rev. & Tax. Code",
+    # "Ark. Code", "30 Del. C.", "Minn. Stat.", "N.C. Gen. Stat.", "89 Ill. Adm. Code"):
+    # case-sensitive, so "the income tax." or "mass." still end a sentence.
+    r"|(?-i:(?<![\w'’/:#\-])(?:Treas|Prop|Temp|Rul|Sched|Instr|Gen|Comp|Cent|Consol|Adm|Welf|Inst|Educ|Civ|Crim|"
+    r"Tax|Ins|Lab|Fam|Bus|Prof|Veh|Hum|Res|Soc|Serv|Fin|Util|Agric|"
+    r"Ala|Ariz|Ark|Cal|Calif|Colo|Conn|Del|Fla|Haw|Ill|Ind|Kan|Mass|Mich|Minn|Miss|Mont|Neb|Nev|Okla|Tenn|Tex|"
+    r"Wash|Wis|Wyo)\.)",
     re.IGNORECASE,
 )
 # The whole token before a period (the run of non-space characters, without

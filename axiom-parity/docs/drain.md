@@ -20,7 +20,7 @@ The main lint failures:
 - 85 US issues have no pasteable `review_finding`. 60 of them are among the 71 issues filed on 2026-10-09 (#1554–#1625).
 - 21 US issues name no target module.
 - 6 US issues have no companion cases with an expected outcome.
-- 15 US and 2 UK issues have no required outputs.
+- 16 US and 2 UK issues have no required outputs.
 
 The unit of work is the source document. A signed run takes up to 16 citations including its primary citation, and the encoder refuses a bundle that leaves the primary's jurisdiction (`parse_source_bundle` in axiom-encode's `prepare_signed_backfill.py`). So the plan gives each document its own run. A document is ready when every issue with a target in it is. An issue whose targets span several documents needs all of them.
 

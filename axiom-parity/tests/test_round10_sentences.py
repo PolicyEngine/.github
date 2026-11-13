@@ -83,7 +83,7 @@ def test_ambiguous_designation_excludes_every_declaration_in_its_sentence():
 
 
 @given(
-    name=st.sampled_from(["wages", "d_e_f", "another_input_value"]),
+    name=st.sampled_from(["gross_wages", "d_e_f", "another_input_value"]),
     declaration=st.sampled_from(["Add a Judgment a_b_c", "Output Money a_b_c", "Add a_b_c Money"]),
     modifier=st.sampled_from(["", "leaf ", "existing ", "scoped leaf "]),
 )

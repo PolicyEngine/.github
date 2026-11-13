@@ -218,7 +218,7 @@ def test_a_declared_input_is_never_a_required_output(name, wording):
         [
             "Output Money {x}.",
             "Outputs: `{x}`.",
-            "Add a Judgment {x} that holds for the year, using the leaf input wages.",
+            "Add a Judgment {x} that holds for the year, using the leaf input gross_wages.",
             "Add `{x}` Money (TaxUnit) = max(0, wages - 100).",
             "Name them {x} and the like.",
             "Add the new amount to us/statutes/26/32/d.yaml#{x}.",
