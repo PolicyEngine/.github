@@ -15,6 +15,7 @@ class TextUnit:
     table_header: bool = False
     header: tuple[str, ...] | None = None  # a data row's table header cells
     joined: bool = False  # code or an HTML table running past its first line was kept in this unit
+    indent: int | None = None  # a list item's marker indentation
 
 
 _ITEM = re.compile(r"^(?P<indent>\s*)(?:[-*+]|\d+[.)]|\(\d+\)|\(?[a-z]\)|[ivx]+[.)])\s+(?P<text>.*)")
@@ -244,7 +245,7 @@ def markdown_units(text: str) -> list[TextUnit]:
             indent = len(match["indent"].expandtabs(4))
             while items and items[-1][0] >= indent:
                 items.pop()
-            units.append(TextUnit(match["text"]))
+            units.append(TextUnit(match["text"], indent=indent))
             items.append((indent, len(units) - 1))
             paragraph = None
         else:

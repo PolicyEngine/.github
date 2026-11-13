@@ -302,8 +302,11 @@ def _has_content(element: str, lines: list[str]) -> bool:
     if element == "review_finding":
         return _quoted_chars(lines) >= 80 or _content_chars(lines) >= 120
     if element == "required_outputs":
-        units = _output_units("\n".join(lines))
-        return any(re.search(r"\w", unit) for unit in units) and (_items(lines) >= 1 or sum(map(len, units)) >= 80)
+        units = _retained_evidence("\n".join(lines))
+        items = sum(1 for unit in units if unit.item)
+        return any(re.search(r"\w", unit.text) for unit in units) and (
+            items >= 1 or sum(len(unit.text) for unit in units) >= 80
+        )
     if element == "companion_tests":
         return _items(lines) >= 1 or _quoted_chars(lines) >= 80 or _content_chars(lines) >= 120
     return False
@@ -344,10 +347,11 @@ def _introduces_content(element: str, line: str, following: list[str]) -> bool:
     if element == "companion_tests":
         return len(text) >= 40 and _states_outcome(block)
     # The cue declares outputs, but cannot override a designation in their own
-    # unit. Keep Markdown boundaries until the same exclusion used by findings.
-    units = _output_units("\n".join(block))
-    return any(re.search(r"\w", unit) for unit in units) and (
-        bool(re.search(r"`[^`\n]{2,}`", text)) or sum(map(len, units)) >= 20
+    # unit. Keep Markdown boundaries until the same exclusion used by findings,
+    # and read the evidence only from the units that survive it.
+    units = _retained_evidence("\n".join(block))
+    return any(re.search(r"\w", unit.text) for unit in units) and (
+        any(re.search(r"`[^`\n]{2,}`", unit.raw) for unit in units) or sum(len(unit.text) for unit in units) >= 20
     )
 
 
@@ -673,20 +677,70 @@ def _distinct_source(source: re.Match[str], declared: set[str], unit: str) -> bo
     return not any(re.search(rf"(?<![\w#]){re.escape(other)}(?!\w)", after, re.I) for other in declared)
 
 
+@dataclass
+class _Evidence:
+    text: str  # the unit's normalized words
+    raw: str  # its Markdown, where the whole block survived; else the normalized words
+    item: bool  # a list item or a table data row
+    position: int = 0  # the order of its block in the text
+    introduces: bool = False  # a list item that ends in a colon or holds nested items
+
+
+_NAME = re.compile(r"`[^`\n]{2,}`|\b[a-z][a-z0-9]*_[a-z0-9_]+\b|#[a-z][\w]*", re.IGNORECASE)
+
+
+def _retained_evidence(text: str) -> list[_Evidence]:
+    """The output evidence that survives the input exclusion.
+
+    Invariant (round 11, P1.5): evidence for required outputs comes only from
+    units that survive the exclusion. An excluded declaration supplies
+    nothing, and no preamble stands in for it. Once a unit is excluded, a
+    retained unit that names no output (no declaration, code span or rule
+    name) counts only if it is a list item or table row that follows every
+    excluded unit and introduces nothing: no closing colon and no nested
+    items. A paragraph, an introducing item and any unit before an excluded
+    one may be a preamble ("The following:"), so none of them counts.
+    """
+    units, last_excluded = _output_evidence(text)
+    if last_excluded >= 0:
+        units = [
+            unit
+            for unit in units
+            if _NAMED_OUTPUT.search(unit.text)
+            or _NAME.search(unit.raw + " " + unit.text)
+            or (unit.item and not unit.introduces and unit.position > last_excluded)
+        ]
+    return units
+
+
 def _output_units(finding: str) -> list[str]:
+    return [unit.text for unit in _output_evidence(finding)[0]]
+
+
+def _output_evidence(finding: str) -> tuple[list[_Evidence], int]:
     """Declarations can supply evidence only in units with no input designation.
 
     An unresolved designation excludes every declaration in its unit, including
     under an explicit output heading or cue. Only a source predicate naming a
     distinct input can establish that it designates another name.
     """
-    out: list[str] = []
-    for block in markdown_units(finding):
-        if block.table_header or _input_column(block):
+    out: list[_Evidence] = []
+    last_excluded = -1  # the position of the last block with an excluded declaration
+    blocks = markdown_units(finding)
+    for position, block in enumerate(blocks):
+        if block.table_header:
             continue
+        if _input_column(block):
+            last_excluded = position
+            continue
+        following = blocks[position + 1] if position + 1 < len(blocks) else None
+        nested = following is not None and following.indent is not None and following.indent > (block.indent or 0)
+        introduces = block.indent is not None and (block.text.rstrip().endswith(":") or nested)
         # Punctuation inside code or an HTML table never ends a sentence.
         text = _declaration_text(protect_literal_stops(block.text))
         units = [restore_literal_stops(unit) for unit in (split_sentences(text) if block.paragraph else [text])]
+        kept: list[_Evidence] = []
+        block_excluded = False
         for unit in units:
             matches = list(_NAMED_OUTPUT.finditer(unit))
             declared = {
@@ -701,12 +755,19 @@ def _output_units(finding: str) -> list[str]:
                 not any(source.start() <= label.start() < source.end() for source in sources)
                 for label in re.finditer(r"\binputs?\b", unit, re.I)
             ) or any(re.search(r"\bimport\w*\b", unit[: match.end()], re.I) for match in matches):
+                block_excluded = True
                 continue
             # A table's header and separator are structure, not declarations.
             if block.cells and all(not re.search(r"\w", cell) for cell in block.cells):
                 continue
-            out.append(unit)
-    return out
+            kept.append(_Evidence(unit, unit, not block.paragraph, position, introduces))
+        if not block_excluded:
+            for unit in kept:
+                unit.raw = block.text
+        else:
+            last_excluded = position
+        out.extend(kept)
+    return out, last_excluded
 
 
 def _named_output(finding: str) -> re.Match[str] | None:
