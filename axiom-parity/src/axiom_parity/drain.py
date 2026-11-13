@@ -508,27 +508,208 @@ def cited_above(module: str, cites: list[str]) -> str | None:
     return None
 
 
+def _clauses(text: str) -> list[tuple[str, str]]:
+    """(clause, the rest of its grammatical sentence after it) for each semicolon clause."""
+    out: list[tuple[str, str]] = []
+    for unit in markdown_units(text):
+        for sentence in split_sentences(unit.text):
+            parts = [part for part in re.split(r";\s*", sentence) if part.strip()]
+            out.extend((part, "; ".join(parts[n + 1 :])) for n, part in enumerate(parts))
+    return out
+
+
 def _sentences(text: str) -> list[str]:
     # Markdown units preserve wrapped predicates and their denials. Semicolons
     # still bound citation-pairing clauses inside each grammatical sentence.
-    return [
-        clause
-        for unit in markdown_units(text)
-        for sentence in split_sentences(unit.text)
-        for clause in re.split(r";\s*", sentence)
-        if clause.strip()
-    ]
+    return [clause for clause, _ in _clauses(text)]
 
 
-def _modules_in(sentence: str) -> list[tuple[str, str]]:
+# Invariant (round 11, P1.1): a module reads as MENTION, IMPORT or DEFERRED only
+# when nothing after it in its grammatical sentence can write to it. The rest
+# of the sentence, later semicolon clauses included, must be accounted for by a
+# closed grammar: noun and prepositional phrases, lists of modules, rule names,
+# paths and numbers, a closed set of non-write complements ("unchanged"), and
+# new clauses whose complete affirmative predicate names another module as its
+# object ("and fix Y"). A verb, pronoun, auxiliary, relative or any other word
+# the grammar does not account for may start a predicate that writes to the
+# module ("and fix it", "then edit it", "which must change"), so it reads WORK.
+_TAIL_MODULE = ""
+_TAIL_TOKEN = re.compile(
+    r"(?P<space>\s+)"
+    r"|(?P<module>)"
+    r"|(?P<quote>\"[^\"\n]*\"|“[^”\n]*”)"
+    r"|(?P<path>(?<![\w/])[a-z]{2}(?:-[a-z0-9]+)*[/:][\w./:\-#]*\w)"
+    r"|(?P<ident>#[\w.]+|[A-Za-z][A-Za-z0-9]*_\w*)"
+    r"|(?P<abbrev>(?-i:(?:[A-Z]\.){2,})|(?<![\w.])(?:e\.g|i\.e|viz|etc|ss?|regs?|paras?|arts?|no|sch|c|v|cf|ch|pt|pp?|sec|subs?)\.)"
+    r"|(?P<number>[$£€]?\d[\w.,%+\-/]*|[A-Za-z]+\d[\w.\-]*)"
+    r"|(?P<locator>(?:\([A-Za-z0-9]{1,5}\))+|§+)"
+    r"|(?P<possessive>['’]s\b)"
+    r"|(?P<word>[A-Za-z][A-Za-z\-]*(?:['’][a-z]+)?)"
+    r"|(?P<separator>[,;:/&—–]|-(?=\s))"
+    r"|(?P<open>[(\[{])"
+    r"|(?P<close>[)\]}])"
+    r"|(?P<stop>[.!?]+)"
+    r"|(?P<mark>[\"'“”‘’])"
+    r"|(?P<other>.)",
+    re.IGNORECASE,
+)
+_TAIL_LIST = frozenset({"and", "or", "&"})
+_TAIL_DETERMINERS = frozenset({"a", "an", "the", "its", "their", "this", "these", "those", "each", "both", "all", "every"})
+_TAIL_PREPOSITIONS = frozenset(
+    {"for", "of", "in", "into", "on", "at", "under", "per", "with", "from", "by", "via", "as", "within", "over"}
+)
+# Prenominal adjectives that a participle test would reject; they must precede a noun.
+_TAIL_ADJECTIVES = frozenset({
+    "existing", "matching", "underlying", "corresponding", "remaining", "deferred", "scoped", "declared",
+    "related", "adjusted", "combined", "consolidated", "repealed", "amended",
+})
+# Compound nouns that may follow a module or a noun ("X formulas", "its test contract").
+_TAIL_NOUNS = frozenset({
+    "module", "modules", "rule", "rules", "amount", "amounts", "value", "values", "rate", "rates", "input", "inputs",
+    "output", "outputs", "precedent", "precedents", "formula", "formulas", "version", "versions", "test", "tests",
+    "contract", "contracts", "case", "cases", "schedule", "schedules", "section", "sections", "subsection",
+    "subsections", "paragraph", "paragraphs", "provision", "provisions", "definition", "definitions", "limitation",
+    "limitations", "threshold", "thresholds", "parameter", "parameters", "table", "tables", "file", "files", "path",
+    "paths", "citation", "citations",
+})
+# Labels that only introduce a path or a rule name: "(X, corpus us/statute/26/32)".
+_TAIL_LABELS = frozenset({"corpus", "citation", "path", "module", "target"})
+# Complements that state the module stays as it is.
+_TAIL_COMPLEMENTS = frozenset({"unchanged", "intact", "untouched", "unedited", "unmodified", "active", "as-is"})
+# Function words never head a noun phrase: pronouns, relatives, subordinators,
+# auxiliaries, modals, negations and clause adverbs can each start a predicate.
+_TAIL_FUNCTION_WORDS = frozenset({
+    "i", "me", "we", "us", "you", "he", "him", "she", "her", "it", "they", "them", "one", "ones", "itself",
+    "themselves", "that", "which", "who", "whom", "whose", "what", "where", "when", "why", "how", "whether",
+    "if", "unless", "until", "once", "because", "since", "while", "whereas", "although", "though", "so", "than",
+    "rather", "after", "before", "be", "is", "are", "was", "were", "been", "being", "am", "do", "does", "did",
+    "done", "have", "has", "had", "will", "would", "shall", "should", "can", "could", "may", "might", "must",
+    "need", "needs", "ought", "not", "no", "never", "nor", "but", "yet", "then", "also", "too", "now", "still",
+    "already", "just", "only", "instead", "again", "further", "please", "first", "next", "later", "to", "let",
+    "and", "or", "there", "here", "else", "otherwise", "thus", "hence", "therefore", "either", "neither",
+})
+# A new clause whose complete predicate names a later module as its object.
+_TAIL_OBJECT_REQUEST = re.compile(
+    r"\s*(?:(?:then|also|and|or|but)\s+)*(?:" + _REQUESTS.pattern + r")\s+(?:(?:the|a|an)\s+)?",
+    re.IGNORECASE,
+)
+_TAIL_CLAUSE_START = re.compile(r"\s*(?:(?:then|also|and|or|but)\s+)*", re.IGNORECASE)
+
+
+def _tail_clause(lead: str) -> bool:
+    """A complete affirmative predicate whose object is the module right after ``lead``."""
+    rest = lead[_TAIL_CLAUSE_START.match(lead).end() :]
+    return bool(
+        _TAIL_OBJECT_REQUEST.fullmatch(lead)
+        or _AFFIRMATIVE_IMPORT.fullmatch(rest)
+        or _AFFIRMATIVE_DEFERRAL.fullmatch(rest)
+        or _MENTIONS.fullmatch(rest.strip())
+    )
+
+
+def _open_word(word: str) -> bool:
+    """A word that can stand in a noun phrase: not a function word or a contraction."""
+    return word not in _TAIL_FUNCTION_WORDS and "'" not in word and "’" not in word
+
+
+def _modifier(word: str) -> bool:
+    """A prenominal word that needs a head after it: "existing", "amended", "preexisting"."""
+    return word in _TAIL_ADJECTIVES or bool(re.search(r"(?:ing|ed)$", word))
+
+
+def _tail_accounted(tail: str) -> bool:
+    """Is the rest of a sentence after a module accounted for without any predicate on it?
+
+    ``tail`` starts right after the module, with later modules replaced by
+    ``_TAIL_MODULE``. States: ``after`` follows a module or a head noun, where
+    only a closed compound noun or complement may follow directly; ``clause``
+    starts a new clause, where only a phrase, a list member or a complete
+    affirmative predicate on a named module may follow; ``noun`` follows a
+    determiner and needs one head; ``pp`` follows a preposition and needs a
+    head, after which ``phrase`` admits further nouns; ``to`` admits only a
+    determiner, a modifier or a name; ``label`` needs a path or name. A participle or adjective is only ever a modifier waiting for its
+    head: one left without a head ("for fixing", "and its rule updated") is
+    unaccounted for.
+    """
+    tail = re.sub(r"\bas is\b", "as-is", tail, flags=re.IGNORECASE)
+    state, pending = "after", False
+    pos = 0
+    while pos < len(tail):
+        token = _TAIL_TOKEN.match(tail, pos)
+        kind, text = token.lastgroup, token.group(0)
+        word = text.lower()
+        pos = token.end()
+        if kind in ("space", "mark"):
+            continue
+        listing = kind == "separator" or (kind == "word" and word in _TAIL_LIST)
+        if pending and listing and word in (",", "and", "or"):
+            continue  # coordinated modifiers share the head that follows them
+        if kind in ("module", "path", "ident", "number", "abbrev", "locator"):
+            state, pending = ("phrase" if state in ("pp", "phrase", "to") else "after"), False
+        elif kind == "quote":
+            if state not in ("noun", "pp", "phrase"):
+                return False
+            state, pending = ("phrase" if state in ("pp", "phrase") else "after"), False
+        elif kind == "possessive":
+            if pending or state not in ("after", "phrase"):
+                return False
+            state = "pp" if state == "phrase" else "noun"
+        elif listing or kind in ("open", "close", "stop"):
+            if pending or state in ("noun", "pp", "to", "label"):
+                return False
+            state = "clause" if listing or kind == "open" else "after"
+        elif kind != "word" or state == "label":
+            return False
+        elif word in _TAIL_COMPLEMENTS and state in ("after", "clause", "phrase") and not pending:
+            state = "after"
+        elif word in _TAIL_DETERMINERS:
+            state = "pp" if state in ("pp", "phrase", "to") else "noun"
+        elif word in _TAIL_PREPOSITIONS or word == "to":
+            if pending:
+                return False
+            # "to" takes a named or determined object ("to X", "to the rule"),
+            # never a bare word, which would make it an infinitive ("to fix").
+            state = "to" if word == "to" else "pp"
+        elif state == "to":
+            if not (_open_word(word) and _modifier(word)):
+                return False
+            pending = True
+        elif state in ("noun", "pp", "phrase"):
+            if not _open_word(word):
+                return False
+            if _modifier(word):
+                pending = True
+            else:
+                state, pending = ("after" if state == "noun" else "phrase"), False
+        elif state == "after":
+            if word not in _TAIL_NOUNS:
+                return False
+        elif word in _TAIL_LABELS:
+            state = "label"
+        else:
+            # A clause starting with a word: only a complete affirmative
+            # predicate whose object is the next named module is accounted for.
+            module = tail.find(_TAIL_MODULE, token.start())
+            if module < 0 or not _tail_clause(tail[token.start() : module]):
+                return False
+            pos = module + len(_TAIL_MODULE)
+            state = "after"
+    return state in ("after", "clause", "phrase") and not pending
+
+
+def _modules_in(sentence: str, rest: str = "") -> list[tuple[str, str]]:
     """(module, WORK | IMPORT | MENTION | DEFERRED) for each module one sentence of plain text names.
 
     The words between the start of the module's own clause and the module
     decide: "import X", "do not import X", "mirroring the existing X". A list
-    ("a.yaml, b.yaml and c.yaml") shares the first module's kind.
+    ("a.yaml, b.yaml and c.yaml") shares the first module's kind. ``rest`` is
+    the remainder of the grammatical sentence after this semicolon clause: a
+    module is released from work only when no predicate after it, there or in
+    its own clause, can write to it.
     """
     out: list[tuple[str, str]] = []
     matches = [m for m in _MODULE_NAME.finditer(sentence) if not m.group("dir")]
+    following = _MODULE_NAME.sub(_TAIL_MODULE, rest)
     # Invariant P1.2: a removal governs every subsequent module until a genuine
     # new predicate starts a clause, regardless of coordination or prepositions.
     leads = _clause_leads(sentence, matches)
@@ -536,6 +717,7 @@ def _modules_in(sentence: str) -> list[tuple[str, str]]:
     for m, governing in zip(matches, leads, strict=False):
         gap = "" if governing.removal else sentence[last_end : m.start()]
         after = "" if governing.removal else sentence[m.end() :]
+        released_by_after = False  # a complete predicate after the module decided its kind
         if governing.removal:
             # Invariant P1.3: a removal's source module is WORK whatever the
             # object names, including blocked_by metadata and deferrals. Only
@@ -552,10 +734,12 @@ def _modules_in(sentence: str) -> list[tuple[str, str]]:
             comparison = re.fullmatch(r"as", lead.strip(), re.I) and re.fullmatch(
                 r"\s+(?:does|do|did)[.!?]?\s*", after, re.I
             )
+            deferred_after = not lead.strip() and _DEFERRED_AFTER.fullmatch(after)
             if _DESTINATION.search(gap) and (requests or out):
                 kind = WORK
-            elif _AFFIRMATIVE_DEFERRAL.fullmatch(lead) or (not lead.strip() and _DEFERRED_AFTER.fullmatch(after)):
+            elif _AFFIRMATIVE_DEFERRAL.fullmatch(lead) or deferred_after:
                 kind = DEFERRED
+                released_by_after = bool(deferred_after)
             elif _AFFIRMATIVE_IMPORT.fullmatch(lead):
                 kind = IMPORT
             elif _DEFERS.search(tail) or _IMPORTS.search(tail) or _DEFERRED_AFTER.match(after):
@@ -576,13 +760,19 @@ def _modules_in(sentence: str) -> list[tuple[str, str]]:
                 relation = re.fullmatch(r"using (?:the )?relation\s*\(", own_lead, re.I) and re.fullmatch(
                     r"\)\s+for the total[.!?]?\s*", after, re.I
                 )
-                described = (
-                    _MENTIONS.fullmatch(own_lead)
-                    or (not own_lead and _MENTIONED_AFTER.fullmatch(after))
-                )
+                described_after = not own_lead and _MENTIONED_AFTER.fullmatch(after)
+                described = _MENTIONS.fullmatch(own_lead) or described_after
                 # Unknown predicates never become descriptions merely because
                 # they contain "existing" or the module later says "is".
                 kind = MENTION if described or aside or relation or comparison else WORK
+                released_by_after = bool(described_after or aside or relation or comparison)
+        if kind != WORK:
+            # Invariant (round 11, P1.1): the complete predicate decides. A
+            # release survives only if the rest of the sentence after the
+            # module is accounted for without a predicate that could write to it.
+            own_tail = "" if released_by_after else _MODULE_NAME.sub(_TAIL_MODULE, sentence[m.end() :])
+            if not _tail_accounted(own_tail + ("; " + following if following else "")):
+                kind = WORK
         out.append((normal_module(m.group(0)), kind))
         last_end = m.end()
     return out
@@ -664,9 +854,9 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
                 add(same, targets)
     # Inside a finding, a module and a citation named in one sentence go together too:
     # "Re-encode uk/policies/govuk/x.yaml (corpus uk/guidance/govuk/x) in place".
-    for sentence in _sentences(asked):
+    for sentence, rest in _clauses(asked):
         here = _corpus_citations(sentence)
-        for module, kind in _modules_in(sentence):
+        for module, kind in _modules_in(sentence, rest):
             same = [c for c in here if c.split("/")[0] == module_jurisdiction(module)]
             if kind == WORK and same and module not in paired:
                 paired[module] = same
@@ -675,8 +865,8 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     # (federal US and UK only). Work on a module with no citation to be found is
     # held: the plan can't say what to dispatch for it.
     witnessed = {normal_module(module_path_for(c)): c for c in reversed(cites)}
-    for sentence in _sentences(asked):
-        for module, kind in _modules_in(sentence):
+    for sentence, rest in _clauses(asked):
+        for module, kind in _modules_in(sentence, rest):
             if kind in (WORK, IMPORT):
                 add([module], modules)
             if kind != WORK:
