@@ -601,6 +601,42 @@ def _declaration_text(finding: str) -> str:
     return _DECLARATION_ANNOTATION.sub(lambda m: m[0].replace("[", "").replace("]", ""), finding)
 
 
+def _input_column(block) -> bool:
+    """Does a table header's input column reach a declaration in this data row?
+
+    Invariant (round 11, P1.2): a column whose header designates an input
+    classifies every declaration in that column's data rows as an input, with
+    or without outer pipes, emphasis or code spans in the header. When the row
+    does not line up with the header, the column scope is ambiguous: read input.
+    """
+    if not block.header:
+        return False
+    columns = [n for n, cell in enumerate(block.header) if re.search(r"\binputs?\b", _declaration_text(cell), re.I)]
+    if not columns:
+        return False
+    if not block.cells or len(block.cells) != len(block.header):
+        return True
+    cells = [_declaration_text(cell) for cell in block.cells]
+    spans, text = [], ""
+    for cell in cells:
+        text += " | " if text or spans else ""
+        spans.append((len(text), len(text) + len(cell)))
+        text += cell
+    matches = list(_NAMED_OUTPUT.finditer(text))
+    names = {
+        name.lower()
+        for match in matches
+        for name in re.findall(r"\b[a-z][a-z0-9]*_[a-z0-9_]+\b|(?<=#)[a-z][a-z0-9_]*", match[0], re.I)
+    }
+    for n in columns:
+        start, end = spans[n]
+        if any(match.start() < end and match.end() > start for match in matches):
+            return True
+        if any(re.search(rf"(?<![\w#]){re.escape(name)}(?!\w)", cells[n], re.I) for name in names):
+            return True
+    return False
+
+
 def _output_units(finding: str) -> list[str]:
     """Declarations can supply evidence only in units with no input designation.
 
@@ -610,7 +646,7 @@ def _output_units(finding: str) -> list[str]:
     """
     out: list[str] = []
     for block in markdown_units(finding):
-        if block.table_header:
+        if block.table_header or _input_column(block):
             continue
         text = _declaration_text(block.text)
         units = split_sentences(text) if block.paragraph else [text]
