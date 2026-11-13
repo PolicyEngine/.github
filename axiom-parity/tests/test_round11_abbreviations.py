@@ -9,7 +9,7 @@ from test_round9_outputs import PAD
 
 from axiom_parity.check import Context, run_check
 from axiom_parity.drain import WORK, _clauses, _modules_in, issue_inputs, plain
-from axiom_parity.issue_lint import lint_issue
+from axiom_parity.issue_lint import _TODO, lint_issue
 from axiom_parity.policy_paths import PolicyPaths
 from axiom_parity.text_units import _ABBREVIATION, split_sentences
 
@@ -93,7 +93,10 @@ def test_a_real_sentence_end_still_splits():
             lambda p: f"{p[0]}{p[1]}"
         ),
         st.tuples(WORD, st.text(alphabet=LETTERS, min_size=1, max_size=2)).map(lambda p: f"{p[0]}_{p[1]}"),
-    ).filter(lambda token: not _ABBREVIATION.fullmatch(token + ".")),
+    )
+    # A placeholder word (TBD, TODO, FIXME, TBC) makes the issue unready on its
+    # own, so the domain leaves it out.
+    .filter(lambda token: not _ABBREVIATION.fullmatch(token + ".") and not _TODO.search(token)),
 )
 @settings(max_examples=300, deadline=None, database=None)
 def test_a_long_token_still_ends_the_sentence(token):

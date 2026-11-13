@@ -626,6 +626,10 @@ def _input_column(block) -> bool:
     # the column is unknown: read input (review r11).
     if "\\|" in block.text or any(cell.endswith("\\") for cell in block.header):
         return True
+    # A pipe inside a code span in the header splits the header in GFM, which
+    # shifts every later column (review r13).
+    if any("|" in cell for cell in block.header):
+        return True
     if len(_cells(block.text)) != len(block.cells):
         return True
     cells = [_declaration_text(cell) for cell in block.cells]
@@ -704,8 +708,12 @@ _RULE_NAME = re.compile(
 )
 
 
+_URL = re.compile(r"\b(?:https?|ftp)://[^\s)>\]]*", re.IGNORECASE)
+
+
 def _rule_names(text: str) -> set[str]:
-    return {match.group(0).lower() for match in _RULE_NAME.finditer(text)}
+    # A URL's fragment or query ("…/it196i.pdf#page=2", "?doc_id=12") names no rule (review r13).
+    return {match.group(0).lower() for match in _RULE_NAME.finditer(_URL.sub(" ", text))}
 
 
 def _retained_evidence(text: str) -> list[_Evidence]:
