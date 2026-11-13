@@ -638,6 +638,41 @@ def _input_column(block) -> bool:
     return False
 
 
+# A source predicate names the input it reads: "using the leaf input wages".
+# One naming word may stand before the name ("input named wages"); the name
+# must then close the phrase, before punctuation, the end or a preposition.
+_SOURCE = re.compile(
+    r"\busing\s+(?:(?:the|an?|existing)\s+)?(?:[\w-]+\s+){0,3}input\s+"
+    r"(?:(?:named|called|labell?ed|titled|known\s+as)\s+)?(?P<name>[a-z][a-z0-9_]*)\b"
+    r"(?=\s*(?:[.,;:)!?]|$)|\s+(?:and|or|for|from|in|into|to|as|at|of|with|by|per|on|under)\b)",
+    re.IGNORECASE,
+)
+# Words that designate, name or qualify an input never stand in for its identifier.
+_NOT_A_NAME = frozenset(
+    "as is are for to from and or named called labelled labeled titled known input inputs output outputs leaf "
+    "scoped existing new the a an it this that its rule value amount name same declared supplied".split()
+)
+
+
+def _distinct_source(source: re.Match[str], declared: set[str], unit: str) -> bool:
+    """Does a source predicate resolve to an identifier distinct from every declared name?
+
+    Invariant (round 11, P1.4): a designation word, a naming word, a participle
+    or an unresolved phrase never stands in for the source's identifier. Only a
+    resolved identifier that differs from every declared name establishes that
+    the input designation in the unit belongs to another name, and only while
+    no declared name follows it in the unit ("input namely, a_b_c" and "input
+    x for a_b_c" stay ambiguous, so they read input).
+    """
+    name = source["name"].lower()
+    if name in declared or name in _NOT_A_NAME:
+        return False
+    if "_" not in name and re.search(r"(?:ed|ing)$", name):
+        return False
+    after = unit[source.start("name") :]
+    return not any(re.search(rf"(?<![\w#]){re.escape(other)}(?!\w)", after, re.I) for other in declared)
+
+
 def _output_units(finding: str) -> list[str]:
     """Declarations can supply evidence only in units with no input designation.
 
@@ -660,14 +695,7 @@ def _output_units(finding: str) -> list[str]:
                 for name in re.findall(r"\b[a-z][a-z0-9]*_[a-z0-9_]+\b|(?<=#)[a-z][a-z0-9_]*", match[0], re.I)
             }
             sources = [
-                source
-                for source in re.finditer(
-                    r"\busing\s+(?:(?:the|an?|existing)\s+)?(?:[\w-]+\s+){0,3}input\s+([a-z][a-z0-9_]*)\b",
-                    unit,
-                    re.I,
-                )
-                if declared
-                and source[1].lower() not in declared | {"as", "is", "are", "for", "to", "from", "and", "or"}
+                source for source in _SOURCE.finditer(unit) if declared and _distinct_source(source, declared, unit)
             ]
             if any(
                 not any(source.start() <= label.start() < source.end() for source in sources)
