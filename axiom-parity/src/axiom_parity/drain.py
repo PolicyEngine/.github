@@ -30,7 +30,7 @@ from .issue_lint import (
     review_findings,
 )
 from .refs import norm_dashes
-from .text_units import markdown_units, split_sentences
+from .text_units import TextUnit, markdown_units, split_sentences
 
 # Measured model spend per completed targeted-signed-reencode run, GPT-6 Luna
 # with Sol escalation (axiom-encode#1699), 2026-09-25 to 2026-10-10: 121 runs,
@@ -577,16 +577,150 @@ def _clauses(text: str) -> list[tuple[str, str]]:
     widest sentence, so a predicate after a legal locator ("26 U.S.C. 32 and
     fix it") still reaches the module.
     """
-    out: list[tuple[str, str]] = []
-    for unit in markdown_units(text):
-        for sentence in split_sentences(unit.text):
-            parts = [
-                part
-                for narrow in split_sentences(sentence, joins=False)
-                for part in re.split(r";\s*", narrow)
-                if part.strip()
-            ]
-            out.extend((part, "; ".join(parts[n + 1 :])) for n, part in enumerate(parts))
+    return [
+        clause
+        for unit in markdown_units(text)
+        for sentence in split_sentences(unit.text)
+        for _, clauses in _sentence_clauses(sentence)
+        for clause in clauses
+    ]
+
+
+def _sentence_clauses(sentence: str) -> list[tuple[str, list[tuple[str, str]]]]:
+    """(narrowest sentence, its (clause, rest) pairs) for each narrowest sentence of one grammatical sentence.
+
+    Invariant (round 14, P1.2): a separator that ends the sentence leaves it
+    open. An empty semicolon part is kept in the rest as a bare ``;``, so a
+    module before "See X;" over a nested "- fix it." sees the sentence stop
+    after a separator and stays work.
+    """
+    narrows = split_sentences(sentence, joins=False)
+    parts = [(n, part) for n, narrow in enumerate(narrows) for part in re.split(r";\s*", narrow)]
+    evidence = [part if part.strip() else ";" for _, part in parts]
+    grouped: list[tuple[str, list[tuple[str, str]]]] = [(narrow, []) for narrow in narrows]
+    for k, (n, part) in enumerate(parts):
+        if part.strip():
+            grouped[n][1].append((part, "; ".join(evidence[k + 1 :])))
+    return grouped
+
+
+# Invariant (round 14, P1.2): a sentence that ends on a separator (a semicolon,
+# colon, comma, dash, slash, ampersand, "and", "or", "then", an opening
+# bracket, an ellipsis, or another word that cannot end one), before any closing stop,
+# leaves its predicate open, and the next unit continues it: a nested or
+# sibling list item, the list an open paragraph introduces, a following line,
+# paragraph or sentence. A module in a continuation reads at least as
+# conservatively as it would with the open sentence written inline before it.
+_OPEN_END = re.compile(
+    r"(?:[,;:/&+(\[{—–-]|\.{2,}|…|(?<![\w'’.\-])(?:and|or|nor|but|then|plus|yet|to|into|onto|of|for|with|from|by|at|"
+    r"under|per|via|within|than|as|the|a|an|its|their|every|which|whose|whom|if|unless|because|whereas|"
+    r"although|whether|must|should|shall|would|could|might|not|including|namely|viz|e\.g|i\.e|follows|"
+    r"following))[\s.!?*_\"'”’`]*\Z"
+)
+
+
+def _open_context(sentence: str) -> str | None:
+    """The clause an open sentence hands to what follows, or ``None`` when it closes.
+
+    It is the sentence's last semicolon clause, as inline text would read it:
+    after "Fix these;" the next item starts its own clause (""), after "Fix
+    the following:" it continues "Fix the following:".
+    """
+    if not _OPEN_END.search(sentence):
+        return None
+    return sentence.rsplit(";", 1)[1].strip() if ";" in sentence else sentence.strip()
+
+
+@dataclass(frozen=True)
+class _Continuation:
+    """An open unit, and the units its predicate reaches."""
+
+    origin: int  # the open unit's index
+    indent: int | None  # an open list item's marker indentation; None for a paragraph or row
+    context: str  # the clause the continuation reads after
+
+    def reaches(self, unit: TextUnit) -> bool:
+        """After the next unit: an open item reaches its nested and later sibling items; an open
+        paragraph or row reaches the list or table it introduces."""
+        if self.indent is None:
+            return unit.indent is not None or unit.cells is not None
+        return unit.indent is not None and unit.indent >= self.indent
+
+
+# A sentence or unit that starts on a separator or a list word ("and fix it",
+# "; fix it", "— then fix it") continues the one before it, which is open too.
+_LEADING_CONTINUATION = re.compile(r"\s*(?:[,;:/&—–]|-(?=\s)|(?:and|or|nor|but|then|plus)\b)", re.IGNORECASE)
+# A unit that no stop closes ("- See X" over nested items, a paragraph before
+# its list) introduces the items after it, so it is open too.
+_TERMINATED = re.compile(r"[.!?][\"'”’)\]}*_`]*\s*\Z")
+
+
+def _introduces(unit: TextUnit, following: TextUnit | None) -> bool:
+    """Does an unterminated unit introduce the next one: a deeper item, or a list after a paragraph?
+
+    A heading or a table row is a block of its own, so it introduces nothing
+    unless a separator leaves it open.
+    """
+    if following is None or following.indent is None or _TERMINATED.search(unit.text):
+        return False
+    if unit.indent is not None:
+        return following.indent > unit.indent
+    return unit.cells is None and not re.match(r"\s{0,3}#{1,6}(?:\s|$)", unit.text)
+
+
+def _merged(found: list[tuple[str, str]], other: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """``found`` with each module work where ``other``, a reading of the same modules, says so."""
+    return [
+        (module, WORK if WORK in (kind, also) else kind) for (module, kind), (_, also) in zip(found, other, strict=True)
+    ]
+
+
+def _readings(text: str) -> list[tuple[str, str, list[tuple[str, str]]]]:
+    """(clause, rest, its modules' readings) for each semicolon clause, continuations included.
+
+    A clause pairs citations only within itself, as ``_clauses`` gives it. Its
+    modules read as ``_modules_in`` reads them. The first clause of a sentence
+    that continues an open sentence or unit also reads after that open clause,
+    and a sentence that the next one continues ("See X." before "- and fix
+    it.") also reads with the next one in its rest. A module is work when any
+    reading says so, so a continuation never releases what its own unit holds.
+    """
+    units = markdown_units(text)
+    # A narrowest sentence ("Fix the following or." before "See X.") can end
+    # open inside a wider one, so the chain runs over the narrowest.
+    narrows = [
+        [pair for sentence in split_sentences(unit.text) for pair in _sentence_clauses(sentence)] for unit in units
+    ]
+    out: list[tuple[str, str, list[tuple[str, str]]]] = []
+    open_units: list[_Continuation] = []
+    for index, unit in enumerate(units):
+        open_units = [o for o in open_units if index == o.origin + 1 or o.reaches(unit)]
+        carry = " ".join(o.context for o in open_units if o.context)
+        own: str | None = None  # this unit's open chain, while its sentences end open
+        introduces = _introduces(unit, units[index + 1] if index + 1 < len(units) else None)
+        for position, (narrow, clauses) in enumerate(narrows[index]):
+            later = narrows[index][position + 1 :] or (narrows[index + 1][:1] if index + 1 < len(units) else [])
+            onward = later[0][0] if later and _LEADING_CONTINUATION.match(later[0][0]) else ""
+            last = position == len(narrows[index]) - 1
+            if last and introduces and not onward:
+                onward = ";"  # what the items say is the rest of this predicate
+            for number, (clause, rest) in enumerate(clauses):
+                found = _modules_in(clause, rest)
+                if number == 0 and carry and found:
+                    found = _merged(found, _modules_in(f"{carry} {clause}", rest)[-len(found) :])
+                if onward and found:
+                    found = _merged(found, _modules_in(clause, f"{rest}; {onward}" if rest else onward))
+                out.append((clause, rest, found))
+            opening = _open_context(narrow)
+            if opening is None and last and introduces:
+                opening = narrow.rsplit(";", 1)[-1].strip()
+            if opening is None:
+                carry, own = "", None
+            else:
+                carry = f"{carry} {opening}".strip()
+                own = f"{own or ''} {opening}".strip()
+        if own is not None:
+            open_units.append(_Continuation(index, unit.indent, own))
     return out
 
 
@@ -631,6 +765,7 @@ _TAIL_TOKEN = re.compile(
     r"|(?P<separator>[,;:/&—–]|-(?=\s))"
     r"|(?P<open>[(\[{])"
     r"|(?P<close>[)\]}])"
+    r"|(?P<ellipsis>\.{2,}|…)"  # trails off: what it leaves out is not accounted for
     r"|(?P<stop>[.!?]+)"
     r"|(?P<mark>[\"'“”‘’])"
     r"|(?P<other>.)",
@@ -1094,6 +1229,11 @@ def _tail_accounted(tail: str) -> bool:
         elif listing or kind in ("open", "close", "stop"):
             if pending or state in ("noun", "pp", "to", "label"):
                 return False
+            # "See X and." and "(See X;)": a stop or a closing bracket right
+            # after a separator, a list word or an opening bracket leaves the
+            # predicate open (review r14, P1.2).
+            if kind in ("close", "stop") and state == "clause":
+                return False
             if listing and state in ("after", "clause"):
                 listed = opened if before_list is None else before_list
             opened = opened or listing or kind == "open"
@@ -1325,9 +1465,10 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
                 add(same, targets)
     # Inside a finding, a module and a citation named in one sentence go together too:
     # "Re-encode uk/policies/govuk/x.yaml (corpus uk/guidance/govuk/x) in place".
-    for sentence, rest in _clauses(asked):
+    readings = _readings(asked)
+    for sentence, _, found in readings:
         here = _corpus_citations(sentence)
-        for module, kind in _modules_in(sentence, rest):
+        for module, kind in found:
             same = [c for c in here if c.split("/")[0] == module_jurisdiction(module)]
             if kind == WORK and same and module not in paired:
                 paired[module] = same
@@ -1336,8 +1477,8 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     # (federal US and UK only). Work on a module with no citation to be found is
     # held: the plan can't say what to dispatch for it.
     witnessed = {normal_module(module_path_for(c)): c for c in reversed(cites)}
-    for sentence, rest in _clauses(asked):
-        for module, kind in _modules_in(sentence, rest):
+    for _, _, found in readings:
+        for module, kind in found:
             if kind in (WORK, IMPORT):
                 add([module], modules)
             if kind != WORK:
