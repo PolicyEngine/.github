@@ -72,7 +72,7 @@ Model spend is taken from the "Model spend for this run" summary that every `tar
 
 A run with no spend summary stopped before the model step; it counts as $0 in the mean.
 
-The 453 runs covered 98 citations. Eight of those citations have a manifest record on rulespec-us `main` at `16a6677`. The count reads all 5,237 manifest files, 1,310 under the root `.axiom/encoding-manifests/` and 3,927 under `<jurisdiction>/.axiom/encoding-manifests/`, including records nested inside a manifest file. Measured runs wrote four of the eight records:
+The 453 runs covered 98 citations. Eight of those citations have a manifest record on rulespec-us `main` at `16a6677`. The count reads all 5,238 manifest files, 1,310 under the root `.axiom/encoding-manifests/` and 3,928 under `<jurisdiction>/.axiom/encoding-manifests/`, including records nested inside a manifest file. Measured runs wrote four of the eight records:
 
 | Citation | Runs (succeeded) | Model spend | Manifest generated | By run |
 |---|---|---|---|---|
