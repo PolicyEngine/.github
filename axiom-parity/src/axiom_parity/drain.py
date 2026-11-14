@@ -605,10 +605,21 @@ def _sentences(text: str) -> list[str]:
 # object ("and fix Y"). A verb, pronoun, auxiliary, relative or any other word
 # the grammar does not account for may start a predicate that writes to the
 # module ("and fix it", "then edit it", "which must change"), so it reads WORK.
+#
+# Invariant (round 14, P1.1): a new clause that writes resolves its
+# destination only to an explicitly named module. A request whose destination
+# is an anaphor ("the former module", "the latter", "the same", "both", "the
+# above", "that file"), a pronoun, a description ("the pipeline"), a directory
+# or nothing at all ("and add Y") counts as writing to every module named
+# earlier in its sentence, so each of them reads WORK.
 _TAIL_MODULE = ""
+# A directory ("us/policies/income_tax/") names no single module: it reads as a
+# path and never resolves a destination.
+_TAIL_DIRECTORY = "\ue001"
 _TAIL_TOKEN = re.compile(
     r"(?P<space>\s+)"
     r"|(?P<module>)"
+    r"|(?P<directory>\ue001)"
     r"|(?P<quote>\"[^\"\n]*\"|“[^”\n]*”)"
     r"|(?P<path>(?<![\w/])[a-z]{2}(?:-[a-z0-9]+)*[/:][\w./:\-#]*\w)"
     r"|(?P<ident>#[\w.]+|[A-Za-z][A-Za-z0-9]*_\w*)"
@@ -633,10 +644,19 @@ _TAIL_PREPOSITIONS = frozenset(
     {"for", "of", "in", "into", "on", "at", "under", "per", "with", "from", "by", "via", "as", "within", "over"}
 )
 # Prenominal adjectives that a participle test would reject; they must precede a noun.
+# Any other present participle before a named object takes it as a verb would.
 _TAIL_ADJECTIVES = frozenset(
     {
         "existing",
+        "preexisting",
+        "pre-existing",
         "matching",
+        "governing",
+        "pending",
+        "outstanding",
+        "resulting",
+        "prevailing",
+        "following",
         "underlying",
         "corresponding",
         "remaining",
@@ -821,23 +841,185 @@ _TAIL_FUNCTION_WORDS = frozenset(
         "neither",
     }
 )
+# Words that point back at something named earlier. The grammar cannot say
+# which module they name, so a tail holding one is not accounted for.
+_TAIL_ANAPHORS = frozenset(
+    {
+        "former",
+        "latter",
+        "above",
+        "abovementioned",
+        "aforementioned",
+        "aforesaid",
+        "said",
+        "same",
+        "both",
+        "previous",
+        "preceding",
+        "prior",
+        "earlier",
+        "foregoing",
+        "other",
+        "second",
+        "third",
+        "last",
+        "respective",
+        "respectively",
+    }
+)
+# Prepositions that name where something is written. After a new clause has
+# started, or after anything but the released module itself, the object of one
+# must be an explicitly named module: "the fix to the pipeline" may name it.
+_TAIL_DESTINATIONS = frozenset({"to", "into", "onto", "in", "within", "inside"})
+# "to X", "into the existing X", "in existing and matching X": a determiner and
+# closed adjectives may stand before the named module.
+_EXPLICIT_OBJECT = re.compile(
+    r"\s+(?:(?:the|a|an)\s+)?(?:(?:"
+    + "|".join(sorted(map(re.escape, _TAIL_ADJECTIVES), key=len, reverse=True))
+    + r")(?:\s*,\s*|\s+(?:(?:and|or)\s+)?))*\ue000",
+    re.IGNORECASE,
+)
 # A new clause whose complete predicate names a later module as its object.
 _TAIL_OBJECT_REQUEST = re.compile(
     r"\s*(?:(?:then|also|and|or|but)\s+)*(?:" + _REQUESTS.pattern + r")\s+(?:(?:the|a|an)\s+)?",
     re.IGNORECASE,
 )
 _TAIL_CLAUSE_START = re.compile(r"\s*(?:(?:then|also|and|or|but)\s+)*", re.IGNORECASE)
+# A request that writes its own object: "and fix Y" writes Y and nothing else.
+_TAIL_EDIT = re.compile(
+    r"\s*(?:(?:then|also|and|or|but)\s+)*(?:re-?encode|encode|create|write|repair|extend|change|correct|update|"
+    r"complete|finali[sz]e|fix|split)\s+(?:(?:the|a|an)\s+)?",
+    re.IGNORECASE,
+)
+_TAIL_REMOVAL = re.compile(r"\s*(?:(?:then|also|and|or|but)\s+)*(?:remove|delete)\b", re.IGNORECASE)
+# Clauses that write nothing: a pointer at the module ("and see Y", "and keep
+# Y") or a denial of an import ("and do not import Y"). "Follow Y" and "mirror
+# Y" direct a write, so they are not pointers.
+_TAIL_REFERENCE = re.compile(
+    "(?:"
+    + "|".join(re.escape(head).replace(r"\ ", r"\s+") for head in _MENTION_HEADS if head not in {"follow", "mirror"})
+    + ")"
+    + _REFERENCE_TAIL
+    + r"\Z",
+    re.IGNORECASE,
+)
+_TAIL_DENIAL = re.compile(
+    r"\s*(?:(?:do(?:es)?\s+not|don't|must\s+not|never|not)\s+import|without\s+importing|"
+    r"(?:rather\s+than|instead\s+of)\s+import(?:ing)?)\s*[:=]?\s*[\[(]*\s*",
+    re.IGNORECASE,
+)
+_TAIL_STEP = re.compile(r"(?:\s|,|&|\b(?:and|or)\b)+", re.IGNORECASE)
 
 
-def _tail_clause(lead: str) -> bool:
-    """A complete affirmative predicate whose object is the module right after ``lead``."""
+def _tail_clause(lead: str) -> str | None:
+    """How a new clause whose object is the module right after ``lead`` reads.
+
+    ``None`` when no complete affirmative predicate accounts for it;
+    ``"reference"`` when it only points at the module or denies an import;
+    ``"edit"`` when it is a request on the module itself; ``"removal"`` or
+    ``"write"`` for any other accepted predicate (a request, an import or
+    source predicate, a declaration, a predicate on a pronoun), which writes
+    to a destination the clause must name.
+    """
     rest = lead[_TAIL_CLAUSE_START.match(lead).end() :]
-    return bool(
+    if _TAIL_REFERENCE.fullmatch(rest.strip()) or _TAIL_DENIAL.fullmatch(rest):
+        return "reference"
+    if _TAIL_EDIT.fullmatch(lead):
+        return "edit"
+    if (
         _TAIL_OBJECT_REQUEST.fullmatch(lead)
         or _AFFIRMATIVE_IMPORT.fullmatch(rest)
         or _AFFIRMATIVE_DEFERRAL.fullmatch(rest)
         or _MENTIONS.fullmatch(rest.strip())
-    )
+    ):
+        return "removal" if _TAIL_REMOVAL.match(lead) else "write"
+    return None
+
+
+def _tail_text(text: str) -> str:
+    """``text`` with each named module as ``_TAIL_MODULE`` and each directory as ``_TAIL_DIRECTORY``."""
+    return _MODULE_NAME.sub(lambda m: _TAIL_DIRECTORY if m.group("dir") else _TAIL_MODULE, text)
+
+
+def _aside_end(tail: str, pos: int) -> int | None:
+    """The end of a bracketed aside after a written object, if it holds only references.
+
+    ``pos`` follows the opening bracket. Paths, modules, rule names, numbers,
+    locators and labels ("corpus") are accounted for; any other word is not.
+    """
+    depth = 1
+    while pos < len(tail):
+        token = _TAIL_TOKEN.match(tail, pos)
+        kind, word = token.lastgroup, token.group(0).lower()
+        pos = token.end()
+        if kind == "open":
+            depth += 1
+        elif kind == "close":
+            depth -= 1
+            if not depth:
+                return pos
+        elif not (
+            kind in ("space", "mark", "module", "directory", "path", "ident", "number", "abbrev", "locator")
+            or (kind == "separator" and word in {",", ";", "/", "&"})
+            or (kind == "word" and (word in _TAIL_LABELS or word in {"and", "or"}))
+        ):
+            return None
+    return None
+
+
+def _written_clause_end(tail: str, pos: int, clause: str) -> int | None:
+    """Where a writing clause in a tail ends, or ``None`` when its destination is unresolved.
+
+    Invariant (round 14, P1.1): ``pos`` follows the clause's object, an
+    explicitly named module. Accounted for are further named objects ("fix Y,
+    Z and W"), compound nouns ("Y formulas"), rule names, a bracketed aside of
+    references, and destination phrases whose object is an explicitly named
+    module ("to Z", "into the Z"; "from Z" for a removal). An edit writes its
+    own object; every other writing clause needs such a destination. The clause
+    ends at the end of the sentence, a stop, a closing bracket, a semicolon, or
+    a list word or comma that starts a new clause on a named module. Anything
+    else (an anaphor, a pronoun, a description, a further noun phrase, "in
+    place") leaves the destination unresolved.
+    """
+    resolved = clause == "edit"
+    destinations = _TAIL_DESTINATIONS | ({"from"} if clause == "removal" else set())
+    while pos < len(tail):
+        token = _TAIL_TOKEN.match(tail, pos)
+        kind, text = token.lastgroup, token.group(0)
+        word = text.lower()
+        if kind in ("space", "mark") or kind == "ident" or (kind == "word" and word in _TAIL_NOUNS):
+            pos = token.end()
+        elif kind == "word" and (word in destinations or word == "from"):
+            target = _EXPLICIT_OBJECT.match(tail, token.end())
+            # "from Z" is a source an edit reads ("update Y from Z") or the
+            # module a removal writes, which reads as work. Any other write
+            # naming it ("move Y from Z to W") writes Z too, though Z reads as
+            # an import, so its destination is not resolved.
+            if not target or (word == "from" and clause not in ("edit", "removal")):
+                return None
+            resolved = resolved or word in destinations
+            pos = target.end()
+        elif kind == "open":
+            end = _aside_end(tail, token.end())
+            if end is None:
+                return None
+            pos = end
+        elif (kind == "separator" and text in {",", "&"}) or (kind == "word" and word in {"and", "or"}):
+            step = _TAIL_STEP.match(tail, pos).end()
+            if tail.startswith(_TAIL_MODULE, step):
+                pos = step + len(_TAIL_MODULE)  # another named object or destination
+                continue
+            # A new clause on a named module ends this one. A noun phrase here
+            # would be another object, which no module names.
+            module = tail.find(_TAIL_MODULE, step)
+            if module < 0 or _TAIL_TOKEN.match(tail, step).lastgroup != "word" or not _tail_clause(tail[step:module]):
+                return None
+            return pos if resolved else None
+        elif kind in ("stop", "close") or (kind == "separator" and text == ";"):
+            return pos if resolved else None
+        else:
+            return None
+    return pos if resolved else None
 
 
 def _open_word(word: str) -> bool:
@@ -854,19 +1036,30 @@ def _tail_accounted(tail: str) -> bool:
     """Is the rest of a sentence after a module accounted for without any predicate on it?
 
     ``tail`` starts right after the module, with later modules replaced by
-    ``_TAIL_MODULE``. States: ``after`` follows a module or a head noun, where
-    only a closed compound noun or complement may follow directly; ``clause``
-    starts a new clause, where only a phrase, a list member or a complete
-    affirmative predicate on a named module may follow; ``noun`` follows a
-    determiner and needs one head; ``pp`` follows a preposition and needs a
-    head, after which ``phrase`` admits further nouns; ``to`` admits only a
-    determiner, a modifier or a name; ``label`` needs a path or name. A participle or adjective is only ever a modifier waiting for its
-    head: one left without a head ("for fixing", "and its rule updated") is
-    unaccounted for.
+    ``_TAIL_MODULE`` and directories by ``_TAIL_DIRECTORY``. States: ``after``
+    follows a module or a head noun, where only a closed compound noun or
+    complement may follow directly; ``clause`` starts a new clause, where only
+    a phrase, a list member or a complete affirmative predicate on a named
+    module may follow; ``noun`` follows a determiner and needs one head; ``pp``
+    follows a preposition and needs a head, after which ``phrase`` admits
+    further nouns; ``to`` admits only a determiner, a modifier or a name;
+    ``label`` needs a path or name. A participle or adjective is only ever a
+    modifier waiting for its head: one left without a head ("for fixing", "and
+    its rule updated") is unaccounted for, and so is a participle that takes a
+    named object ("for adding Y"). A word pointing back at something named
+    earlier ("the former", "the same", "both") is unaccounted for. After a new
+    clause starts, or after anything but the module itself, a destination
+    preposition ("to", "into", "in") needs an explicitly named module as its
+    object. A new clause that writes must resolve its destination to an
+    explicitly named module (``_written_clause_end``).
     """
     tail = re.sub(r"\bas is\b", "as-is", tail, flags=re.IGNORECASE)
     state, pending = "after", False
     head = False  # the last token was a head word of a phrase
+    gerund = False  # a pending modifier is a present participle, which may take an object
+    module_head = True  # the last head was the released module (or a later one) itself
+    opened = False  # a separator, list word or bracket has started a new clause
+    listed = None  # ``opened`` before the separators of a list that may go on with a module
     pos = 0
     while pos < len(tail):
         token = _TAIL_TOKEN.match(tail, pos)
@@ -876,15 +1069,24 @@ def _tail_accounted(tail: str) -> bool:
         if kind in ("space", "mark"):
             continue
         after_head, head = head, False
+        after_module, module_head = module_head, False
+        if kind == "word" and any(part in _TAIL_ANAPHORS for part in word.split("-")):
+            return False
         listing = kind == "separator" or (kind == "word" and word in _TAIL_LIST)
         if pending and listing and word in (",", "and", "or"):
             continue  # coordinated modifiers share the head that follows them
-        if kind in ("module", "path", "ident", "number", "abbrev", "locator"):
+        before_list, listed = listed, None
+        if kind in ("module", "directory", "path", "ident", "number", "abbrev", "locator"):
+            if gerund:
+                return False  # "for adding Y": the participle takes Y as its object
+            if kind == "module" and before_list is not None:
+                opened = before_list  # "X or Y": a list of modules shares X's own predicate
             state, pending = ("phrase" if state in ("pp", "phrase", "to") else "after"), False
+            module_head = kind == "module" and state == "after"
         elif kind == "quote":
             if state not in ("noun", "pp", "phrase"):
                 return False
-            state, pending = ("phrase" if state in ("pp", "phrase") else "after"), False
+            state, pending, gerund = ("phrase" if state in ("pp", "phrase") else "after"), False, False
         elif kind == "possessive":
             if pending or state not in ("after", "phrase"):
                 return False
@@ -892,6 +1094,9 @@ def _tail_accounted(tail: str) -> bool:
         elif listing or kind in ("open", "close", "stop"):
             if pending or state in ("noun", "pp", "to", "label"):
                 return False
+            if listing and state in ("after", "clause"):
+                listed = opened if before_list is None else before_list
+            opened = opened or listing or kind == "open"
             state = "clause" if listing or kind == "open" else "after"
         elif kind != "word" or state == "label":
             return False
@@ -904,8 +1109,17 @@ def _tail_accounted(tail: str) -> bool:
             if pending:
                 return False
             state = "pp" if state in ("pp", "phrase", "to") else "noun"
-        elif word in _TAIL_PREPOSITIONS or word == "to":
+        elif word in _TAIL_PREPOSITIONS or word in _TAIL_DESTINATIONS:
             if pending:
+                return False
+            # Only the module's own predicate may place it ("do not import X
+            # into this module"). Elsewhere a destination may name the module,
+            # so it must be named: "and the fix to the pipeline" is unresolved.
+            if (
+                word in _TAIL_DESTINATIONS
+                and (opened or not after_module)
+                and not _EXPLICIT_OBJECT.match(tail, token.end())
+            ):
                 return False
             # "to" takes a named or determined object ("to X", "to the rule"),
             # never a bare word, which would make it an infinitive ("to fix").
@@ -914,6 +1128,7 @@ def _tail_accounted(tail: str) -> bool:
             if not (_open_word(word) and _modifier(word)):
                 return False
             pending = True
+            gerund = gerund or (word.endswith("ing") and word not in _TAIL_ADJECTIVES)
         elif state in ("noun", "pp", "phrase"):
             if not _open_word(word):
                 return False
@@ -924,22 +1139,31 @@ def _tail_accounted(tail: str) -> bool:
                 return False
             if _modifier(word):
                 pending = True
+                gerund = gerund or (word.endswith("ing") and word not in _TAIL_ADJECTIVES)
             else:
-                state, pending = ("after" if state == "noun" else "phrase"), False
+                state, pending, gerund = ("after" if state == "noun" else "phrase"), False, False
                 head = True
         elif state == "after":
             if word not in _TAIL_NOUNS:
                 return False
+            module_head = after_module  # "X formulas" is still X
         elif word in _TAIL_LABELS:
             state = "label"
         else:
             # A clause starting with a word: only a complete affirmative
-            # predicate whose object is the next named module is accounted for.
+            # predicate whose object is the next named module is accounted for,
+            # and one that writes only when its destination is named too.
             module = tail.find(_TAIL_MODULE, token.start())
-            if module < 0 or not _tail_clause(tail[token.start() : module]):
+            clause = _tail_clause(tail[token.start() : module]) if module >= 0 else None
+            if clause is None:
                 return False
             pos = module + len(_TAIL_MODULE)
-            state = "after"
+            if clause != "reference":
+                end = _written_clause_end(tail, pos, clause)
+                if end is None:
+                    return False
+                pos = end
+            state, module_head = "after", True
     # A sentence that stops after a separator, a list word or an opening bracket
     # ("- See X:" over nested items, "See X and") hands its predicate to what
     # follows, which this sentence cannot read (review r11).
@@ -958,7 +1182,7 @@ def _modules_in(sentence: str, rest: str = "") -> list[tuple[str, str]]:
     """
     out: list[tuple[str, str]] = []
     matches = [m for m in _MODULE_NAME.finditer(sentence) if not m.group("dir")]
-    following = _MODULE_NAME.sub(_TAIL_MODULE, rest)
+    following = _tail_text(rest)
     # Invariant P1.2: a removal governs every subsequent module until a genuine
     # new predicate starts a clause, regardless of coordination or prepositions.
     leads = _clause_leads(sentence, matches)
@@ -1017,7 +1241,7 @@ def _modules_in(sentence: str, rest: str = "") -> list[tuple[str, str]]:
             # Invariant (round 11, P1.1): the complete predicate decides. A
             # release survives only if the rest of the sentence after the
             # module is accounted for without a predicate that could write to it.
-            own_tail = "" if released_by_after else _MODULE_NAME.sub(_TAIL_MODULE, sentence[m.end() :])
+            own_tail = "" if released_by_after else _tail_text(sentence[m.end() :])
             if not _tail_accounted(own_tail + ("; " + following if following else "")):
                 kind = WORK
         out.append((normal_module(m.group(0)), kind))
