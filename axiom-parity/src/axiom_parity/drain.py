@@ -1115,6 +1115,10 @@ def _readings(text: str, markdown: str | None = None) -> list[tuple[str, str, li
 #    either, so it never closes an open unit or stands between two closed
 #    ones: it keeps every module work. So does a heading or a code block.
 #
+# Every module in these forms is written in full: findings that give a module
+# by its file name alone after another module's path ("Fix a/d.yaml and
+# c.yaml.") release nothing (``_names_siblings``).
+#
 # Paragraphs are read as CommonMark could read them, never narrower
 # (``_blocks``): a line joins the paragraph above it unless it certainly
 # starts a block of its own, so a lazy line ("- See X" over "  and fix it."
@@ -1204,6 +1208,20 @@ def _release_kind(sentence: str) -> str | None:
 def _inert(sentence: str) -> bool:
     """Does the sentence write nothing: a release form, or a denial on a pronoun?"""
     return _release_kind(sentence) is not None or bool(_FORM_DENIAL.fullmatch(_form(sentence)))
+
+
+def _names_siblings(text: str) -> bool:
+    """Does the text give a module by its file name alone, after another module's path?
+
+    Invariant (round 15): every module a closed form names is written in
+    full. "Fix a/d.yaml and c.yaml." may ask for work on ``b/c.yaml``, which
+    the findings name in full in another place ("See b/c.yaml."), and no rule
+    says which module the writer meant. So findings that give any module by
+    a short sibling name release nothing: the name is spelled out as the
+    sibling, as before, and every module the findings name stays work.
+    """
+    spelled = expand_braces(_EDGE_EMPHASIS.sub("", text.replace("`", "")))
+    return expand_siblings(spelled) != spelled
 
 
 def _requests_named(sentence: str) -> bool:
@@ -1358,6 +1376,8 @@ def _blocks(markdown: str) -> list[_Block]:
 
 def _released(markdown: str) -> dict[str, set[str]]:
     """Each module every one of whose places meets the release conditions above, with the kinds they give it."""
+    if _names_siblings(markdown):
+        return {}
     blocks = _blocks(markdown)
     sentences = [
         [text] if block.kind != "paragraph" else split_sentences(text)
