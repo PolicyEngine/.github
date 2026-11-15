@@ -28,6 +28,7 @@ from .issue_lint import (
     _LIST_MARKER,
     expand_braces,
     lint_issue,
+    one_line_breaks,
     review_findings,
 )
 from .refs import norm_dashes
@@ -1805,7 +1806,8 @@ def _pair_line(line: str) -> tuple[list[str], list[str]]:
 
 
 def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]]) -> IssueInputs:
-    texts = [issue.get("body") or ""] + [c.get("body") or "" for c in comments]
+    # A Unicode line separator inside a line never ends a quoted finding early.
+    texts = [one_line_breaks(t) for t in [issue.get("body") or ""] + [c.get("body") or "" for c in comments]]
     joined = plain("\n".join(texts))
     res = lint_issue(issue, comments)
     cites = _corpus_citations(joined)

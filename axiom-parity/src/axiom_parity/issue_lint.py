@@ -825,8 +825,24 @@ def _named_output(finding: str) -> re.Match[str] | None:
     return None
 
 
+# Characters that ``str.splitlines`` breaks a line at and GitHub renders inside one line.
+_INLINE_BREAKS = dict.fromkeys(map(ord, "\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"), " ")
+
+
+def one_line_breaks(text: str) -> str:
+    """The text with each Unicode line boundary that Markdown keeps inside a line as a space.
+
+    Invariant (round 15): a line ends only where Markdown ends it (LF, CR or
+    CRLF). A vertical tab, form feed, file, group or record separator, NEL or
+    a Unicode line or paragraph separator inside a quoted line never ends the
+    quote, so a request after one stays in its finding.
+    """
+    return text.translate(_INLINE_BREAKS)
+
+
 def lint_texts(texts: list[tuple[str, str]]) -> LintResult:
     """Lint an issue given (source label, markdown) pairs: body, then comments."""
+    texts = [(source, one_line_breaks(text or "")) for source, text in texts]
     result = LintResult()
     sections: list[Section] = []
     for source, text in texts:
