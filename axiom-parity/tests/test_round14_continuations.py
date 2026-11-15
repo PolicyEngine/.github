@@ -1,6 +1,6 @@
 """A unit that ends on a separator is open: what follows it continues its predicate."""
 
-from conftest import READY_ISSUE_BODY, RS_US
+from conftest import REQUEST_ONLY_BODY, RS_US
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -75,7 +75,7 @@ def proposed(text: str, module: str = PIPELINE) -> set[str]:
 
 def held(block: str):
     quoted = "\n".join("> " + line for line in block.split("\n"))
-    body = READY_ISSUE_BODY.replace("\n## Companion tests", f"\n{quoted}\n\n## Companion tests")
+    body = REQUEST_ONLY_BODY.replace("\n## Companion tests", f"\n{quoted}\n\n## Companion tests")
     row = issue_inputs(RS_US, {"number": 1, "body": body}, [])
     holds = WorkHolds("Assembled pipelines need a hand edit.", {PIPELINE: ("pipeline file name",)})
     batches = plan([row], corpus={"us/statute/26/32/d"}, work_holds=holds)
@@ -97,8 +97,11 @@ def test_a_terminal_semicolon_keeps_a_nested_edit():
     # (Round 15: nothing but references follows a released reference, so the unit releases
     # as the last item, after an item that names its own module; before any other item the
     # readers still propose the release and the closed grammar keeps the module work.)
-    row, ready = held(f"- The rate is 5%.\n- See {PIPELINE}.")  # after the fixture's own request on its module
+    row, ready = held(f"- See {OTHER}.\n- See {PIPELINE}.")  # after the fixture's own request on its module
     assert reading(f"- Encode {OTHER}.\n- See {PIPELINE}.") == {MENTION} and row.dispatchable and ready == 1
+    # (Round 15: any other sentence before it, even one that asks for nothing, keeps it work.)
+    row, ready = held(f"- The rate is 5%.\n- See {PIPELINE}.")
+    assert PIPELINE in row.work_modules and not row.dispatchable and ready == 0
     assert proposed(f"- See {PIPELINE}.\n- Nothing else.") == {MENTION}
     assert reading(f"- See {PIPELINE}.\n- Nothing else.") == {WORK}
     row, ready = held(f"- See {PIPELINE}.")
@@ -174,7 +177,9 @@ def test_a_continuation_reads_after_its_open_clause(intro, sep, form, continuati
     # ("Fix the following." and "Add the rate to." stay open: their words cannot end a predicate.)
     control = template.format(head=f"Encode {OTHER}", sep=closing, tail=capital)
     assert WORK not in proposed(control), (control, kinds(control))
-    assert (WORK not in reading(control)) == apart, (control, kinds(control))
+    # (Round 15: the closed grammar releases it only when nothing but requests in a closed form
+    # stands before it, so the item "Nothing else." between them keeps it work.)
+    assert (WORK not in reading(control)) == (apart and "Nothing else" not in template), (control, kinds(control))
     bare = template.format(head="Do not import", sep=sep, tail=f"{PIPELINE} formulas.")
     assert not separate or reading(bare) == {WORK}, bare
 

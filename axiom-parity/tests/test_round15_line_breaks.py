@@ -1,6 +1,6 @@
 """Round 15: a Unicode line boundary inside a quoted line never ends the finding early."""
 
-from conftest import READY_ISSUE_BODY, RS_US
+from conftest import READY_ISSUE_BODY, REQUEST_ONLY_BODY, RS_US
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -15,7 +15,7 @@ BREAKS = ["\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", " ", " "]
 
 def body_with(block: str) -> str:
     quoted = "\n".join("> " + line for line in block.split("\n"))
-    return READY_ISSUE_BODY.replace("\n## Companion tests", f"\n{quoted}\n\n## Companion tests")
+    return REQUEST_ONLY_BODY.replace("\n## Companion tests", f"\n{quoted}\n\n## Companion tests")
 
 
 def held(block: str):

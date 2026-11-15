@@ -1,6 +1,6 @@
 """Round 15: an open unit, a sentence that points back and an unresolved clause before a module all keep it work."""
 
-from conftest import READY_ISSUE_BODY, RS_US
+from conftest import REQUEST_ONLY_BODY, RS_US
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -39,7 +39,7 @@ def proposed(text: str, module: str = PIPELINE) -> set[str]:
 
 def held(block: str):
     quoted = "\n".join("> " + line for line in block.split("\n"))
-    body = READY_ISSUE_BODY.replace("\n## Companion tests", f"\n{quoted}\n\n## Companion tests")
+    body = REQUEST_ONLY_BODY.replace("\n## Companion tests", f"\n{quoted}\n\n## Companion tests")
     row = issue_inputs(RS_US, {"number": 1, "body": body}, [])
     holds = WorkHolds("Assembled pipelines need a hand edit.", {PIPELINE: ("pipeline file name",)})
     corpus = {"us/statute/26/32/d", "us/statute/26/1/h", "us/statute/26/1/i"}
@@ -297,6 +297,7 @@ UNRESOLVED_BEFORE = [
     "Split {o} from {t}",
 ]
 RESOLVED_BEFORE = ["See {o}", "Fix {o}", "Add {o} to {t}", "Keep {o}", "Do not import {o}", "{o}"]
+CLOSED_BEFORE = ["See {o}", "Fix {o}", "Do not import {o}"]  # the ones the closed release grammar reads
 BEFORE_FORMS = [
     "{before}; {tail}",  # inline
     "{before}; {tail}; see {third}.",  # with a clause after it too
@@ -328,7 +329,9 @@ def test_a_module_after_an_unresolved_clause_is_work(before, form, reference):
         assert WORK not in proposed(control), (control, kinds(control))
         tail = reference.format(m=PIPELINE)
         apart = f"{resolved.format(o=OTHER, t=THIRD)}.\n\n{tail[0].upper()}{tail[1:]}"
-        assert WORK not in reading(apart), (apart, kinds(apart))
+        # Only a reference or a request in a closed form may stand before it: "Add Y to Z.",
+        # "Keep Y." and a bare "Y." are none, so they keep it work.
+        assert (WORK not in reading(apart)) == (resolved in CLOSED_BEFORE), (apart, kinds(apart))
 
 
 @given(
@@ -345,8 +348,11 @@ def test_an_open_paragraph_reaches_the_paragraphs_after_it(intro, between, refer
     assert reading(block) == {WORK}, (block, kinds(block))
     assert PIPELINE in held(block)[0].work_modules, block
     # Controls: a closed paragraph introduces nothing, and a new heading ends what the intro reaches
-    # (for the readers: under the closed grammar the new heading reaches the module itself).
-    assert WORK not in reading("\n\n".join([f"Encode {THIRD}.", f"See {OTHER}.", *between, tail]))
+    # (for the readers: under the closed grammar the new heading reaches the module itself, and so
+    # does any paragraph between them that is no reference).
+    control = "\n\n".join([f"Encode {THIRD}.", f"See {OTHER}.", *between, tail])
+    assert WORK not in proposed(control)
+    assert (WORK not in reading(control)) == all(part == f"See {OTHER}." for part in between), control
     after_heading = "\n\n".join([intro, f"See {OTHER}.", *between, "## Background", tail])
     assert WORK not in proposed(after_heading)
     assert reading(after_heading) == {WORK}

@@ -1,6 +1,6 @@
 """A request after a released module writes wherever its destination points, so an unresolved one keeps the hold."""
 
-from conftest import READY_ISSUE_BODY, RS_US
+from conftest import REQUEST_ONLY_BODY, RS_US
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -60,7 +60,7 @@ def kinds(text: str) -> list[tuple[str, str]]:
 
 def held(request: str):
     quoted = "\n".join("> " + line for line in request.split("\n"))
-    body = READY_ISSUE_BODY.replace("\n## Companion tests", f"\n{quoted}\n\n## Companion tests")
+    body = REQUEST_ONLY_BODY.replace("\n## Companion tests", f"\n{quoted}\n\n## Companion tests")
     row = issue_inputs(RS_US, {"number": 1, "body": body}, [])
     holds = WorkHolds("Assembled pipelines need a hand edit.", {PIPELINE: ("pipeline file name",)})
     # The stand-in pin holds every citation the requests ask for, so only the owner hold can stop them.

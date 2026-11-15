@@ -1085,22 +1085,30 @@ def _readings(text: str, markdown: str | None = None) -> list[tuple[str, str, li
 #    starts a list item, to every item of that list ("- To fix:" over "See
 #    X."). A code block is open too, and a heading reaches every block up to
 #    the next heading.
-# 5. Nothing but references follows it, and what stands before it leaves it
-#    alone. Every sentence after its paragraph, to the end of the findings, is
-#    such a form too: a reference goes last, so no later text, in any wording
-#    and at any distance, can ask for work on it ("See X." before "Fix it.",
-#    "Notes." then "Fix the rate.", "Details:" over "- it needs a rule.",
-#    "Encode Y." then "Fix both.", "The pipeline should use the 2026 rate.").
-#    The text before it is read back over every earlier block. A sentence
-#    anywhere there that describes a module without naming it, or points at
-#    what follows ("Add Y to the pipeline.", "Fix Y in the following
-#    module.", "The pipeline below should use the 2026 rate."), keeps X work,
-#    and so does a word of request or defect ("Fix the rate.", "The rate
-#    needs an update.", "The formula is wrong.") in a sentence between X and
-#    the nearest sentence before it that is no such form and names a module.
-#    When no sentence before it names a module, each must be such a form: a
-#    sentence with no module before it to speak of may speak of X ("The rate
-#    should rise." before "See X.").
+# 5. Nothing but references follows it, and nothing but references and
+#    requests on named modules stands before it. Every sentence after its
+#    paragraph, to the end of the findings, is such a form too: a reference
+#    goes last, so no later text, in any wording and at any distance, can ask
+#    for work on it ("See X." before "Fix it.", "Notes." then "Fix the rate.",
+#    "Details:" over "- it needs a rule.", "Encode Y." then "Fix both.", "The
+#    pipeline should use the 2026 rate."). Every sentence before its
+#    paragraph, back to the start of the findings, is such a form or one of
+#    the request forms in ``_REQUEST_FORMS``, whose every word is accounted
+#    for and whose every object is a named module: "Encode Y.", "Fix Y and
+#    Z.", "Encode 26 USC 32(d) as its own module at Y (corpus
+#    us/statute/26/32/d).". Any other sentence before it keeps X work,
+#    whatever it says. Free text can describe a module without naming it or
+#    leave an object or a destination open ("Add Y to the pipeline.", "Add Y
+#    to the next one.", "Add Y to which module?", "Replace Y with Z
+#    everywhere.", "Fix the rate; Y is right.", "Hook Y up to the tax
+#    computation.", "The orchestrator must use the 2026 rate.", "The rate
+#    should rise."), and no list of words closes that class, so the grammar
+#    reads none of it: the findings release a module only when they hold
+#    nothing but these closed forms up to its paragraph and references after
+#    it. Markup that renders nothing (a link reference definition, an HTML
+#    comment or tag, an empty link, a zero-width character) is no such form
+#    either, so it never closes an open unit or stands between two closed
+#    ones: it keeps every module work. So does a heading or a code block.
 #
 # Paragraphs are read as CommonMark could read them, never narrower
 # (``_blocks``): a line joins the paragraph above it unless it certainly
@@ -1146,6 +1154,26 @@ _FORM_DENIAL = re.compile(
     + r"(?: (?:now|yet|here|directly|at all|for now|anywhere|either|at this stage))*\.",
     re.IGNORECASE,
 )
+# Requests that may stand before a reference (condition 5): each names every
+# module it writes and holds no other word ("Encode Y.", "Fix Y, Z and W.",
+# "Encode 26 USC 32(d) as its own module at Y.", "Modules: Y and Z."). A legal
+# citation is numbers and locators only ("26 USC 32(d)", "26 U.S.C. §
+# 1397ee(a)(1)"), and a corpus citation is a path in brackets after the
+# module ("Encode Y (corpus us/statute/26/32/d).").
+_FORM_CITATION = (
+    r"\d+ (?:USC|U\.S\.C\.|CFR|C\.F\.R\.) (?:§ ?)?\d+[a-z]{0,3}(?:\((?:\d{1,4}|[a-z]{1,2}|[ivxlc]{1,6})\))*"
+)
+_FORM_CORPUS = r"(?: \(corpus(?: citation)? [a-z]{2}(?:-[a-z0-9]+)*/[a-z_]+(?:/[\w.\-]+)+\))?"
+_REQUEST_FORMS = [
+    re.compile(form, re.IGNORECASE)
+    for form in (
+        r"(?:re-?encode|encode|create|write|fix|update|correct|complete|finali[sz]e|extend|repair) "
+        rf"{_FORM_LIST}{_FORM_CORPUS}\.",
+        rf"(?:re-?encode|encode) {_FORM_CITATION} (?:as (?:its own|a new|a separate) module )?at "
+        rf"{_FORM_MODULE}{_FORM_CORPUS}\.",
+        rf"modules: {_FORM_LIST}\.",
+    )
+]
 
 
 def _form(sentence: str) -> str:
@@ -1173,55 +1201,10 @@ def _inert(sentence: str) -> bool:
     return _release_kind(sentence) is not None or bool(_FORM_DENIAL.fullmatch(_form(sentence)))
 
 
-# Words of request or defect a neighbouring sentence may hold (condition 5):
-# a request's word in any form (``_REQUEST_WORD``), on its own or as the last
-# part of a hyphenated word ("bug-fix"), and a few words for a defect.
-_ASKED_WORD = re.compile(r"(?<![\w#])[A-Za-z]+(?:-[A-Za-z]+)*")
-_ASKED_DEFECT = frozenset(
-    {
-        "need",
-        "needs",
-        "needed",
-        "needing",
-        "wrong",
-        "incorrect",
-        "broken",
-        "bug",
-        "bugs",
-        "bugfix",
-        "bugfixes",
-        "overhaul",
-        "overhauls",
-        "overhauled",
-        "cleanup",
-        "cleanups",
-    }
-)
-# Words that may stand for a module named after them: a description ("the
-# pipeline", "this module", "these two files") or a pointer forward ("the
-# following", "below"). A pronoun points back, not forward ("Encode it at Y.").
-_DESCRIBED = re.compile(
-    r"\b(?:(?:the|this|that|these|those|both|all|each|every|either|any|said|such)\s+(?:of\s+)?(?:[\w'’-]+\s+){0,3}"
-    r"(?:modules?|files?|paths?|pipelines?|polic(?:y|ies)|yamls?)"
-    r"|following|below)\b",
-    re.IGNORECASE,
-)
-
-
-def _asks(sentence: str) -> bool:
-    """Does a sentence that names no module hold a word of request or defect?"""
-    if _names_module(sentence):
-        return False
-    for word in _ASKED_WORD.findall(_MODULE_NAME.sub(" ", sentence)):
-        last = word.lower().rsplit("-", 1)[-1]
-        if _request_word(word) or _request_word(last) or last in _ASKED_DEFECT:
-            return True
-    return False
-
-
-def _points_ahead(sentence: str) -> bool:
-    """Does the sentence describe a module it does not name, or point at what follows it?"""
-    return bool(_DESCRIBED.search(_MODULE_NAME.sub(" MODULE ", sentence)))
+def _requests_named(sentence: str) -> bool:
+    """Is the sentence a request in a closed form, which names every module it writes?"""
+    form = _form(sentence)
+    return any(pattern.fullmatch(form) for pattern in _REQUEST_FORMS)
 
 
 @dataclass
@@ -1427,19 +1410,15 @@ def _released(markdown: str) -> dict[str, set[str]]:
     for index in range(len(blocks) - 2, -1, -1):
         last_word[index] = last_word[index + 1] and inert[index + 1]
 
-    def left_alone(index: int) -> bool:
-        """Does the text before the block leave it alone (condition 5)?"""
-        said = False  # a sentence read back so far is no reference
-        named = False  # one of them names a module: what stands before it speaks of that one
-        for other in range(index - 1, -1, -1):
-            for sentence in reversed(sentences[other]):
-                if blocks[other].kind == "paragraph" and _inert(sentence):
-                    continue
-                said = True
-                if _points_ahead(sentence) or (not named and _asks(sentence)):
-                    return False
-                named = named or _names_module(sentence)
-        return named or not said
+    # Condition 5, before: every earlier block is a paragraph of closed forms (references,
+    # denials on a pronoun and requests on named modules), back to the start of the findings.
+    closed = [
+        block.kind == "paragraph" and all(_inert(sentence) or _requests_named(sentence) for sentence in each)
+        for block, each in zip(blocks, sentences, strict=True)
+    ]
+    first_word = [True] * len(blocks)  # is every block before this one such a paragraph?
+    for index in range(1, len(blocks)):
+        first_word[index] = first_word[index - 1] and closed[index - 1]
 
     allowed: dict[str, set[str]] = {}
     failed: set[str] = set()
@@ -1448,7 +1427,7 @@ def _released(markdown: str) -> dict[str, set[str]]:
         if not any(names[index]):
             continue
         near = family(index) if inert[index] and index not in reached and last_word[index] else set()
-        free = bool(near) and all(inert[other] for other in near) and left_alone(index)
+        free = bool(near) and all(inert[other] for other in near) and first_word[index]
         for sentence, named in zip(sentences[index], names[index], strict=True):
             kind = _release_kind(sentence) if free else None
             seen.update(named)

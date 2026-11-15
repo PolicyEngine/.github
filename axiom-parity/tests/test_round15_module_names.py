@@ -1,6 +1,6 @@
 """Round 15: a module path behind a repository or URL prefix is still a module."""
 
-from conftest import READY_ISSUE_BODY, RS_US
+from conftest import REQUEST_ONLY_BODY, RS_US
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -21,7 +21,7 @@ PREFIXES = [
 
 def held(block: str):
     quoted = "\n".join("> " + line for line in block.split("\n"))
-    body = READY_ISSUE_BODY.replace("\n## Companion tests", f"\n{quoted}\n\n## Companion tests")
+    body = REQUEST_ONLY_BODY.replace("\n## Companion tests", f"\n{quoted}\n\n## Companion tests")
     row = issue_inputs(RS_US, {"number": 1, "body": body}, [])
     holds = WorkHolds("Assembled pipelines need a hand edit.", {PIPELINE: ("pipeline file name",)})
     batches = plan([row], corpus={"us/statute/26/32/d"}, work_holds=holds)

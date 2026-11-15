@@ -1,6 +1,6 @@
 """Round 15: a line Markdown keeps in a finding's paragraph is read with the finding."""
 
-from conftest import READY_ISSUE_BODY, RS_US
+from conftest import READY_ISSUE_BODY, REQUEST_ONLY_BODY, RS_US
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -14,7 +14,7 @@ OTHER = "us/statutes/26/1/h.yaml"
 def held(quoted: str, lazy: str):
     """The fixture's finding with ``quoted`` lines in its quote and ``lazy`` lines right below, unquoted."""
     block = "\n".join("> " + line for line in quoted.split("\n")) + lazy
-    body = READY_ISSUE_BODY.replace("\n## Companion tests", f"\n{block}\n\n## Companion tests")
+    body = REQUEST_ONLY_BODY.replace("\n## Companion tests", f"\n{block}\n\n## Companion tests")
     row = issue_inputs(RS_US, {"number": 1, "body": body}, [])
     holds = WorkHolds("Assembled pipelines need a hand edit.", {PIPELINE: ("pipeline file name",)})
     corpus = {"us/statute/26/32/d", "us/statute/26/1/h"}
@@ -68,7 +68,8 @@ def test_a_request_on_a_lazy_line_keeps_the_owner_hold(opener, stop, indent, req
 
 def plain_finding(tail: str):
     """A finding in plain paragraphs under its heading, ending in ``tail``, with the pipeline hold."""
-    finding = "Encode 26 USC 32(d) as its own module at us/statutes/26/32/d.yaml. " + "State each element. " * 6
+    # Nothing but a request in a closed form stands before the tail, so the tail alone decides.
+    finding = "Encode 26 USC 32(d) as its own module at us/statutes/26/32/d.yaml (corpus us/statute/26/32/d)."
     head = READY_ISSUE_BODY.split("## review_finding")[0]
     body = (
         head + f"## review_finding\n\n{finding}\n\n{tail}\n\n## Companion tests\n\n- one case: holds (statute text)\n"

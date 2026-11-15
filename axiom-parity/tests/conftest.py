@@ -37,6 +37,17 @@ Module path: `us/statutes/26/32/d.yaml` (corpus citation `us/statute/26/32/d`).
 - separated spouse with a qualifying child, apart for the last six months: holds (statute text)
 """
 
+# The same issue with a finding that holds nothing but its request, in a closed form the drain's
+# release grammar reads (README, Limits). The drain's tests add their text to this finding: any
+# other sentence in the findings keeps every module they name work, so only here does the added
+# text decide what is released.
+REQUEST_ONLY_BODY = READY_ISSUE_BODY.replace(
+    "> Encode 26 USC 32(d) as its own module at us/statutes/26/32/d.yaml. The separated-spouse rule must be\n"
+    "> stated from its statutory elements.\n",
+    "> Encode 26 USC 32(d) as its own module at us/statutes/26/32/d.yaml (corpus us/statute/26/32/d).\n",
+)
+assert REQUEST_ONLY_BODY != READY_ISSUE_BODY
+
 MODULE_D = """format: rulespec/v1
 module:
   source_verification:

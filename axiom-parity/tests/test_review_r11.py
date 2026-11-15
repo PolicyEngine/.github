@@ -3,7 +3,7 @@
 import re
 
 import pytest
-from conftest import READY_ISSUE_BODY, RS_US
+from conftest import READY_ISSUE_BODY, REQUEST_ONLY_BODY, RS_US
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from test_round7_outputs import finding_only
@@ -24,7 +24,7 @@ def kinds(text: str) -> list[tuple[str, str]]:
 
 def held(request: str):
     quoted = "\n".join("> " + line if line else ">" for line in request.splitlines())
-    body = READY_ISSUE_BODY.replace("\n## Companion tests", f"\n{quoted}\n\n## Companion tests")
+    body = REQUEST_ONLY_BODY.replace("\n## Companion tests", f"\n{quoted}\n\n## Companion tests")
     row = issue_inputs(RS_US, {"number": 1, "body": body}, [])
     holds = WorkHolds("Assembled pipelines need a hand edit.", {PIPELINE: ("pipeline file name",)})
     batches = plan([row], corpus={"us/statute/26/32/d"}, work_holds=holds)

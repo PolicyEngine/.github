@@ -1,7 +1,7 @@
 """A predicate after a released module can write to it, so the whole sentence decides."""
 
 import pytest
-from conftest import READY_ISSUE_BODY, RS_US
+from conftest import REQUEST_ONLY_BODY, RS_US
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -52,7 +52,7 @@ def kinds(text: str) -> list[tuple[str, str]]:
 
 
 def held(request: str):
-    body = READY_ISSUE_BODY.replace("\n## Companion tests", f"\n> {request}\n\n## Companion tests")
+    body = REQUEST_ONLY_BODY.replace("\n## Companion tests", f"\n> {request}\n\n## Companion tests")
     row = issue_inputs(RS_US, {"number": 1, "body": body}, [])
     holds = WorkHolds("Assembled pipelines need a hand edit.", {PIPELINE: ("pipeline file name",)})
     batches = plan([row], corpus={"us/statute/26/32/d"}, work_holds=holds)

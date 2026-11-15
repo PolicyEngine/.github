@@ -1,7 +1,7 @@
 import json
 import subprocess
 
-from conftest import READY_ISSUE_BODY
+from conftest import READY_ISSUE_BODY, REQUEST_ONLY_BODY
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -219,9 +219,10 @@ def test_blocked_modules_block_targets_and_imports(tmp_path):
         "R",
         {
             "number": 2,
-            "body": READY_ISSUE_BODY.replace("32/d", "32/c").replace(
-                "> stated from its statutory elements.\n",
-                "> stated from its statutory elements.\n>\n> Import us:statutes/26/25A#credit.\n",
+            # A reference releases only after a request in a closed form (the release grammar, round 15).
+            "body": REQUEST_ONLY_BODY.replace("32/d", "32/c").replace(
+                "(corpus us/statute/26/32/c).\n",
+                "(corpus us/statute/26/32/c).\n>\n> Import us:statutes/26/25A#credit.\n",
             ),
         },
         [],
@@ -330,11 +331,13 @@ def test_a_repealed_row_blocks_even_when_rows_below_it_have_text(tmp_path):
 
 def test_a_module_named_only_to_defer_it_is_not_an_import(tmp_path):
     blocked = {"us/statutes/26/32.yaml"}
-    base = READY_ISSUE_BODY.replace("us/statute/26/32/d", "us-in/statute/6-3.1-21-6").replace(
+    base = REQUEST_ONLY_BODY.replace("us/statute/26/32/d", "us-in/statute/6-3.1-21-6").replace(
         "us/statutes/26/32/d.yaml", "us-in/statutes/6-3.1-21-6.yaml"
     )
-    # A reference releases only in a paragraph of its own (the closed release grammar, round 15).
-    last = "> stated from its statutory elements.\n"
+    # A reference releases only in a paragraph of its own, after a request in a closed form
+    # (the release grammar, round 15).
+    last = "(corpus us-in/statute/6-3.1-21-6).\n"
+    assert last in base
     deferred = base.replace(
         last, last + ">\n> Declare a deferred dependency on us:statutes/26/32 (#eitc). Do not import it now.\n"
     )
@@ -347,10 +350,15 @@ def test_a_module_named_only_to_defer_it_is_not_an_import(tmp_path):
     assert not batch.ready
     # Among the request's own sentences the deferral is held as requested work.
     inline = base.replace(
-        "The separated-spouse rule must be",
-        "Declare a deferred dependency on us:statutes/26/32 (#eitc). Do not import it now. The rule must be",
+        last, last.rstrip("\n") + " Declare a deferred dependency on us:statutes/26/32 (#eitc). Do not import it now.\n"
     )
+    assert inline != base
     assert "us/statutes/26/32.yaml" in issue_inputs("R", {"number": 3, "body": inline}, []).work_modules
+    # So is a deferral in a paragraph of its own after any sentence that is no request in a closed
+    # form: the complete fixture's finding has one (round 15).
+    free = deferred.replace(last, last.rstrip("\n") + " The separated-spouse rule must be stated from its elements.\n")
+    assert free != deferred
+    assert "us/statutes/26/32.yaml" in issue_inputs("R", {"number": 4, "body": free}, []).work_modules
 
 
 def test_an_explicit_target_must_be_a_corpus_citation():
@@ -468,11 +476,10 @@ def test_a_blocked_module_blocks_the_citations_it_owns():
 
 def test_modules_the_finding_names_are_targets_or_imports_by_what_it_asks():
     def row(extra: str, apart: bool = True):
-        # A reference releases only in a paragraph of its own (the closed release grammar, round 15).
+        # A reference releases only in a paragraph of its own, after a request in a closed form
+        # (the release grammar, round 15).
         joint = "\n>\n> " if apart else " "
-        body = READY_ISSUE_BODY.replace(
-            "stated from its statutory elements.", "stated from its statutory elements." + joint + extra
-        )
+        body = REQUEST_ONLY_BODY.replace("(corpus us/statute/26/32/d).", "(corpus us/statute/26/32/d)." + joint + extra)
         return issue_inputs("R", {"number": 1, "body": body}, [])
 
     # Asked for by module name, in any spelling: a target.
@@ -525,10 +532,13 @@ def test_a_modules_line_lists_targets_and_a_precedent_is_not_one():
         "uk/regulations/ssi/2021/249/36.yaml and uk/regulations/wsi/2013/3029/schedule/1/paragraph/5.yaml."
     )
     base = READY_ISSUE_BODY.replace("corpus citation `us/statute/26/32/d`", "see the finding")
-    # A precedent in a paragraph of its own is a reference (the closed release grammar, round 15).
-    body = base.replace("Encode 26 USC 32(d) as its own module at us/statutes/26/32/d.yaml.", modules).replace(
-        "> stated from its statutory elements.\n", f"> stated from its statutory elements.\n>\n> As in {precedent}.\n"
+    # A precedent in a paragraph of its own, after the line that lists the modules, is a reference
+    # (the closed release grammar, round 15).
+    body = REQUEST_ONLY_BODY.replace("corpus citation `us/statute/26/32/d`", "see the finding").replace(
+        "> Encode 26 USC 32(d) as its own module at us/statutes/26/32/d.yaml (corpus us/statute/26/32/d).\n",
+        f"> {modules}\n>\n> As in {precedent}.\n",
     )
+    assert precedent in body
     row = issue_inputs("R", {"number": 1, "body": body}, [])
     targets = [
         "uk/regulation/ssi/2012/319/21",
@@ -592,8 +602,8 @@ def test_a_deferral_covers_only_its_own_clause():
     both = issue_inputs(
         "R",
         _with_finding(
-            "Encode us/statutes/26/32/d.yaml. Preserve all statutory proof excerpts and pass the provided "
-            "companion cases.\n\nImport us/statutes/26/1/c.yaml.\n\nDo not import us/statutes/26/1/h.yaml."
+            "Encode us/statutes/26/32/d.yaml (corpus us/statute/26/32/d).\n\n"
+            "Import us/statutes/26/1/c.yaml.\n\nDo not import us/statutes/26/1/h.yaml."
         ),
         [],
     )
@@ -603,10 +613,7 @@ def test_a_deferral_covers_only_its_own_clause():
     without = issue_inputs(
         "R",
         _with_finding(
-            # Filler sentences start with a capital: a period before lower case does not end a sentence.
-            "Encode us/statutes/26/32/e.yaml from the text. "
-            + "Text. " * 19
-            + "\n\nDo not import us/statutes/26/1/h.yaml."
+            "Encode us/statutes/26/32/e.yaml (corpus us/statute/26/32/e).\n\nDo not import us/statutes/26/1/h.yaml."
         ),
         [],
     )
@@ -623,8 +630,8 @@ def test_a_deferral_covers_only_its_own_clause():
 
 def test_a_precedent_or_a_description_is_neither_work_nor_an_import():
     blocked = {"us/statutes/26/32/c.yaml"}
-    request = "Encode it at us/statutes/26/32/d.yaml." + " State each element with its proof excerpt." * 3
-    # A reference in a paragraph of its own (the closed release grammar, round 15).
+    request = "Encode us/statutes/26/32/d.yaml (corpus us/statute/26/32/d)."
+    # A reference in a paragraph of its own, after a request in a closed form (the release grammar, round 15).
     for wording in (
         "As in us/statutes/26/32/c.yaml.",
         "Compare us/statutes/26/32/c.yaml.",
@@ -779,13 +786,13 @@ def test_work_on_a_module_the_owner_holds_is_held_and_an_import_from_it_is_not(t
     assert not batch.ready and "taxable_income_pipeline.yaml [pipeline file name]" in reason
     assert "Assembled pipelines are edited by hand" in markdown([batch], 10, holds)
     assert to_json([batch], 10, holds)["work_hold_rule"].startswith("Assembled pipelines")
-    # An import in a paragraph of its own is a reference (the closed release grammar, round 15).
+    # An import in a paragraph of its own, after a request in a closed form, is a reference
+    # (the release grammar, round 15).
     imports = issue_inputs(
         "R",
         _with_finding(
-            "Encode it at us/statutes/26/32/d.yaml."
-            + tail.rstrip()
-            + "\n\nImport us:policies/income_tax/taxable_income_pipeline#taxable_income."
+            "Encode us/statutes/26/32/d.yaml (corpus us/statute/26/32/d)."
+            "\n\nImport us:policies/income_tax/taxable_income_pipeline#taxable_income."
         ),
         [],
     )
