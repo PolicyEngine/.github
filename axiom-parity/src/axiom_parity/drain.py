@@ -25,7 +25,9 @@ from .github import GitHub
 from .issue_lint import (
     _ARTIFACT,
     _CORPUS_SINGULAR,
+    _FIELD,
     _JURIS,
+    _LABEL,
     _LIST_MARKER,
     expand_braces,
     lint_issue,
@@ -2277,6 +2279,33 @@ def _lazy_quotes(markdown: str) -> str:
     return "\n".join(out)
 
 
+def _kept_labels(markdown: str) -> str:
+    """``markdown`` with each bold label line that follows paragraph text read as that text.
+
+    Invariant (round 15): the finding's reader skips a line that starts with
+    a bold label ("**Note:** fix it.") as another field of the issue. Right
+    after a line of paragraph text, Markdown keeps such a line in that
+    paragraph or under it ("See X." over "**Note:** and fix it."), so the
+    drain reads it with the finding: the label loses its emphasis marks and
+    the reader keeps the line. A label that starts a paragraph, a label that
+    names the finding itself and the labels right below such a label are
+    fields, as before. Reading more of the text can only hold more.
+    """
+    out: list[str] = []
+    text_before = False  # the line before is paragraph text that no label started
+    fenced = False
+    for line in markdown.splitlines():
+        if re.match(r"[ \t]{0,3}(?:```|~~~)", line):
+            fenced, text_before = not fenced, False
+        elif not fenced:
+            label = _LABEL.match(line) and not _FIELD.search(line)
+            if label and text_before:
+                line = re.sub(r"\*\*|__", "", line, count=2)
+            text_before = bool(line.strip(" \t")) and not _NOT_PARAGRAPH.match(line) and (text_before or not label)
+        out.append(line)
+    return "\n".join(out)
+
+
 def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]]) -> IssueInputs:
     raw = [issue.get("body") or ""] + [c.get("body") or "" for c in comments]
     # A Unicode line separator inside a line never ends a quoted finding early.
@@ -2289,8 +2318,9 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     findings = [f for t in texts for f in review_findings(t)]
     finding = "\n\n".join(findings) if findings else None
     # The drain also reads each finding with the lines CommonMark keeps in its
-    # quote (``_lazy_quotes``); reading more text can only hold more.
-    lazy = [f for t in texts for f in review_findings(_lazy_quotes(t)) if f not in findings]
+    # quote (``_lazy_quotes``) and the label lines it keeps in a plain finding's
+    # paragraph (``_kept_labels``); reading more text can only hold more.
+    lazy = [f for t in texts for f in review_findings(_kept_labels(_lazy_quotes(t))) if f not in findings]
     written = "\n\n".join(findings + lazy)  # the findings' own Markdown, which the release grammar reads
     asked = plain(written)
 

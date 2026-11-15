@@ -1,4 +1,4 @@
-"""Round 15: a line Markdown keeps in a quoted finding's paragraph is read with the finding."""
+"""Round 15: a line Markdown keeps in a finding's paragraph is read with the finding."""
 
 from conftest import READY_ISSUE_BODY, RS_US
 from hypothesis import given, settings
@@ -64,3 +64,37 @@ def test_a_request_on_a_lazy_line_keeps_the_owner_hold(opener, stop, indent, req
     marked = _lazy_quotes(text)
     assert marked.replace("\n> ", "\n") == text.replace("\n> ", "\n"), text
     assert request in review_findings(marked)[0] and request not in review_findings(text)[0], text
+
+
+def plain_finding(tail: str):
+    """A finding in plain paragraphs under its heading, ending in ``tail``, with the pipeline hold."""
+    finding = "Encode 26 USC 32(d) as its own module at us/statutes/26/32/d.yaml. " + "State each element. " * 6
+    head = READY_ISSUE_BODY.split("## review_finding")[0]
+    body = (
+        head + f"## review_finding\n\n{finding}\n\n{tail}\n\n## Companion tests\n\n- one case: holds (statute text)\n"
+    )
+    row = issue_inputs(RS_US, {"number": 1, "body": body}, [])
+    holds = WorkHolds("Assembled pipelines need a hand edit.", {PIPELINE: ("pipeline file name",)})
+    return row, to_json(plan([row], corpus={"us/statute/26/32/d"}, work_holds=holds), 10)["summary"]["ready_issues"]
+
+
+# Invariant (round 15): the finding's reader skips a bold label line as another
+# field, but right after a line of paragraph text Markdown keeps it in that
+# paragraph or under it, so the drain reads it with the finding. Each input
+# released the pipeline at 4e6cc5a (run refix7-f12-1-labels-4e6cc5a).
+@given(
+    opener=st.sampled_from(["See", "Cf.", "As in", "Compare", "Import", "Do not import"]),
+    label=st.sampled_from(["**Note:**", "**Also**", "__Note:__", "**To do.**", "- **Note:**", "* **Next**:"]),
+    request=st.sampled_from(["and fix it.", "fix it.", "the rate needs a fix.", "Fix the pipeline.", "then edit it."]),
+)
+@settings(max_examples=200, deadline=None, database=None)
+def test_a_label_line_markdown_keeps_with_a_plain_finding_is_read_with_it(opener, label, request):
+    row, ready = plain_finding(f"{opener} {PIPELINE}.\n{label} {request}")
+    assert row.review_finding and PIPELINE in row.work_modules and ready == 0, (opener, label, request)
+    assert any(PIPELINE in reason for reason in row.blocked)
+    # The finding handed to the dispatcher still leaves the label line out.
+    assert request not in row.review_finding
+    # Controls: the reference alone releases, and so does a labelled field of its own after a blank line.
+    for tail in (f"{opener} {PIPELINE}.", f"{opener} {PIPELINE}.\n\n**Module path:** `us/statutes/26/32/d.yaml`"):
+        row, ready = plain_finding(tail)
+        assert row.review_finding and PIPELINE not in row.work_modules and ready == 1, tail
