@@ -1807,6 +1807,44 @@ def _pair_line(line: str) -> tuple[list[str], list[str]]:
     return (modules, cites) if _PAIR_FILLER.match(rest) else ([], [])
 
 
+_LAZY_QUOTED = re.compile(r"[ \t]{0,3}>")
+# Blocks that are not a paragraph a lazy line could continue.
+_NOT_PARAGRAPH = re.compile(r"[ \t]{0,3}(?:#{1,6}(?:[ \t]|$)|```|~~~|([-*_])(?:[ \t]*\1){2,}[ \t]*$)")
+# Lines that end a quote for certain: a heading, a fence, a thematic break, a
+# bullet or "1." item with content. Any other line is read as lazy, which reads
+# more of the text than cmark puts in the quote ("2. fix it"), never less.
+_STARTS_BLOCK = re.compile(
+    r" {0,3}(?:#{1,6}(?:[ \t]|$)|```|~~~|([-*_])(?:[ \t]*\1){2,}[ \t]*$|(?:[-*+]|1[.)])[ \t]+\S)"
+)
+
+
+def _lazy_quotes(markdown: str) -> str:
+    """``markdown`` with each line CommonMark keeps in a block quote's paragraph marked as quoted.
+
+    Invariant (round 15): a line right after a quoted paragraph line that
+    starts no block of its own is a lazy line of that paragraph ("> See X"
+    over "and fix it."), so the drain reads it as part of the quoted finding.
+    Only a line of spaces and tabs is blank: any other line goes on.
+    """
+    out: list[str] = []
+    open_quote = False  # the line before is quoted paragraph text
+    fenced = False
+    for line in markdown.splitlines():
+        quoted = _LAZY_QUOTED.match(line)
+        if quoted:
+            inner = re.sub(r"^[ \t]*(?:>[ \t]?)*", "", line)
+            if re.match(r"[ \t]*(?:```|~~~)", inner):
+                fenced = not fenced
+            open_quote = bool(inner.strip(" \t")) and not fenced and not _NOT_PARAGRAPH.match(inner)
+            out.append(line)
+        elif open_quote and line.strip(" \t") and not _STARTS_BLOCK.match(line):
+            out.append("> " + line)
+        else:
+            open_quote = fenced = False
+            out.append(line)
+    return "\n".join(out)
+
+
 def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]]) -> IssueInputs:
     raw = [issue.get("body") or ""] + [c.get("body") or "" for c in comments]
     # A Unicode line separator inside a line never ends a quoted finding early.
@@ -1818,7 +1856,10 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     # replace it, so the dispatcher gets every block, in order, and decides.
     findings = [f for t in texts for f in review_findings(t)]
     finding = "\n\n".join(findings) if findings else None
-    asked = plain(finding or "")
+    # The drain also reads each finding with the lines CommonMark keeps in its
+    # quote (``_lazy_quotes``); reading more text can only hold more.
+    lazy = [f for t in texts for f in review_findings(_lazy_quotes(t)) if f not in findings]
+    asked = plain("\n\n".join(findings + lazy))
 
     targets = _explicit_targets(joined, cites)
     modules: list[str] = []
