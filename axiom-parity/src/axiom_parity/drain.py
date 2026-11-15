@@ -2351,8 +2351,13 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     # Unicode line or paragraph separator, a no-break, en or ideographic space
     # ...) is a space or a line end to the readers and plain text to Markdown,
     # so a line of it is a blank line to the finding's reader and part of the
-    # paragraph to Markdown. An issue that holds one, anywhere, releases nothing.
-    if texts != raw or any(char.isspace() and char not in " \t\n\r" for text in raw for char in text):
+    # paragraph to Markdown. A tab is white space to both, but Markdown counts
+    # its columns from the line's own start: after a quote mark, "\tSee X."
+    # keeps two columns, which put it in the list item above it, while the
+    # finding's reader takes the tab with the mark and reads a paragraph of
+    # its own. So an issue that holds any white space but spaces and line
+    # ends, anywhere, releases nothing.
+    if texts != raw or any(char.isspace() and char not in " \n\r" for text in raw for char in text):
         readings = [(clause, rest, [(module, WORK) for module, _ in found]) for clause, rest, found in readings]
     for sentence, _, found in readings:
         here = _corpus_citations(sentence)

@@ -850,12 +850,15 @@ SPACES = [NBSP, "\x1f", "\N{EN SPACE}", "\N{EM SPACE}", "\N{NARROW NO-BREAK SPAC
 # Invariant (round 15): Markdown decides blank lines, indentation, list markers
 # and headings by spaces and tabs alone. Any other white space is a space to
 # the readers and plain text to Markdown: a line of it is a blank line to the
-# finding's reader and part of the paragraph to Markdown. An issue that holds
-# one, anywhere, releases nothing. The first place released the pipeline at
-# df17e39 and at fd0b635 (by reading: both split the paragraph there) and at
-# 4e6cc5a (run refix6-f12-1-prev-4e6cc5a).
+# finding's reader and part of the paragraph to Markdown. A tab is white space
+# to both, but Markdown counts its columns from the line's own start and the
+# finding's reader does not. An issue that holds any white space but spaces
+# and line ends, anywhere, releases nothing. The first place released the
+# pipeline at df17e39 and at fd0b635 (by reading: both split the paragraph
+# there) and at 4e6cc5a (run refix6-f12-1-prev-4e6cc5a); with a tab every
+# place released it at c7f5561 (run refix9-f12-1-prev-c7f5561).
 @given(
-    space=st.sampled_from(SPACES + [" " + NBSP + "\t"]),
+    space=st.sampled_from(SPACES + [" " + NBSP + "\t", "\t", " \t"]),
     where=st.sampled_from(["blank line", "quoted blank line", "marker", "law text", "comment"]),
 )
 @settings(max_examples=80, deadline=None, database=None)
@@ -883,6 +886,36 @@ def test_an_issue_with_other_white_space_releases_nothing(space, where):
     # reference stands apart, last in the finding, and releases.
     row, ready = plan_for(body.replace(space, "  "), tuple(c.replace(space, " ") for c in comments))
     assert row.review_finding and PIPELINE not in row.work_modules and ready == 1, (where, repr(space))
+
+
+# Invariant (round 15): a tab after a quote mark keeps two columns in
+# CommonMark, which put "See X." in the list item above it, while the finding's
+# reader takes the tab with the mark and reads a paragraph of its own. So a
+# tab anywhere in the issue releases nothing. The first two are the round 15
+# verifier's inputs at c7f5561 (T1, T2; they released there and at fd0b635,
+# runs refix9-f12-1-v6-c7f5561 and verify6-f12-1-c-fd0b635); the third leaves
+# the tab as the only reason to hold.
+TAB_AFTER_A_QUOTE_MARK = [
+    "- Encode {H}. The rate should be 5%.\n\n~LAZY~>\tSee {P}.",
+    "- Encode {H}. Raise the rate to 5%.\n\n~LAZY~>\tSee {P}.",
+    "- Encode {H}.\n\n~LAZY~>\tSee {P}.",
+]
+
+
+def test_a_tab_after_a_quote_mark_releases_nothing():
+    for block in TAB_AFTER_A_QUOTE_MARK:
+        for base in (REQUEST_ONLY_BODY, READY_ISSUE_BODY):
+            row, ready = held(fill(block), base)
+            assert PIPELINE in row.work_modules and not row.dispatchable and ready == 0, (
+                block,
+                base is READY_ISSUE_BODY,
+            )
+    # Controls: written with spaces, the two columns put the reference in the item, which holds
+    # it, and a quote mark with one space sets it apart, which releases it.
+    row, ready = held(fill("- Encode {H}.\n\n  See {P}."))
+    assert PIPELINE in row.work_modules and ready == 0
+    row, ready = held(fill("- Encode {H}.\n\nSee {P}."))
+    assert PIPELINE not in row.work_modules and ready == 1
 
 
 def test_the_grammar_s_own_mark_in_the_text_is_no_module():
