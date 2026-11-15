@@ -213,6 +213,8 @@ _AFFIRMATIVE_IMPORT = re.compile(
     r"rule\s+must\s+be\s+stated\s+by\s+importing)\s*[\[(]*\s*",
     re.IGNORECASE,
 )
+# "From X" with no verb of its own: a source only where nothing before it writes.
+_BARE_FROM = re.compile(r"\s*from\b\s*(?:" + _SOURCE_OBJECT + r")?\s*[\[(]*\s*", re.IGNORECASE)
 # Invariant P1.1: a reference head accepts only finite reference words. Unknown
 # words cannot hide an edit predicate after "see", "matching" or another head.
 # Conditional heads do not establish an affirmative description and stay WORK.
@@ -492,10 +494,28 @@ _SIBLINGS = re.compile(
 
 
 def expand_siblings(text: str) -> str:
-    """Spell out sibling module names given short after a full path."""
+    """Spell out sibling module names given short after a full path.
+
+    Invariant (round 15): a short name never resolves a request's destination
+    away from a module the text has already named. "See a/x.yaml and add
+    b/h.yaml to x.yaml" may mean ``a/x.yaml``, so a short name that repeats the
+    file name of a module named earlier in another directory names that
+    module as well as the sibling, and both read as the short name reads.
+    """
+    named = [(m.end(), normal_module(m.group(0))) for m in _MODULE_NAME.finditer(text) if not m.group("dir")]
 
     def spell(m: re.Match[str]) -> str:
-        rest = re.sub(r"(?<![\w/.:-])([\w.:\-]+\.yaml)", lambda n: m["dir"] + n.group(1), m["rest"])
+        def full(n: re.Match[str]) -> str:
+            sibling = m["dir"] + n.group(1)
+            earlier: list[str] = []
+            for end, path in named:
+                if end > m.start():
+                    break
+                if path.rsplit("/", 1)[-1] == n.group(1) and path != sibling and path not in earlier:
+                    earlier.append(path)
+            return sibling + "".join(f" and {path}" for path in earlier)
+
+        rest = re.sub(r"(?<![\w/.:-])([\w.:\-]+\.yaml)", full, m["rest"])
         return m["dir"] + m["first"] + rest
 
     return _SIBLINGS.sub(spell, text)
@@ -747,6 +767,29 @@ def _sentences(text: str) -> list[str]:
 # or nothing at all ("and add Y") counts as writing to every module named
 # earlier in its sentence, so each of them reads WORK.
 _TAIL_MODULE = ""
+# Invariant (round 15): a request's word is never a noun the grammar may pass
+# over. In any form ("fix", "fixes", "fixing", "update", "its correction",
+# "the removal", "import") it is a request, and so is a common edit verb the
+# request list does not hold ("copy", "merge", "insert", "apply"). In the rest
+# of a module's sentence it is accounted for only as the verb of a complete
+# clause on a named module; anywhere else ("as well as fix the pipeline", "for
+# these fixes", "with\nfix.", "(fix)") the module stays work.
+_REQUEST_WORD = re.compile(
+    r"(?:(?:re-?)?(?:encod|creat|writ|wrot|add|addit|repair|replac|exten|chang|correct|updat|compos|wir|complet|"
+    r"finali[sz]|fix|split|mov|renam|remov|delet|declar|record|edit|amend|modif|revis|adjust|patch|refactor|overwrit|"
+    r"generat|import|cop|merg|insert|append|appl|put|migrat|convert|implement|introduc|populat|drop|bump|swap|switch|"
+    r"tweak|alter|strip|tid|inlin|hoist|attach|detach|extract|separat|restor|revert|touch)"
+    r"|re-?(?:work|do|buil|order|structur|defin)|undo)"
+    r"(?:[a-z]?(?:ed|ing|ings)|e|es|d|ds|s|t|y|ies|ied|ying|ion|ions|sion|sions|ation|ations|ication|ications|"
+    r"ment|ments|ement|ements|al|als|ten|ne)?",
+    re.IGNORECASE,
+)
+
+
+def _request_word(word: str) -> bool:
+    return bool(_REQUEST_WORD.fullmatch(word))
+
+
 # A directory ("us/policies/income_tax/") names no single module: it reads as a
 # path and never resolves a destination.
 _TAIL_DIRECTORY = "\ue001"
@@ -759,7 +802,9 @@ _TAIL_TOKEN = re.compile(
     r"|(?P<ident>#[\w.]+|[A-Za-z][A-Za-z0-9]*_\w*)"
     r"|(?P<abbrev>(?-i:(?:[A-Z]\.){2,})|(?<![\w.])(?:e\.g|i\.e|viz|etc|ss?|regs?|paras?|arts?|no|sch|c|v|cf|ch|pt|pp?|sec|subs?)\.)"
     r"|(?P<number>[$£€]?\d[\w.,%+\-/]*|[A-Za-z]+\d[\w.\-]*)"
-    r"|(?P<locator>(?:\([A-Za-z0-9]{1,5}\))+|§+)"
+    # A bracketed locator ("(a)", "(1)", "(xxib)") is never a request or a pointing word: "(fix)", "(it)".
+    r"|(?P<locator>(?:\((?!(?:" + _REQUEST_WORD.pattern + r"|it|them|they|this|that|these|those|both|same|each|all|"
+    r"here|there|ditto|above|below|todo|tbd|tbc|wip)\))[A-Za-z0-9]{1,5}\))+|§+)"
     r"|(?P<possessive>['’]s\b)"
     r"|(?P<word>[A-Za-z][A-Za-z\-]*(?:['’][a-z]+)?)"
     r"|(?P<separator>[,;:/&—–]|-(?=\s))"
@@ -775,6 +820,7 @@ _TAIL_LIST = frozenset({"and", "or", "&"})
 _TAIL_DETERMINERS = frozenset(
     {"a", "an", "the", "its", "their", "this", "these", "those", "each", "both", "all", "every"}
 )
+_TAIL_DEICTICS = frozenset({"this", "these", "those"})
 _TAIL_PREPOSITIONS = frozenset(
     {"for", "of", "in", "into", "on", "at", "under", "per", "with", "from", "by", "via", "as", "within", "over"}
 )
@@ -1079,25 +1125,34 @@ def _tail_text(text: str) -> str:
 def _aside_end(tail: str, pos: int) -> int | None:
     """The end of a bracketed aside after a written object, if it holds only references.
 
-    ``pos`` follows the opening bracket. Paths, modules, rule names, numbers,
-    locators and labels ("corpus") are accounted for; any other word is not.
+    ``pos`` follows the opening bracket. Paths, modules, rule names, numbers
+    and locators are accounted for, each after an optional label ("corpus
+    us/statute/26/1/h"); any other word is not. A label needs its reference,
+    and a separator or list word needs one on each side: "(corpus)", "(corpus,
+    and)" and "(corpus;)" are not accounted for, as before round 14.
     """
-    depth = 1
+    depth, named = 1, False  # ``named``: the last token was a reference
     while pos < len(tail):
         token = _TAIL_TOKEN.match(tail, pos)
         kind, word = token.lastgroup, token.group(0).lower()
         pos = token.end()
-        if kind == "open":
+        if kind in ("space", "mark", "abbrev"):
+            continue
+        if kind in ("module", "directory", "path", "ident", "number", "locator"):
+            named = True
+        elif kind == "open" and not named:
             depth += 1
-        elif kind == "close":
+        elif kind == "close" and named:
             depth -= 1
             if not depth:
                 return pos
-        elif not (
-            kind in ("space", "mark", "module", "directory", "path", "ident", "number", "abbrev", "locator")
-            or (kind == "separator" and word in {",", ";", "/", "&"})
-            or (kind == "word" and (word in _TAIL_LABELS or word in {"and", "or"}))
+        elif named and (
+            (kind == "separator" and word in {",", ";", "/", "&"}) or (kind == "word" and word in {"and", "or"})
         ):
+            named = False
+        elif kind == "word" and word in _TAIL_LABELS and not named:
+            pass  # still needs its reference
+        else:
             return None
     return None
 
@@ -1110,7 +1165,10 @@ def _written_clause_end(tail: str, pos: int, clause: str) -> int | None:
     Z and W"), compound nouns ("Y formulas"), rule names, a bracketed aside of
     references, and destination phrases whose object is an explicitly named
     module ("to Z", "into the Z"; "from Z" for a removal). An edit writes its
-    own object; every other writing clause needs such a destination. The clause
+    own object; every other writing clause needs such a destination. "From Z"
+    after any other write is not accounted for: the grammar cannot tell a
+    source the request reads ("update Y from Z") from a module it changes
+    ("split Y from Z", "move Y from Z to W"). The clause
     ends at the end of the sentence, a stop, a closing bracket, a semicolon, or
     a list word or comma that starts a new clause on a named module. Anything
     else (an anaphor, a pronoun, a description, a further noun phrase, "in
@@ -1126,11 +1184,10 @@ def _written_clause_end(tail: str, pos: int, clause: str) -> int | None:
             pos = token.end()
         elif kind == "word" and (word in destinations or word == "from"):
             target = _EXPLICIT_OBJECT.match(tail, token.end())
-            # "from Z" is a source an edit reads ("update Y from Z") or the
-            # module a removal writes, which reads as work. Any other write
-            # naming it ("move Y from Z to W") writes Z too, though Z reads as
-            # an import, so its destination is not resolved.
-            if not target or (word == "from" and clause not in ("edit", "removal")):
+            # "from Z" names the module a removal writes, which reads as work.
+            # After any other write, Z may be changed too ("split Y from Z",
+            # "move Y from Z to W", "fix Y from Z"), so nothing is resolved.
+            if not target or (word == "from" and clause != "removal"):
                 return None
             resolved = resolved or word in destinations
             pos = target.end()
@@ -1189,11 +1246,14 @@ def _tail_accounted(tail: str) -> bool:
     explicitly named module (``_written_clause_end``).
     """
     tail = re.sub(r"\bas is\b", "as-is", tail, flags=re.IGNORECASE)
+    # "As well as" joins a clause as "and" does: "as well as fix the pipeline".
+    tail = re.sub(r"\bas\s+well\s+as\b", "and", tail, flags=re.IGNORECASE)
     state, pending = "after", False
     head = False  # the last token was a head word of a phrase
     gerund = False  # a pending modifier is a present participle, which may take an object
     module_head = True  # the last head was the released module (or a later one) itself
     opened = False  # a separator, list word or bracket has started a new clause
+    placing = False  # the last token was a preposition of the module's own predicate
     listed = None  # ``opened`` before the separators of a list that may go on with a module
     pos = 0
     while pos < len(tail):
@@ -1205,7 +1265,17 @@ def _tail_accounted(tail: str) -> bool:
             continue
         after_head, head = head, False
         after_module, module_head = module_head, False
+        placed, placing = placing, False
         if kind == "word" and any(part in _TAIL_ANAPHORS for part in word.split("-")):
+            return False
+        # Invariant (round 15): a demonstrative points back at a module too.
+        # "This", "these" and "those" stand only in the module's own placement
+        # ("do not import X into this module"): "for changes on this module"
+        # is not accounted for. A request's word in a phrase ("for its
+        # update", "for these fixes", "as well as fix the pipeline") is a
+        # request the grammar cannot place, whatever owns it; "from its
+        # statutory elements" is accounted for.
+        if kind == "word" and word in _TAIL_DEICTICS and not placed:
             return False
         listing = kind == "separator" or (kind == "word" and word in _TAIL_LIST)
         if pending and listing and word in (",", "and", "or"):
@@ -1264,6 +1334,9 @@ def _tail_accounted(tail: str) -> bool:
             # "to" takes a named or determined object ("to X", "to the rule"),
             # never a bare word, which would make it an infinitive ("to fix").
             state = "to" if word == "to" else "pp"
+            placing = after_module and not opened
+        elif state in ("to", "noun", "pp", "phrase") and word not in _TAIL_ADJECTIVES and _request_word(word):
+            return False
         elif state == "to":
             if not (_open_word(word) and _modifier(word)):
                 return False
@@ -1353,6 +1426,12 @@ def _modules_in(sentence: str, rest: str = "") -> list[tuple[str, str]]:
             elif _AFFIRMATIVE_DEFERRAL.fullmatch(lead) or deferred_after:
                 kind = DEFERRED
                 released_by_after = bool(deferred_after)
+            elif out and kind == WORK and _BARE_FROM.fullmatch(lead):
+                # Invariant (round 15): "from X" straight after a module that
+                # is work ("split Y from X", "move Y from X to Z", "fix Y from
+                # X") may be changed with it, so X is work too. "From X" reads
+                # as a source only under its own verb or after an import.
+                kind = WORK
             elif _AFFIRMATIVE_IMPORT.fullmatch(lead):
                 kind = IMPORT
             elif _DEFERS.search(tail) or _IMPORTS.search(tail) or _DEFERRED_AFTER.match(after):
