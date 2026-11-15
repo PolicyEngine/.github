@@ -2331,9 +2331,10 @@ def _stands_alone(markdown: str) -> bool:
         if after is not None and not (_ATX_HEADING.match(after) or _FIELD_LABEL.match(after)):
             return False
         if not (_FINDING_FENCE.match(lines[i]) or _YAML_KEY.match(lines[i])):
-            block = bool(_QUOTE.match(lines[end - 1]) or _FENCE.match(lines[end - 1]))  # a quote or a code block
+            span = lines[i + 1 : end]
+            block = any(_QUOTE.match(line) or _FENCE.match(line) for line in span)  # a quote or a code block
             fenced = False
-            for line in lines[i + 1 : end]:
+            for line in span:
                 if _FENCE.match(line):
                     fenced = not fenced
                 elif fenced or not line.strip():

@@ -204,3 +204,31 @@ def test_a_bold_line_among_a_plain_finding_s_paragraphs_releases_nothing():
     ):
         row, ready = plain_finding(tail)
         assert row.review_finding and PIPELINE not in row.work_modules and ready == 1, tail
+
+
+def test_a_finding_in_a_code_block_stands_alone_too():
+    # The finding as a code block under its heading: text between the heading and the block, or
+    # below the block, is left out by the finding's reader, so nothing is released. The fence may
+    # run to the end of the text.
+    content = REQUEST.removeprefix("> ") + f"\nSee {PIPELINE}.\n"
+    quote = REQUEST
+
+    def issue(block: str):
+        body = REQUEST_ONLY_BODY.replace(quote, block)
+        if not block.rstrip("\n").endswith("```"):
+            body = body.split("\n## Companion tests")[0].replace("## Law", "## Companion tests\n\n- one case\n\n## Law")
+        row = issue_inputs(RS_US, {"number": 1, "body": body}, [])
+        holds = WorkHolds("Assembled pipelines need a hand edit.", {PIPELINE: ("pipeline file name",)})
+        return row, to_json(plan([row], corpus={"us/statute/26/32/d"}, work_holds=holds), 10)["summary"]["ready_issues"]
+
+    for block in (
+        f"Fix the pipeline first:\n\n```\n{content}```\n",
+        f"Fix the pipeline first:\n\n```\n{content}",  # no closing fence
+        f"```\n{content}```\nThen fix it.\n",
+        f"```\n{content}```\n\n- fix it.\n",
+    ):
+        row, ready = issue(block)
+        assert row.review_finding and PIPELINE in row.work_modules and ready == 0, block
+    # Control: the code block alone under its heading releases the reference.
+    row, ready = issue(f"```\n{content}```\n")
+    assert row.review_finding and PIPELINE not in row.work_modules and row.dispatchable and ready == 1
