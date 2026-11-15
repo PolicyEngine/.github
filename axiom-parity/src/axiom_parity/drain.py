@@ -1083,17 +1083,22 @@ def _readings(text: str, markdown: str | None = None) -> list[tuple[str, str, li
 #    starts a list item, to every item of that list ("- To fix:" over "See
 #    X."). A code block is open too, and a heading reaches every block up to
 #    the next heading.
-# 5. Its neighbours leave it alone. The block before it (before the items it
-#    is nested under) is read back from its end to its nearest sentence that
-#    names a module: a sentence there that holds a word of request or defect
-#    ("Fix the rate.", "The rate needs an update.", "The formula is wrong."),
-#    or a naming sentence that describes a module without naming it ("Add Y
-#    to the pipeline.", "Fix Y in the following module."), keeps X work. The
-#    block after it (after everything nested in its item) is read up to its
-#    first sentence that names a module: a sentence there that points back
-#    (``_points_back``), stands for a place or manner named before ("there",
-#    "too", "likewise") or holds such a word keeps X work ("See X." before
-#    "Fix the rate.", "- it needs a rule." or "Add Y there.").
+# 5. Nothing but references follows it, and what stands before it leaves it
+#    alone. Every sentence after its paragraph, to the end of the findings, is
+#    such a form too: a reference goes last, so no later text, in any wording
+#    and at any distance, can ask for work on it ("See X." before "Fix it.",
+#    "Notes." then "Fix the rate.", "Details:" over "- it needs a rule.",
+#    "Encode Y." then "Fix both.", "The pipeline should use the 2026 rate.").
+#    The text before it is read back over every earlier block. A sentence
+#    anywhere there that describes a module without naming it, or points at
+#    what follows ("Add Y to the pipeline.", "Fix Y in the following
+#    module.", "The pipeline below should use the 2026 rate."), keeps X work,
+#    and so does a word of request or defect ("Fix the rate.", "The rate
+#    needs an update.", "The formula is wrong.") in a sentence between X and
+#    the nearest sentence before it that is no such form and names a module.
+#    When no sentence before it names a module, each must be such a form: a
+#    sentence with no module before it to speak of may speak of X ("The rate
+#    should rise." before "See X.").
 #
 # Paragraphs are read as CommonMark could read them, never narrower
 # (``_blocks``): a line joins the paragraph above it unless it certainly
@@ -1194,16 +1199,9 @@ _ASKED_DEFECT = frozenset(
 # pipeline", "this module", "these two files") or a pointer forward ("the
 # following", "below"). A pronoun points back, not forward ("Encode it at Y.").
 _DESCRIBED = re.compile(
-    r"\b(?:(?:the|this|that|these|those)\s+(?:\w+\s+)?(?:modules?|files?|paths?|pipelines?|polic(?:y|ies)|yamls?)"
+    r"\b(?:(?:the|this|that|these|those|both|all|each|every|either|any|said|such)\s+(?:of\s+)?(?:[\w'’-]+\s+){0,3}"
+    r"(?:modules?|files?|paths?|pipelines?|polic(?:y|ies)|yamls?)"
     r"|following|below)\b",
-    re.IGNORECASE,
-)
-
-
-# Words that stand for a place or a manner named before: "Add Y there.", "Fix Y too.".
-_POINTS_THERE = re.compile(
-    r"\b(?:there|thereto|therein|thereof|thereon|here|hereto|herein|accordingly|likewise|similarly|too|also|"
-    r"as\s+well|again|ditto)\b",
     re.IGNORECASE,
 )
 
@@ -1220,7 +1218,7 @@ def _asks(sentence: str) -> bool:
 
 
 def _points_ahead(sentence: str) -> bool:
-    """Does a sentence that names a module also point at one it does not name?"""
+    """Does the sentence describe a module it does not name, or point at what follows it?"""
     return bool(_DESCRIBED.search(_MODULE_NAME.sub(" MODULE ", sentence)))
 
 
@@ -1423,32 +1421,32 @@ def _released(markdown: str) -> dict[str, set[str]]:
             if block.items and (block.items[: len(own)] == own or block.items == own[: len(block.items)])
         }
 
+    last_word = [True] * len(blocks)  # is every block after this one a reference paragraph?
+    for index in range(len(blocks) - 2, -1, -1):
+        last_word[index] = last_word[index + 1] and inert[index + 1]
+
+    def left_alone(index: int) -> bool:
+        """Does the text before the block leave it alone (condition 5)?"""
+        said = False  # a sentence read back so far is no reference
+        named = False  # one of them names a module: what stands before it speaks of that one
+        for other in range(index - 1, -1, -1):
+            for sentence in reversed(sentences[other]):
+                if blocks[other].kind == "paragraph" and _inert(sentence):
+                    continue
+                said = True
+                if _points_ahead(sentence) or (not named and _asks(sentence)):
+                    return False
+                named = named or _names_module(sentence)
+        return named or not said
+
     allowed: dict[str, set[str]] = {}
     failed: set[str] = set()
     seen: Counter[str] = Counter()
     for index in range(len(blocks)):
         if not any(names[index]):
             continue
-        near = family(index) if inert[index] and index not in reached else set()
-        free = bool(near) and all(inert[other] for other in near)
-        if free:
-            before = next((other for other in range(index - 1, -1, -1) if other not in near), None)
-            after = next((other for other in range(index + 1, len(blocks)) if other not in near), None)
-            for sentence in reversed(sentences[before]) if before is not None else ():
-                if _names_module(sentence):
-                    free = _inert(sentence) or not _points_ahead(sentence)
-                    break
-                if not _inert(sentence) and _asks(sentence):
-                    free = False
-                    break
-            for sentence in sentences[after] if free and after is not None else ():
-                loose = (
-                    _points_back(sentence) or _asks(sentence) or _POINTS_THERE.search(_MODULE_NAME.sub(" ", sentence))
-                )
-                if loose and not _inert(sentence):
-                    free = False
-                if not free or _names_module(sentence):
-                    break
+        near = family(index) if inert[index] and index not in reached and last_word[index] else set()
+        free = bool(near) and all(inert[other] for other in near) and left_alone(index)
         for sentence, named in zip(sentences[index], names[index], strict=True):
             kind = _release_kind(sentence) if free else None
             seen.update(named)

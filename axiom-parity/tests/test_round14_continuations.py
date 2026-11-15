@@ -94,8 +94,13 @@ def test_a_terminal_semicolon_keeps_a_nested_edit():
     for control in (f"- See {PIPELINE}:\n  - fix it.", f"- See {PIPELINE}; fix it."):
         row, ready = held(control)
         assert PIPELINE in row.work_modules and ready == 0, control
-    row, ready = held(f"- See {PIPELINE}.\n- Nothing else.")
-    assert reading(f"- See {PIPELINE}.\n- Nothing else.") == {MENTION} and row.dispatchable and ready == 1
+    # (Round 15: nothing but references follows a released reference, so the unit releases
+    # as the last item, after an item that names its own module; before any other item the
+    # readers still propose the release and the closed grammar keeps the module work.)
+    row, ready = held(f"- The rate is 5%.\n- See {PIPELINE}.")  # after the fixture's own request on its module
+    assert reading(f"- Encode {OTHER}.\n- See {PIPELINE}.") == {MENTION} and row.dispatchable and ready == 1
+    assert proposed(f"- See {PIPELINE}.\n- Nothing else.") == {MENTION}
+    assert reading(f"- See {PIPELINE}.\n- Nothing else.") == {WORK}
     row, ready = held(f"- See {PIPELINE}.")
     assert reading(f"- See {PIPELINE}.") == {MENTION} and row.dispatchable and ready == 1
     # What is nested under the item is part of it: only a reference there releases (round 15).
@@ -121,19 +126,20 @@ def test_a_terminal_semicolon_keeps_a_nested_edit():
 )
 @settings(max_examples=600, deadline=None, database=None)
 def test_a_module_before_a_trailing_separator_stays_work(opener, sep, form, request, wrapper):
-    template, closing, _, apart = form
+    template, closing, _, _ = form
     head = f"{opener} {wrapper}{PIPELINE}{wrapper}"
     tail = request[0].upper() + request[1:] if template.endswith(". {tail}") else request
     block = template.format(head=head, sep=sep, tail=tail)
     assert reading(block) == {WORK}, (block, kinds(block))
     assert PIPELINE in held(block)[0].work_modules, block
-    # Control: the same unit closed by a full stop, with no request after it,
-    # releases when what follows is a block apart from it. The readers propose
-    # the release in every form; the closed grammar (round 15) keeps the module
-    # work where the text after it shares its paragraph or is nested under it.
+    # Control: the same unit closed by a full stop, with no request after it.
+    # The readers propose the release in every form; the closed grammar (round
+    # 15) keeps the module work wherever other text follows it, and releases
+    # the closed unit with nothing after it.
     control = template.format(head=head, sep=closing, tail="Nothing else.")
     assert WORK not in proposed(control), (control, kinds(control))
-    assert (WORK not in reading(control)) == apart, (control, kinds(control))
+    assert reading(control) == {WORK}, (control, kinds(control))
+    assert WORK not in reading(f"{head}."), head
 
 
 INTROS = ["Fix the following", "Update these modules", "Add the rate to", "Encode it with", "Edit the rules in"]
@@ -166,7 +172,7 @@ def test_a_continuation_reads_after_its_open_clause(intro, sep, form, continuati
     # a continuation unit of its own stays work even after "Do not import:"
     # (inline, "Do not import: X formulas." is a deferral of X).
     # ("Fix the following." and "Add the rate to." stay open: their words cannot end a predicate.)
-    control = template.format(head="Nothing else", sep=closing, tail=capital)
+    control = template.format(head=f"Encode {OTHER}", sep=closing, tail=capital)
     assert WORK not in proposed(control), (control, kinds(control))
     assert (WORK not in reading(control)) == apart, (control, kinds(control))
     bare = template.format(head="Do not import", sep=sep, tail=f"{PIPELINE} formulas.")
@@ -212,9 +218,15 @@ def test_a_leading_separator_or_an_unclosed_intro_continues_the_unit_before(
     assert reading(block) == {WORK}, (block, kinds(block))
     assert PIPELINE in held(block)[0].work_modules, block
     # Controls: a closed unit, or a sibling an unclosed item does not introduce, is proposed for release,
-    # and the closed grammar (round 15) releases the closed unit before a block apart from it.
-    for control in (f"- {head}.\n  - Nothing else.", f"- {head}\n- Nothing else.", f"{head}. Nothing else."):
+    # and the closed grammar (round 15) releases the closed unit only with nothing but references after it.
+    for control in (
+        f"- {head}.\n  - Nothing else.",
+        f"- {head}\n- Nothing else.",
+        f"{head}. Nothing else.",
+        f"- {head}.\n- Nothing else.",
+        f"{head}.\n\nNothing else.",
+    ):
         assert WORK not in proposed(control), (control, kinds(control))
         assert reading(control) == {WORK}, (control, kinds(control))
-    for control in (f"- {head}.\n- Nothing else.", f"{head}.\n\nNothing else.", f"{head}."):
+    for control in (f"- Encode {OTHER}.\n- {head}.", f"Encode {OTHER}.\n\n{head}.", f"{head}."):
         assert WORK not in reading(control), (control, kinds(control))

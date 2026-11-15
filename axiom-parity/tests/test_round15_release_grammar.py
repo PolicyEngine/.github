@@ -200,35 +200,30 @@ BASES = [
 def test_a_reference_paragraph_releases():
     # The controls of review r14's findings 1 and 2: a bare reference, and a unit that ends in a
     # full stop with no request after it, release. So does every closed form, alone, as a list
-    # item, under a reference item, before a block that asks for nothing and in any wrapper.
+    # item, under a reference item, after a block that names its own module and in any wrapper.
     for form, kind in FORMS:
         block = fill(form)
         releases(block, kind)
         for control in (
             f"- {block}",
             f"- See {OTHER}.\n  - {block}",
-            f"- {block}\n- Nothing else.",
-            f"{block}\n\nNothing else.",
-            f"Nothing else.\n\n{block}",
+            f"- Encode {THIRD}.\n- {block}",
+            f"Encode {THIRD}.\n\n{block}",
+            f"Encode {THIRD}. Nothing else.\n\n{block}",
             block.replace(PIPELINE, f"`{PIPELINE}`"),
             block.replace(PIPELINE, f"**{PIPELINE}**"),
         ):
             assert reading(control) == {kind}, (control, kinds(control))
-    # The shapes the frozen issues keep released (rulespec-us #1474 and #1422).
-    releases(
-        fill(
-            "- a_b_c (services under 1397ee(a)(1)(D)(ii)).\n\nImports: {P}#child and {H}#payment_status.\n\n"
-            "Required outputs, each with verbatim proof excerpts from the corpus provision:\n1. x_y_z (Judgment)."
-        ),
-        IMPORT,
-    )
-    releases(
-        fill(
-            "- the State income tax.\n\nDeclare a deferred dependency on {P} (#a_b_c, #d_e_f). Do not import it.\n\n"
-            "Required outputs, each with verbatim proof excerpts from the corpus provision:\n1. x_y_z (Judgment)."
-        ),
-        DEFERRED,
-    )
+    # The shapes rulespec-us #1474 and #1422 have: an import or a deferral before the list of
+    # required outputs. Text follows the reference, so both are held now (released at 4e6cc5a,
+    # run refix7-f12-1-frozen-rel-wt0); the same reference last in the finding releases.
+    outputs = "Required outputs, each with verbatim proof excerpts from the corpus provision:\n1. x_y_z (Judgment)."
+    imports = "Imports: {P}#child and {H}#payment_status."
+    deferral = "Declare a deferred dependency on {P} (#a_b_c, #d_e_f). Do not import it."
+    keeps_the_owner_hold(fill(f"- a_b_c (services under 1397ee(a)(1)(D)(ii)).\n\n{imports}\n\n{outputs}"))
+    keeps_the_owner_hold(fill(f"- the State income tax.\n\n{deferral}\n\n{outputs}"))
+    releases(fill(f"Encode {{I}}.\n\n- a_b_c (services under 1397ee(a)(1)(D)(ii)).\n\n{outputs}\n\n{imports}"), IMPORT)
+    releases(fill(f"Encode {{I}}.\n\n- the State income tax.\n\n{outputs}\n\n{deferral}"), DEFERRED)
     # The shape rulespec-uk #386 has: a denial that ends a paragraph of other sentences is held now.
     keeps_the_owner_hold(
         fill("The words are not in the corpus row: say in the summary that they are omitted. Do not import {P}.")
@@ -258,13 +253,19 @@ PLACES = [
     "    {base}.",  # indented code
     "```\n{base}.\n```",  # a fence
     "| {base}. | {words} |",  # a table row
+    "{base}.\n\n{Words}.",  # the paragraph after it
+    "{base}.\n\nSee {H}.\n\n{Words}.",  # a later paragraph, after another reference
+    "- {base}.\n- {Words}.",  # the item after it
+    "{base}.\n\nEncode {H}.\n\n{Words}.",  # a later paragraph, after another module's request
+    "{base}.\n\n## {Words}",  # a heading after it
 ]
 
 
 # Invariant (round 15, structural): a module reads IMPORT, DEFERRED or MENTION
-# only in a reference paragraph. Any other words in its sentence, its
-# paragraph or its list item keep it work, whatever they say: the release
-# grammar is closed, so it has no wording to miss.
+# only in a reference paragraph that nothing but references follows. Any other
+# words in its sentence, its paragraph or its list item, or anywhere after it
+# in the findings, keep it work, whatever they say: the release grammar is
+# closed, so it has no wording to miss.
 @given(base=st.sampled_from(BASES), words=WORDS, join=JOINS, place=st.sampled_from(PLACES), data=st.data())
 @settings(max_examples=1500, deadline=None, database=None)
 def test_any_other_words_around_a_reference_keep_it_work(base, words, join, place, data):
@@ -278,6 +279,20 @@ def test_any_other_words_around_a_reference_keep_it_work(base, words, join, plac
         assert PIPELINE in held(block)[0].work_modules, block
     # Control: the reference alone releases.
     assert reading(fill(base[0] + ".")) == {base[1]}
+
+
+# Before a reference, words that follow no module's name have none but the
+# reference's to speak of, so they keep it work too, whatever they say; after
+# a sentence that names a module of its own they speak of that one.
+@given(base=st.sampled_from(BASES), words=WORDS, join=JOINS, form=st.sampled_from(["{0}.\n\n{1}.", "- {0}.\n- {1}."]))
+@settings(max_examples=300, deadline=None, database=None)
+def test_words_before_a_reference_with_no_module_to_speak_of_keep_it_work(base, words, join, form):
+    text = join.join(words)
+    assume(not re.match(r"(?i)(do|don|must|never)\b", text))
+    text = text[0].upper() + text[1:]
+    assert reading(fill(form.format(text, base[0]))) == {WORK}, text
+    # Control: words that ask for nothing, after a sentence that names its own module.
+    assert reading(fill(form.format("Encode {H}. The rate is 5%", base[0]))) == {base[1]}
 
 
 # Lines that CommonMark keeps in the paragraph above them: none starts a block of its own.
@@ -340,10 +355,10 @@ def test_a_line_markdown_keeps_in_the_paragraph_is_part_of_it(base, line, tail, 
     assert len([b for b in _blocks(block) if PIPELINE in b.text]) == 1
     assert all(tail.rstrip(".") in b.text for b in _blocks(block) if PIPELINE in b.text), (block, _blocks(block))
     assert reading(block) == {WORK}, (block, kinds(block))
-    # Control: after a blank line the same words are a paragraph apart, and one that asks for nothing releases.
+    # Control: a paragraph apart, after another module's own paragraph or item, the reference releases.
     if stop:
-        assert reading(f"{head}\n\nNothing else.") == {base[1]}
-        assert reading(f"{head}\n- Nothing else.") == {base[1]}
+        assert reading(f"Encode {OTHER}. Nothing else.\n\n{head}") == {base[1]}
+        assert reading(f"- Encode {OTHER}.\n- {head}") == {base[1]}
 
 
 def test_the_paragraphs_the_release_grammar_reads():
@@ -400,8 +415,13 @@ BEFORE_ASKS = [
     "Fix {H} in the following module.",
     "Fix the following:",
     "Notes",
+    "The pipeline below should use the 2026 rate.",
+    "Every module below takes the 2026 rate.",
+    "Add a rule to the taxable income pipeline. Encode {H}.",
+    "Fix the modules below. Encode {H}.",
+    "Encode {H}. Fix the rate.",
 ]
-AFTER_ASKS = [
+AFTER = [
     "Fix the rate.",
     "The rate needs an update.",
     "The formula is wrong.",
@@ -413,25 +433,40 @@ AFTER_ASKS = [
     "Fix {H} too.",
     "Add {H} to that module.",
     "Add {H} to the pipeline.",
+    "Nothing else.",
+    "The rate is 5%.",
+    "The rate should rise.",
+    "The pipeline should use the 2026 rate.",
+    "Encode {H}.",
+    "{H} and the taxable income pipeline should use the 2026 rate.",
+    "State each element with its proof excerpt.",
 ]
-QUIET = ["Nothing else.", "The rate is 5%.", "Encode {H}.", "See {H}.", "State each element with its proof excerpt."]
+QUIET = [
+    "Encode {H}.",
+    "Encode {H}. Nothing else.",
+    "Encode {H}. The rate is 5%.",
+    "Encode {H}. State each element with its proof excerpt.",
+    "See {H}.",
+    "Do not import {H}.",
+]
 APART = ["{before}\n\n{after}", "- {before}\n- {after}", "{before}\n\n- {after}", "1. {before}\n2. {after}"]
 
 
-# Invariant (round 15): a reference paragraph's neighbours leave it alone. A
-# request or a defect in the block right before it that names no module, a
-# description there of a module it does not name, and a sentence right after
-# it that points back or asks without naming a module all keep the module
-# work; a neighbour that asks for nothing, or names its own module, does not.
+# Invariant (round 15): nothing but references follows a released reference,
+# and what stands before it leaves it alone. Any other sentence after it keeps
+# the module work, whatever it says. So does a request or a defect before it
+# that names no module, and a sentence before it that describes a module it
+# does not name or points at what follows; a block before it that names its
+# own module, or is a reference itself, does not.
 @given(
     base=st.sampled_from(BASES),
     form=st.sampled_from(APART),
     before=st.sampled_from(BEFORE_ASKS),
-    after=st.sampled_from(AFTER_ASKS),
+    after=st.sampled_from(AFTER),
     quiet=st.sampled_from(QUIET),
 )
 @settings(max_examples=600, deadline=None, database=None)
-def test_a_neighbour_that_asks_keeps_a_reference_work(base, form, before, after, quiet):
+def test_a_neighbour_keeps_a_reference_work(base, form, before, after, quiet):
     reference = fill(base[0]) + "."
     block = form.format(before=fill(before), after=reference)
     assert reading(block) == {WORK}, (block, kinds(block))
@@ -439,10 +474,44 @@ def test_a_neighbour_that_asks_keeps_a_reference_work(base, form, before, after,
     block = form.format(before=reference, after=fill(after))
     assert reading(block) == {WORK}, (block, kinds(block))
     assert PIPELINE in held(block)[0].work_modules, block
-    # Controls: a neighbour that asks for nothing, or names its own module, leaves the reference released.
-    for control in (form.format(before=fill(quiet), after=reference), form.format(before=reference, after=fill(quiet))):
-        assert reading(control) == {base[1]}, (control, kinds(control))
+    # Controls: a block before it that names its own module, a reference before it, and a
+    # reference or a denial on a pronoun after it, leave the reference released.
+    control = form.format(before=fill(quiet), after=reference)
+    assert reading(control) == {base[1]}, (control, kinds(control))
+    assert PIPELINE not in held(control)[0].work_modules, control
     assert reading(form.format(before=reference, after="Do not import it.")) == {base[1]}
+    assert reading(form.format(before=reference, after=fill("See {H}."))) == {base[1]}
+
+
+# Text after a reference, at any distance and in any block, keeps it work. Each released the
+# pipeline at 4e6cc5a (run refix7-f12-1-all-4e6cc5a); the first five follow review r14's
+# finding 2 (the next unit continues the predicate) across blocks.
+LATER = [
+    "See {P}.\n\nDetails:\n- it needs a rule.",
+    "See {P}.\n\nRequired outputs:\n1. the pipeline's rate must rise to 5%.",
+    "See {P}.\n\nNotes.\n\nFix it.",
+    "See {P}.\n\nNotes.\n\nFix the rate.",
+    "See {P}.\n\nEncode {H}.\n\nFix both.",
+    "See {P}.\n\nEncode {H}.\n\nUpdate them.",
+    "See {P}.\n\nThe pipeline should use the 2026 rate.",
+    "See {P}.\n\nThe rate should rise.",
+    "See {P}.\n\n{H} and the taxable income pipeline should use the 2026 rate.",
+    "See {P}.\n\nEncode {H}.",
+    "The pipeline below should use the 2026 rate.\n\nNotes.\n\nSee {P}.",
+]
+
+
+def test_text_after_a_reference_keeps_it_work():
+    for block in LATER:
+        keeps_the_owner_hold(fill(block))
+    # In a finding of its own that names no module before it, a sentence before the reference
+    # may speak of it (released at 4e6cc5a, by reading: the before-scan there read "asks" only).
+    assert reading(fill("The rate should rise.\n\nSee {P}.")) == {WORK}
+    # Controls: the reference last, after a block that names its own module, releases.
+    releases(fill("Encode {H}.\n\nSee {P}."))
+    releases(fill("- Encode {H}.\n- See {P}."))
+    releases(fill("See {H}.\n\nSee {P}."))
+    releases(fill("Encode {H}.\n\nImports: {P}#child and {I}#x_y."), IMPORT)
 
 
 def test_an_open_block_a_heading_and_a_code_block_reach_what_follows():
@@ -458,9 +527,10 @@ def test_an_open_block_a_heading_and_a_code_block_reach_what_follows():
     ):
         keeps_the_owner_hold(fill(block))
     # Controls: a closed block reaches nothing, and a new heading ends what a heading reaches.
-    releases(fill("Nothing else.\n\n- See {H}.\n- See {P}."))
+    releases(fill("Encode {I}.\n\n- See {H}.\n- See {P}."))
     assert reading(fill("## To fix\n\nNotes.\n\n## Background\n\nSee {P}.")) == {WORK}  # the new heading reaches it
-    assert reading(fill("Notes.\n\nSee {P}.\n\n## Background\n\nMore.")) == {MENTION}
+    assert reading(fill("Encode {H}.\n\nSee {P}.")) == {MENTION}
+    assert reading(fill("Encode {H}.\n\nSee {P}.\n\n## Background")) == {WORK}  # a heading follows it
 
 
 BREAKS = ["\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\N{LINE SEPARATOR}", "\N{PARAGRAPH SEPARATOR}"]
@@ -473,22 +543,22 @@ BREAKS = ["\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\N{LINE SEPARATOR}", 
 @given(
     base=st.sampled_from(BASES),
     mark=st.sampled_from(BREAKS),
-    where=st.sampled_from(["blank line", "marker", "heading", "body", "comment"]),
+    where=st.sampled_from(["blank line", "marker", "indent", "body", "comment"]),
 )
 @settings(max_examples=200, deadline=None, database=None)
 def test_an_issue_with_a_line_separator_releases_nothing(base, mark, where):
     reference = fill(base[0]) + "."
     quote = {
-        "blank line": f"> {reference}\n> {mark}\n> The rate is 5%.",  # Markdown: one paragraph
-        "marker": f"> {reference}\n> -{mark}the rate is 5%.",  # Markdown: no list item
-        "heading": f"> {reference}\n> #{mark}The rate is 5%.",  # Markdown: no heading
+        "blank line": f"> Encode {OTHER}.\n> {mark}\n> {reference}",  # Markdown: one paragraph
+        "marker": f"> Encode {OTHER}.\n> -{mark}{reference}",  # Markdown: no list item
+        "indent": f"> Encode {OTHER}.\n>\n> {mark}{reference}",  # Markdown: the line starts with the mark
     }.get(where, f"> {reference}")
     body = READY_ISSUE_BODY.replace("\n## Companion tests", f"\n{quote}\n\n## Companion tests")
     comments = (f"A note{mark}here.",) if where == "comment" else ()
     row, ready = plan_for(body + (f"\nSee also{mark}the notes.\n" if where == "body" else ""), comments)
     assert PIPELINE in row.work_modules and ready == 0, (where, repr(mark))
-    # Control: the same issue with a space in its place releases the reference (a blank line, a
-    # list item or a heading then stands apart from it and asks for nothing).
+    # Control: the same issue with a space in its place releases the reference (a blank line or
+    # a list marker then sets it apart from the request before it, which names its own module).
     row, ready = plan_for(body.replace(mark, " "), tuple(comment.replace(mark, " ") for comment in comments))
     assert PIPELINE not in row.work_modules and ready == 1, (where, repr(mark))
 

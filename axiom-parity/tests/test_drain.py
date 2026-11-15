@@ -588,12 +588,12 @@ def test_a_numbered_worklist_of_modules_is_all_targets():
 
 def test_a_deferral_covers_only_its_own_clause():
     blocked = {"us/statutes/26/1/c.yaml"}
-    # Each reference stands in a paragraph of its own (the closed release grammar, round 15).
+    # Each reference stands in a paragraph of its own, last in the finding (the closed release grammar, round 15).
     both = issue_inputs(
         "R",
         _with_finding(
-            "Import us/statutes/26/1/c.yaml.\n\nDo not import us/statutes/26/1/h.yaml.\n\n"
-            "Preserve all statutory proof excerpts and pass the provided companion cases."
+            "Encode us/statutes/26/32/d.yaml. Preserve all statutory proof excerpts and pass the provided "
+            "companion cases.\n\nImport us/statutes/26/1/c.yaml.\n\nDo not import us/statutes/26/1/h.yaml."
         ),
         [],
     )
