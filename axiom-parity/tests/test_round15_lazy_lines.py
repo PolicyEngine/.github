@@ -30,14 +30,19 @@ def test_a_lazy_line_under_a_quoted_finding_is_read_with_it():
     # The finding handed to the dispatcher is still the quote alone.
     assert "and fix it" not in row.review_finding
     # A blank line ends the quote's paragraph, and so does a line that starts a block of its own.
-    # What stands there is outside the finding and the drain does not read it, so nothing is
-    # released (below: a finding that does not stand alone). Each released the pipeline at
-    # c7f5561 and at d6300bb (runs refix9-f12-1-prev2-c7f5561, refix9-f12-1-r9-head).
+    # What stands there is outside the finding, so nothing is released (below: a finding that
+    # does not stand alone). Each released the pipeline at c7f5561 and at d6300bb (runs
+    # refix9-f12-1-prev2-c7f5561, refix9-f12-1-r9-head).
     for lazy in ("\n\nFix the rate.", "\n- fix it.", "\n```\nfix it\n```"):
         row, ready = held(f"See {PIPELINE}.", lazy)
         assert PIPELINE in row.work_modules and not row.dispatchable and ready == 0, lazy
-    # Controls: a heading or a bold label after a blank line ends the finding's section.
-    for lazy in ("", "\n## Notes", "\n\n## Notes\n\nFix the rate.", "\n\n**Notes:** none."):
+    # So does a heading or a bold label whose own words are not another field's name: the
+    # words may be the request. Each released the pipeline at 75b923c (run refix9-f12-2-prev-75b923c).
+    for lazy in ("\n## Notes", "\n\n## Notes\n\nFix the rate.", "\n\n**Notes:** none.", "\n\n## Then fix it"):
+        row, ready = held(f"See {PIPELINE}.", lazy)
+        assert PIPELINE in row.work_modules and not row.dispatchable and ready == 0, lazy
+    # Controls: the heading of another field ends the finding's section, with or without a blank line.
+    for lazy in ("", "\n## Required outputs\n\nFix the rate.", "\n\n## Law (verbatim)\n\n> Fix the rate."):
         row, ready = held(f"See {PIPELINE}.", lazy)
         assert PIPELINE not in row.work_modules and row.dispatchable and ready == 1, lazy
 
@@ -74,6 +79,13 @@ AFTER = [
     "\nAnd add us/statutes/26/1/h.yaml to the former module.\n",
     "\n**Fix it too.**\n",
     "\n- **Then** fix it.\n",
+    # A bold label or a heading that is not another field's own (verify8-f12-1, L2, L3 and L5).
+    "\n**Note:** fix it.\n",
+    "\n- **Also:** fix it.\n",
+    "\n**Also fix it:** now.\n",
+    "\n**Module path:** `us/statutes/26/32/d.yaml`, and fix the one above.\n",
+    "\n## Then fix it\n",
+    "\n## Notes\n\nFix it.\n",
 ]
 # Text between the finding's heading and its quote.
 BEFORE = ["Fix the pipeline first:\n\n", "Paste this, then fix the module it names last:\n", "- to fix:\n\n"]
@@ -88,12 +100,12 @@ NAMED_ONLY = [
 
 # Invariant (round 15, review r14 finding 2: the next unit continues the
 # predicate): the finding's reader leaves out the text around a quoted
-# finding, which Markdown shows with it under the same heading. The drain
-# does not read that text, so an issue releases nothing unless each finding
-# stands alone: only blank lines between its heading or label and the quote,
-# and only blank lines and fences between the quote and the next heading,
-# bold label or the end of the text. A line that names the finding field and
-# gives no finding releases nothing either.
+# finding, which Markdown shows with it under the same heading. So an issue
+# releases nothing unless each finding stands alone: only blank lines between
+# the line that introduces it and the quote, and only blank lines between the
+# quote and the end of the text or the heading of another field ("## Companion
+# tests"). A line that names the finding field and gives no finding releases
+# nothing either.
 @given(
     after=st.sampled_from(AFTER),
     before=st.sampled_from(BEFORE),
@@ -113,11 +125,11 @@ def test_a_finding_that_does_not_stand_alone_releases_nothing(after, before, nam
     # The finding handed to the dispatcher is the quote alone, as before.
     assert row.review_finding.endswith(f"See {PIPELINE}.")
     # Controls: the finding alone under its heading releases the reference, and so does one that
-    # a bold label follows after a blank line, or a comment that says nothing of the finding.
+    # the heading of another field follows, or a comment that says nothing of the finding.
     for control in (
         around(),
-        around(after="\n**Module path:** `us/statutes/26/32/d.yaml`\n"),
-        around(after="\n- **Module path**: `us/statutes/26/32/d.yaml`\n"),
+        around(after="\n## Required outputs\n\n- `eitc_separated_spouse_not_treated_as_married`\n"),
+        around(after="## Law (verbatim)\n\n> Fix the rate.\n"),
         around(comments=("Thanks, queued.",)),
     ):
         assert PIPELINE not in control[0].work_modules and control[0].dispatchable and control[1] == 1
@@ -183,27 +195,35 @@ def test_a_label_line_markdown_keeps_with_a_plain_finding_is_read_with_it(opener
     assert any(PIPELINE in reason for reason in row.blocked)
     # The finding handed to the dispatcher still leaves the label line out.
     assert request not in row.review_finding
-    # Controls: the reference alone releases, and so does a labelled field of its own after a blank line.
-    for tail in (f"{opener} {PIPELINE}.", f"{opener} {PIPELINE}.\n\n**Module path:** `us/statutes/26/32/d.yaml`"):
-        row, ready = plain_finding(tail)
-        assert row.review_finding and PIPELINE not in row.work_modules and ready == 1, tail
+    # A bold label after a blank line is left out of the finding too, and the reader goes on to the
+    # paragraphs after it, so it releases nothing (released at 75b923c, run refix9-f12-2-prev-75b923c).
+    row, ready = plain_finding(f"{opener} {PIPELINE}.\n\n**Module path:** `us/statutes/26/32/d.yaml`")
+    assert row.review_finding and PIPELINE in row.work_modules and ready == 0
+    # Control: the reference alone releases.
+    row, ready = plain_finding(f"{opener} {PIPELINE}.")
+    assert row.review_finding and PIPELINE not in row.work_modules and ready == 1
 
 
 def test_a_bold_line_among_a_plain_finding_s_paragraphs_releases_nothing():
-    # The finding's reader skips a bold line as a label. Among a plain finding's paragraphs only a
-    # field label (bold text with a colon) may be left out: a bold sentence is text the drain did
-    # not read. Each released the pipeline at c7f5561 (run refix9-f12-1-prev3-c7f5561).
-    for bold in ("**Fix the pipeline too.**", "__Then update it__", "- **Fix it**"):
+    # The finding's reader skips a bold line as a label and reads on. No such line may be left
+    # out of a plain finding: a bold sentence is text, and a label's own words may be the request.
+    # The first three released the pipeline at c7f5561 (run refix9-f12-1-prev3-c7f5561), the
+    # labels with a colon at 75b923c (verify8-f12-1's P2; run refix9-f12-2-prev-75b923c).
+    for bold in (
+        "**Fix the pipeline too.**",
+        "__Then update it__",
+        "- **Fix it**",
+        "**Module path:** `us/statutes/26/32/d.yaml`",
+        "**Module path**: `us/statutes/26/32/d.yaml`",
+        "**Also fix it:** now.",
+        "- **Also:** fix it.",
+    ):
         for tail in (f"{bold}\n\nSee {PIPELINE}.", f"See {PIPELINE}.\n\n{bold}"):
             row, ready = plain_finding(tail)
             assert row.review_finding and PIPELINE in row.work_modules and ready == 0, tail
-    # Controls: a field label among the paragraphs or after them leaves the reference released.
-    for tail in (
-        f"**Module path:** `us/statutes/26/32/d.yaml`\n\nSee {PIPELINE}.",
-        f"See {PIPELINE}.\n\n**Module path**: `us/statutes/26/32/d.yaml`",
-    ):
-        row, ready = plain_finding(tail)
-        assert row.review_finding and PIPELINE not in row.work_modules and ready == 1, tail
+    # Control: the paragraphs alone release the reference.
+    row, ready = plain_finding(f"See {PIPELINE}.")
+    assert row.review_finding and PIPELINE not in row.work_modules and ready == 1
 
 
 def test_a_finding_in_a_code_block_stands_alone_too():

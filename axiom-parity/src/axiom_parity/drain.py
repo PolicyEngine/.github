@@ -25,14 +25,11 @@ from .github import GitHub
 from .issue_lint import (
     _ARTIFACT,
     _CORPUS_SINGULAR,
-    _FENCE,
     _FIELD,
-    _FINDING_FENCE,
     _JURIS,
     _LABEL,
     _LIST_MARKER,
     _QUOTE,
-    _YAML_KEY,
     _finding_at,
     expand_braces,
     lint_issue,
@@ -2310,59 +2307,186 @@ def _kept_labels(markdown: str) -> str:
     return "\n".join(out)
 
 
-_ATX_HEADING = re.compile(r" {0,3}#{1,6}(?:[ \t]|$)")
-# A bold label that names a field of the issue: its colon stands inside the
-# emphasis or right after it ("**Module path:** x", "**Module path**: x"). A
-# bold sentence ("**Fix it too.**") is text, not a field.
-_FIELD_LABEL = re.compile(r" {0,3}(?:[-*] +)?(?:\*\*|__)[^*_\n]{1,80}?(?::(?:\*\*|__)|(?:\*\*|__) *:)")
+# Invariant (round 15, layout): the drain releases a module only when it has
+# read every line Markdown shows in each finding's section, from the line that
+# introduces the finding to the end of the text or the heading of another
+# field. The finding's reader (``_finding_at``) judges lines by their shape, so
+# it can end a code block early (at the other fence character, a shorter
+# fence, a closing line with text after it or one indented four columns),
+# keep only the value of a ``review_finding:`` key and drop the rest of its
+# quote or code block, skip a bold line as a label, and stop at a line that
+# only looks like a heading inside a code block. So a second, closed reading
+# must agree with it: an issue releases nothing unless, for each of its
+# findings,
+#
+# - the line that introduces it is one of the closed forms below, at the
+#   margin and outside every code block: a heading whose whole title is the
+#   field's name ("## review_finding", "## review_finding (paste as-is)"),
+#   that name in bold or a cue ("Paste this as `review_finding`:") on a line
+#   that starts a paragraph, or a fence tagged ``review_finding``;
+# - its body is a block quote at the margin (lines that start with ">"; only
+#   blank lines may part two such quotes), a fenced code block at the margin,
+#   or, under a heading, plain paragraphs. A fence closes only as CommonMark 0.31.2 (4.5) closes
+#   it: at a line of its own character, at least as long, within three
+#   columns of the margin, with only spaces after it; else it runs to the end
+#   of the text;
+# - the finding the reader hands over is exactly that body, line for line, so
+#   no line of the section is left out or rewritten; and
+# - after the body only blank lines stand before the end of the text, the
+#   heading of another field, whose whole title comes from a closed list
+#   ("## Companion tests"), or the next finding's own introduction.
+#
+# Any other text in the section, in any wording, keeps every module work: a
+# line between the introduction and the body, a list, paragraph, code block or
+# bold label after it, a heading with other words ("## Then fix it"), words
+# after the field's name ("## review_finding: also fix the pipeline") and a
+# finding given under a ``review_finding:`` key. Markdown's reading of the
+# lines above a finding is followed only as far as it is certain
+# (``_followed``): a fence at the margin is tracked to its closing fence, and
+# a line that may open a block this reading does not follow (a fence indented
+# one to three columns, which may or may not stand in a list item, or a line
+# that starts with "<", which may open an HTML block) leaves every finding
+# after it unreleased.
+#
+_FINDING_TITLE = r"`?review[_ -]finding`?(?: \(paste as-is\))?:?"
+_INTRO_HEADING = re.compile(rf"#{{1,6}} {_FINDING_TITLE} *", re.IGNORECASE)
+_INTRO_BOLD = re.compile(rf"(?:\*\*{_FINDING_TITLE}\*\*|__{_FINDING_TITLE}__):? *", re.IGNORECASE)
+_INTRO_CUE = re.compile(r"(?:paste|use) (?:this|the following) as (?:the )?`?review_finding`?: *", re.IGNORECASE)
+_INTRO_FENCE = re.compile(r"(?P<fence>`{3,}|~{3,}) ?review[_-]?finding *", re.IGNORECASE)
+# A fence that opens a finding's code block: at the margin, with one plain word of information or none.
+_BODY_FENCE = re.compile(r"(?P<fence>`{3,}|~{3,})[A-Za-z0-9_+.-]* *")
+# The heading of another field of the issue: its whole title is the field's name.
+_OTHER_FIELD = re.compile(
+    r"#{1,6} (?:module path|target module|corpus citation|law \(verbatim\)|verbatim law|law|required outputs|"
+    r"companion tests|companion cases):? *",
+    re.IGNORECASE,
+)
+# A fence at the margin (a fence of ticks takes no tick in the rest of its line), and a heading there.
+_MARGIN_FENCE = re.compile(r"(?P<ticks>`{3,})[^`]*|(?P<tildes>~{3,}).*")
+_MARGIN_HEADING = re.compile(r"#{1,6}(?: |$)")
+# A line that may open a block this reading does not follow.
+_UNFOLLOWED = re.compile(r" {0,3}<| {1,3}(?:```|~~~)")
+
+
+def _blank(line: str) -> bool:
+    """Is the line blank to Markdown: nothing but spaces and tabs?"""
+    return not line.strip(" \t")
+
+
+def _flat(text: str) -> str:
+    """The text without the white space at its ends and at the end of each line."""
+    return "\n".join(line.rstrip() for line in text.strip().split("\n"))
+
+
+_OUTSIDE, _UNSURE = -1, -2
+
+
+def _followed(lines: list[str]) -> list[int]:
+    """For each line, where Markdown starts it: outside every code and HTML block, inside a fence, or unsure.
+
+    ``_OUTSIDE`` is certain. A line inside a fence at the margin gets the
+    index of the line that opened it. Only such a fence can hold a line at the
+    margin that starts a block (a heading, a fence, a quote) or follows a
+    blank line: a list item and a quote end before such a line, and with them
+    a fence inside them. So a fence at the margin is followed to the line that
+    closes it, as CommonMark closes it. A fence indented one to three columns
+    may stand at the top level or in a list item, and a line that starts with
+    "<" may open an HTML block, which holds headings and fences as raw text:
+    after either, every line is ``_UNSURE``.
+    """
+    out: list[int] = []
+    fence: tuple[str, int, int] | None = None  # the open fence's character and length, and its line
+    unsure = False
+    for n, line in enumerate(lines):
+        out.append(_UNSURE if unsure else _OUTSIDE if fence is None else fence[2])
+        if unsure:
+            continue
+        if fence is not None:
+            if re.fullmatch(rf" {{0,3}}{re.escape(fence[0])}{{{fence[1]},}} *", line):
+                fence = None
+        elif opened := _MARGIN_FENCE.fullmatch(line):
+            run = opened["ticks"] or opened["tildes"]
+            fence = (run[0], len(run), n)
+        elif _UNFOLLOWED.match(line):
+            unsure = True
+    return out
+
+
+def _intro_at(lines: list[str], i: int) -> str | None:
+    """The closed form in which ``lines[i]`` introduces a finding: "heading", "line" or "fence"."""
+    line = lines[i]
+    if _INTRO_HEADING.fullmatch(line):
+        return "heading"
+    if _INTRO_FENCE.fullmatch(line):
+        return "fence"
+    # Bold text and a cue are paragraph text: they introduce a finding only where they start a
+    # paragraph. Right under another line they may continue its paragraph, its quote or its list item.
+    if (i == 0 or _blank(lines[i - 1])) and (_INTRO_BOLD.fullmatch(line) or _INTRO_CUE.fullmatch(line)):
+        return "line"
+    return None
+
+
+def _ends_section(lines: list[str], i: int) -> bool:
+    """Does ``lines[i]`` end a finding's section: the heading of another field, or the next finding's own?"""
+    return bool(_OTHER_FIELD.fullmatch(lines[i])) or _intro_at(lines, i) is not None
+
+
+def _laid_out(lines: list[str], i: int) -> tuple[str, int] | None:
+    """The finding a closed layout gives at ``lines[i]`` and the index after its last line, or ``None``."""
+    intro = _intro_at(lines, i)
+    if intro is None:
+        return None
+    start = i if intro == "fence" else next((n for n in range(i + 1, len(lines)) if not _blank(lines[n])), None)
+    if start is None:
+        return None
+    fence = (_INTRO_FENCE if intro == "fence" else _BODY_FENCE).fullmatch(lines[start])
+    if fence:
+        closing = re.compile(rf" {{0,3}}{re.escape(fence['fence'][0])}{{{len(fence['fence'])},}} *")
+        close = next((n for n in range(start + 1, len(lines)) if closing.fullmatch(lines[n])), len(lines))
+        return "\n".join(lines[start + 1 : close]), min(close + 1, len(lines))
+    if lines[start].startswith(">"):
+        # Quotes that only blank lines part are read as one text, a blank line between them.
+        stop = n = start
+        while n < len(lines) and (lines[n].startswith(">") or _blank(lines[n])):
+            n += 1
+            if lines[n - 1].startswith(">"):
+                stop = n
+        return "\n".join(
+            _QUOTE.match(line).group(1) if line.startswith(">") else "" for line in lines[start:stop]
+        ), stop
+    if intro != "heading":
+        return None  # bold text and a cue hand over the block right below them, not paragraphs
+    stop = next((n for n in range(start, len(lines)) if _ends_section(lines, n)), len(lines))
+    while stop > start and _blank(lines[stop - 1]):
+        stop -= 1
+    return "\n".join(lines[start:stop]), stop
 
 
 def _stands_alone(markdown: str) -> bool:
-    """Is each finding the only text between its heading or label and the next one?
+    """Does each finding of the text stand alone in its section, in a layout the closed reading follows?
 
-    Invariant (round 15): the finding's reader takes a quote, a code block or
-    the paragraphs under a heading or label that names the finding, and leaves
-    out what stands around it: a line of introduction above a quote ("Fix the
-    pipeline first:"), a list or a paragraph below it ("> See X." over
-    "- fix it.", or over a blank line and "Fix it."), and a bold line among a
-    plain finding's paragraphs ("**Fix it too.**"). Markdown shows that text
-    with the finding, under the same heading, and it may continue the
-    finding's predicate (review r14, finding 2: the next unit continues it).
-    The drain does not read it, so an issue whose findings do not stand alone
-    releases nothing. After a finding, only blank lines and code fences may
-    stand before the next heading, the next field label ("**Module path:**")
-    or the end of the text. Between a heading or label and the quote or code
-    block it introduces, only blank lines may stand, and among a plain
-    finding's paragraphs only a field label may be left out. A line that
-    names the finding field and gives no finding (one too short, unfinished
-    or only promised) leaves text under that name unread, so it releases
-    nothing either.
+    See the first layout invariant above. The walk follows the finding's
+    reader line by line, so it judges exactly the findings the drain reads. A
+    line that names the finding field and gives no finding (one too short,
+    unfinished or only promised) leaves text under that name unread, so it
+    releases nothing either.
     """
     lines = markdown.splitlines()
+    followed = _followed(lines)
     i = 0
     while i < len(lines):
         text, end = _finding_at(lines, i)
         if not text:
             if _FIELD.search(lines[i]):
                 return False
-            i = end
+            i += 1
             continue
-        after = next((line for line in lines[end:] if line.strip() and not _FENCE.match(line)), None)
-        if after is not None and not (_ATX_HEADING.match(after) or _FIELD_LABEL.match(after)):
+        layout = _laid_out(lines, i) if followed[i] == _OUTSIDE else None
+        if layout is None or layout[1] != end or _flat(layout[0]) != _flat(text):
             return False
-        if not (_FINDING_FENCE.match(lines[i]) or _YAML_KEY.match(lines[i])):
-            span = lines[i + 1 : end]
-            block = any(_QUOTE.match(line) or _FENCE.match(line) for line in span)  # a quote or a code block
-            fenced = False
-            for line in span:
-                if _FENCE.match(line):
-                    fenced = not fenced
-                elif fenced or not line.strip():
-                    continue
-                elif block and not _QUOTE.match(line):
-                    return False  # text between the heading or label and the block
-                elif not block and _LABEL.match(line) and not _FIELD_LABEL.match(line):
-                    return False  # a bold line the reader skipped as a label
+        rest = next((n for n in range(end, len(lines)) if not _blank(lines[n])), None)
+        if rest is not None and not (followed[rest] == _OUTSIDE and _ends_section(lines, rest)):
+            return False
         i = end
     return True
 
@@ -2381,7 +2505,10 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     # The drain also reads each finding with the lines CommonMark keeps in its
     # quote (``_lazy_quotes``) and the label lines it keeps in a plain finding's
     # paragraph (``_kept_labels``); reading more text can only hold more.
-    lazy = [f for t in texts for f in review_findings(_kept_labels(_lazy_quotes(t))) if f not in findings]
+    marked = [_kept_labels(_lazy_quotes(t)) for t in texts]
+    lazy = [f for t in marked for f in review_findings(t) if f not in findings]
+    # A finding whose section is not laid out as the closed reading follows it releases nothing (below).
+    alone = all(_stands_alone(t) and _stands_alone(m) for t, m in zip(texts, marked, strict=True))
     written = "\n\n".join(findings + lazy)  # the findings' own Markdown, which the release grammar reads
     asked = plain(written)
 
@@ -2438,13 +2565,11 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     # keeps two columns, which put it in the list item above it, while the
     # finding's reader takes the tab with the mark and reads a paragraph of
     # its own. So an issue that holds any white space but spaces and line
-    # ends, anywhere, releases nothing. Neither does an issue with text around
-    # a finding that the finding's reader left out (``_stands_alone``).
-    if (
-        texts != raw
-        or any(char.isspace() and char not in " \n\r" for text in raw for char in text)
-        or not all(_stands_alone(_kept_labels(_lazy_quotes(text))) for text in texts)
-    ):
+    # ends, anywhere, releases nothing. Neither does an issue with a finding
+    # whose section is not laid out as the closed reading follows it
+    # (``_stands_alone``), in the text as written or with the lines Markdown
+    # keeps in a finding's paragraph marked.
+    if texts != raw or any(char.isspace() and char not in " \n\r" for text in raw for char in text) or not alone:
         readings = [(clause, rest, [(module, WORK) for module, _ in found]) for clause, rest, found in readings]
     for sentence, _, found in readings:
         here = _corpus_citations(sentence)
