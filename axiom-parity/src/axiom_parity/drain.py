@@ -26,10 +26,12 @@ from .issue_lint import (
     _ARTIFACT,
     _CORPUS_SINGULAR,
     _FIELD,
+    _FINDING_FENCE,
     _JURIS,
     _LABEL,
     _LIST_MARKER,
     _QUOTE,
+    _YAML_KEY,
     _finding_at,
     expand_braces,
     lint_issue,
@@ -2348,6 +2350,20 @@ def _kept_labels(markdown: str) -> str:
 # that starts with "<", which may open an HTML block) leaves every finding
 # after it unreleased.
 #
+# Invariant (round 15, layout): the lines Markdown shows in a finding's own
+# block or right under it, and that the reader left out, are read with the
+# findings (``_left_out``), so a module they name is work and keeps its holds
+# ("```" over "Encode Y." over "```and fix X." names X). They are: every line
+# the reader passed over between the finding's introduction and its last line
+# (text above a quote or code block, a bold line or a code block among plain
+# paragraphs, the rest of a quote or code block after a ``review_finding:``
+# key); every line of a code block up to the fence that closes it as
+# CommonMark closes it; every line below the finding up to the next heading,
+# bold label or line that names the finding field, where Markdown certainly
+# reads that line outside every code and HTML block (``_block_end``); and,
+# for a finding inside a code block at the margin, every line of that block.
+# Where Markdown's reading is not certain the lines run to the end of the
+# text. An issue with such a line releases nothing.
 _FINDING_TITLE = r"`?review[_ -]finding`?(?: \(paste as-is\))?:?"
 _INTRO_HEADING = re.compile(rf"#{{1,6}} {_FINDING_TITLE} *", re.IGNORECASE)
 _INTRO_BOLD = re.compile(rf"(?:\*\*{_FINDING_TITLE}\*\*|__{_FINDING_TITLE}__):? *", re.IGNORECASE)
@@ -2491,6 +2507,113 @@ def _stands_alone(markdown: str) -> bool:
     return True
 
 
+# A fence, at any depth of list items: the column of its run decides what stays inside it.
+_ANY_FENCE = re.compile(r"(?P<lead>(?: *(?:[-*+]|\d{1,9}[.)]) +)* *)(?P<run>`{3,}|~{3,})(?P<info>.*)")
+# An HTML block that runs to an end mark of its own, over blank lines (CommonMark 0.31.2, 4.6, kinds 1 to 5).
+_RAW_HTML = re.compile(r" {0,3}<(?:pre|script|style|textarea|!--|\?|![A-Za-z]|!\[CDATA\[)", re.IGNORECASE)
+_SHAPED_HEADING = re.compile(r" {0,3}#{1,6}(?: |$)")
+
+
+def _block_end(lines: list[str], i: int, end: int) -> int:
+    """The first line at or after ``end`` that certainly starts another part of the text than the finding at ``i``.
+
+    That is a heading, or a bold label or a line that names the finding field
+    after a blank line (right under another line it may continue that line's
+    paragraph), which Markdown reads outside every code and HTML block that
+    opens after the finding's introduction. A fence is followed to the fence that closes
+    it under every reading of its container: one of its own character, at
+    least as long, in its own column (or, for a fence within three columns of
+    the margin and outside a list item, anywhere up to the third column). A
+    line indented less than the fence may end its list item and the fence
+    with it, and a closing fence in another column may not close it: after
+    either, and after an HTML block that runs to an end mark of its own, no
+    line is certain and the answer is the end of the text. Any other line
+    that starts with "<" may open an HTML block, which runs to a blank line.
+    """
+    fence: tuple[str, int, int, bool] | None = None  # the open fence's character, length and column; in a list item?
+    html = False
+    n = i if _FINDING_FENCE.match(lines[i]) else i + 1
+    while n < len(lines):
+        line = lines[n]
+        indent = len(line) - len(line.lstrip(" "))
+        opened = _ANY_FENCE.fullmatch(line)
+        if opened and opened["run"][0] == "`" and "`" in opened["info"]:
+            opened = None  # a fence of ticks takes no tick in the rest of its line
+        if fence is not None:
+            char, length, column, listed = fence
+            if not _blank(line):
+                if indent < column:
+                    return len(lines)
+                if re.fullmatch(rf" *{re.escape(char)}{{{length},}} *", line):
+                    if indent != column and (listed or indent > 3):
+                        return len(lines)
+                    fence = None
+        elif html:
+            if opened:
+                return len(lines)  # a paragraph that a fence interrupts, or raw text in an HTML block
+            html = not _blank(line)
+        elif _RAW_HTML.match(line):
+            return len(lines)
+        elif re.match(r" {0,3}<", line):
+            html = True
+        elif opened:
+            fence = (opened["run"][0], len(opened["run"]), len(opened["lead"]), bool(opened["lead"].strip()))
+        elif n >= end and (
+            _SHAPED_HEADING.match(line) or (_blank(lines[n - 1]) and (_LABEL.match(line) or _FIELD.search(line)))
+        ):
+            return n
+        n += 1
+    return len(lines)
+
+
+# A fence line with nothing to read: the fence and one plain word of information, or none.
+_BARE_FENCE = re.compile(r" *(?:`{3,}|~{3,}) ?[A-Za-z0-9_+.-]* *")
+
+
+def _left_out(markdown: str) -> str:
+    """The lines of each finding's own block, and right under it, that no finding of the text hands over.
+
+    See the second layout invariant above. A line counts as handed over when
+    a finding holds it, with or without its quote mark and its indentation.
+    Lines that do not follow one another in the text are set apart by a
+    blank line.
+    """
+    lines = markdown.splitlines()
+    followed = _followed(lines)
+    read: set[str] = set()
+    kept: set[int] = set()
+    i = 0
+    while i < len(lines):
+        text, end = _finding_at(lines, i)
+        if not text:
+            i += 1
+            continue
+        read.update(line.strip() for line in text.split("\n"))
+        # A ``review_finding:`` key's own line is part of the paragraph that holds the finding.
+        first = i if _YAML_KEY.match(lines[i]) and not _FINDING_FENCE.match(lines[i]) else i + 1
+        if followed[i] < 0:
+            # Outside every block, or below a line that leaves Markdown's reading of the text
+            # above unsure: the block is followed from the finding's own introduction.
+            kept.update(range(first, _block_end(lines, i, end)))
+        else:
+            # The finding stands inside a code block at the margin: the whole block, and what
+            # follows the fence that closes it as far as the reader went and Markdown is certain.
+            last = max(n for n in range(i, len(lines)) if followed[n] == followed[i])  # its closing fence, if any
+            kept.update(range(followed[i] + 1, last + 1))
+            if last + 1 < len(lines):
+                kept.update(range(last + 1, _block_end(lines, last, max(end, last + 1))))
+        i = end
+    out: list[str] = []
+    before = None
+    for n in sorted(kept):
+        line, quoted = lines[n], _QUOTE.match(lines[n])
+        inner = quoted.group(1).strip() if quoted else line.strip()  # a quote mark alone holds nothing
+        if inner and not _BARE_FENCE.fullmatch(line) and line.strip() not in read and inner not in read:
+            out.extend(([""] if before is not None and n != before + 1 else []) + [line])
+            before = n
+    return "\n".join(out)
+
+
 def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]]) -> IssueInputs:
     raw = [issue.get("body") or ""] + [c.get("body") or "" for c in comments]
     # A Unicode line separator inside a line never ends a quoted finding early.
@@ -2507,9 +2630,11 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     # paragraph (``_kept_labels``); reading more text can only hold more.
     marked = [_kept_labels(_lazy_quotes(t)) for t in texts]
     lazy = [f for t in marked for f in review_findings(t) if f not in findings]
-    # A finding whose section is not laid out as the closed reading follows it releases nothing (below).
+    # A finding whose section is not laid out as the closed reading follows it releases
+    # nothing (below), and the lines of that section its reader left out are read too.
     alone = all(_stands_alone(t) and _stands_alone(m) for t, m in zip(texts, marked, strict=True))
-    written = "\n\n".join(findings + lazy)  # the findings' own Markdown, which the release grammar reads
+    around = [left for t in dict.fromkeys(texts + marked) if (left := _left_out(t))]
+    written = "\n\n".join(findings + lazy + around)  # the findings' own Markdown, which the release grammar reads
     asked = plain(written)
 
     targets = _explicit_targets(joined, cites)
@@ -2569,7 +2694,12 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     # whose section is not laid out as the closed reading follows it
     # (``_stands_alone``), in the text as written or with the lines Markdown
     # keeps in a finding's paragraph marked.
-    if texts != raw or any(char.isspace() and char not in " \n\r" for text in raw for char in text) or not alone:
+    if (
+        texts != raw
+        or any(char.isspace() and char not in " \n\r" for text in raw for char in text)
+        or not alone
+        or around
+    ):
         readings = [(clause, rest, [(module, WORK) for module, _ in found]) for clause, rest, found in readings]
     for sentence, _, found in readings:
         here = _corpus_citations(sentence)
