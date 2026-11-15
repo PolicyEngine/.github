@@ -2338,11 +2338,14 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     # Inside a finding, a module and a citation named in one sentence go together too:
     # "Re-encode uk/policies/govuk/x.yaml (corpus uk/guidance/govuk/x) in place".
     readings = _readings(asked, written)
-    if texts != raw:
-        # Invariant (round 15): a vertical tab, form feed, NEL or Unicode line
-        # or paragraph separator is a space to the readers and no space to
-        # Markdown, which decides blank lines, list markers and headings by
-        # spaces and tabs alone. An issue that holds one releases nothing.
+    # Invariant (round 15): Markdown decides blank lines, indentation, list
+    # markers and headings by spaces and tabs alone, and ends a line only at
+    # LF, CR or CRLF. Any other white space (a vertical tab, form feed, NEL, a
+    # Unicode line or paragraph separator, a no-break, en or ideographic space
+    # ...) is a space or a line end to the readers and plain text to Markdown,
+    # so a line of it is a blank line to the finding's reader and part of the
+    # paragraph to Markdown. An issue that holds one, anywhere, releases nothing.
+    if texts != raw or any(char.isspace() and char not in " \t\n\r" for text in raw for char in text):
         readings = [(clause, rest, [(module, WORK) for module, _ in found]) for clause, rest, found in readings]
     for sentence, _, found in readings:
         here = _corpus_citations(sentence)

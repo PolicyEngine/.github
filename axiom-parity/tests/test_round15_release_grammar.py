@@ -493,6 +493,46 @@ def test_an_issue_with_a_line_separator_releases_nothing(base, mark, where):
     assert PIPELINE not in row.work_modules and ready == 1, (where, repr(mark))
 
 
+SPACES = [NBSP, "\x1f", "\N{EN SPACE}", "\N{EM SPACE}", "\N{NARROW NO-BREAK SPACE}", "\N{IDEOGRAPHIC SPACE}"]
+
+
+# Invariant (round 15): Markdown decides blank lines, indentation, list markers
+# and headings by spaces and tabs alone. Any other white space is a space to
+# the readers and plain text to Markdown: a line of it is a blank line to the
+# finding's reader and part of the paragraph to Markdown. An issue that holds
+# one, anywhere, releases nothing. The first place released the pipeline at
+# df17e39 and at fd0b635 (by reading: both split the paragraph there) and at
+# 4e6cc5a (run refix6-f12-1-prev-4e6cc5a).
+@given(
+    space=st.sampled_from(SPACES + [" " + NBSP + "\t"]),
+    where=st.sampled_from(["blank line", "quoted blank line", "marker", "law text", "comment"]),
+)
+@settings(max_examples=60, deadline=None, database=None)
+def test_an_issue_with_other_white_space_releases_nothing(space, where):
+    # A finding in plain paragraphs under its heading, or the fixture's quoted one.
+    finding = "Encode 26 USC 32(d) as its own module at us/statutes/26/32/d.yaml. " + "State each element. " * 6
+    tail = {
+        "blank line": f"The rate is 5%.\n{space}\nSee {PIPELINE}.",  # Markdown: one paragraph
+        "marker": f"The rate is 5%.\n-{space}See {PIPELINE}.",  # Markdown: no list item
+    }.get(where, f"The rate is 5%.\n\nSee {PIPELINE}.")
+    head = READY_ISSUE_BODY.split("## review_finding")[0]
+    if where == "law text":
+        head = head.replace("Determination of marital status", f"Determination of{space}marital status")
+    body = (
+        head + f"## review_finding\n\n{finding}\n\n{tail}\n\n## Companion tests\n\n- one case: holds (statute text)\n"
+    )
+    if where == "quoted blank line":  # the quote's reader drops the mark's own space: a blank line to it alone
+        quote = f"> The rate is 5%.\n>{space}\n> See {PIPELINE}."
+        body = READY_ISSUE_BODY.replace("\n## Companion tests", f"\n{quote}\n\n## Companion tests")
+    comments = (f"A note{space}here.",) if where == "comment" else ()
+    row, ready = plan_for(body, comments)
+    assert row.review_finding and PIPELINE in row.work_modules and ready == 0, (where, repr(space))
+    # Control: with spaces and tabs in its place (a real blank line, a list marker, plain
+    # text) the reference stands apart, last in the finding, and releases.
+    row, ready = plan_for(body.replace(space, " \t "), tuple(c.replace(space, " ") for c in comments))
+    assert row.review_finding and PIPELINE not in row.work_modules, (where, repr(space))
+
+
 def test_the_grammar_s_own_mark_in_the_text_is_no_module():
     mark = chr(0xE000)  # the private-use character the forms read a module as
     keeps_the_owner_hold(fill("See {P} and " + mark + "."))
