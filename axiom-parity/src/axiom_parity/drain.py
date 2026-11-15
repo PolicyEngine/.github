@@ -13,6 +13,7 @@ from __future__ import annotations
 import itertools
 import json
 import re
+from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -891,8 +892,8 @@ def _drain_units(text: str) -> tuple[list[TextUnit], list[bool]]:
     return units, lazy
 
 
-def _readings(text: str) -> list[tuple[str, str, list[tuple[str, str]]]]:
-    """(clause, rest, its modules' readings) for each semicolon clause, continuations included.
+def _proposals(text: str) -> list[tuple[str, str, list[tuple[str, str]]]]:
+    """(clause, rest, the reading the readers propose for each of its modules) for each semicolon clause.
 
     A clause pairs citations only within itself, as ``_clauses`` gives it. Its
     modules read as ``_modules_in`` reads them, with the clauses before it in
@@ -904,7 +905,8 @@ def _readings(text: str) -> list[tuple[str, str, list[tuple[str, str]]]]:
     that ends on an abbreviation's period, or before a sentence that points
     back at it, is work. A lazy unit continues the sentence before it (see
     ``_LAZY``). A module is work when any reading says so, so a continuation
-    never releases what its own unit holds.
+    never releases what its own unit holds. A release here is only a
+    proposal: ``_readings`` keeps it where the closed release grammar agrees.
     """
     units, lazy = _drain_units(text)
     # The last unit of the lazy run that follows each unit (the unit itself when none does).
@@ -1027,6 +1029,438 @@ def _readings(text: str) -> list[tuple[str, str, list[tuple[str, str]]]]:
         if own is not None:
             open_units.append(_Continuation(index, unit.indent, own, own_before, own_whole))
     return out
+
+
+def _readings(text: str, markdown: str | None = None) -> list[tuple[str, str, list[tuple[str, str]]]]:
+    """(clause, rest, its modules' readings) for each semicolon clause, continuations included.
+
+    The readers propose (``_proposals``) and the closed release grammar
+    decides (``_released``): a module keeps a reading other than work only
+    where both give it. ``markdown`` is the text as written, before ``plain``
+    spelled its paths out; the grammar reads it when given, else ``text``.
+    """
+    released = _released(text if markdown is None else markdown)
+    return [
+        (clause, rest, [(module, kind if kind in released.get(module, ()) else WORK) for module, kind in found])
+        for clause, rest, found in _proposals(text)
+    ]
+
+
+# Invariant (round 15, structural): a module reads IMPORT, DEFERRED or MENTION
+# only in a reference paragraph, and any other text around it, in any wording,
+# keeps it work. The readers above propose a release; this closed grammar must
+# agree, so it can only hold more. It reads the finding's own Markdown, before
+# ``plain`` takes the code ticks out, so a line of ticks is not a blank line.
+# Five conditions, each over every place the text names the module:
+#
+# 1. Its whole grammatical sentence is one of the forms in ``_RELEASE_FORMS``,
+#    with the kind the readers gave: "See X.", "Cf. X.", "Compare X.", "As in
+#    X.", "See X for the rate." (a closed set of reference nouns), "Keep X
+#    unchanged." ("intact", "untouched", "active", "as-is"), "Keep the
+#    existing X and its test contract active.", "Keep X, Y and Z formulas
+#    unchanged.", "Import X.", "Import X, #a and #b.", "Import X for the
+#    rate.", "Imports: X and Y.", "Do not import X." (and "from the new
+#    modules", "into this module"), "Declare a deferred dependency on X (#a,
+#    #b).", "X cannot be imported."; X may be a list of modules ("X, Y and Z",
+#    "X or Y"). Nothing else is a reference: a word before the opener or after
+#    the module, a request, a second clause or an aside ("See X and fix it.",
+#    "See X and add Y to Z.", "See X, rather than importing Y.", "Add a rule
+#    to the pipeline using Y, see X.", "See X for the bugfix.", "See X; the
+#    pipeline as well.") leaves it work, and so does a sentence with no full
+#    stop ("- See X").
+# 2. Every other sentence of its paragraph, before it or after it, is such a
+#    form too, or a denial on a pronoun ("Do not import it.", "Do not import
+#    them in this module.", "Do not import it now."): "See X. Fix the rule.",
+#    "See X. Add Y there.", "See X. They need the 2026 rate.", "Fix this
+#    module. See X." and "The rate is wrong. See X." keep X work.
+# 3. When the paragraph is in a list item, every other paragraph of that
+#    item, of the items nested in it and of the items it is nested under holds
+#    only such sentences: "- See X." over a nested "- the rate is wrong.", and
+#    "- Fix the pipeline." over a nested "- See X.", keep X work.
+# 4. No open block reaches it. A block whose last sentence ends on a
+#    separator, an open word or an abbreviation's period, or on no stop at
+#    all, hands its predicate to the block after it and, when that block
+#    starts a list item, to every item of that list ("- To fix:" over "See
+#    X."). A code block is open too, and a heading reaches every block up to
+#    the next heading.
+# 5. Its neighbours leave it alone. The block before it (before the items it
+#    is nested under) is read back from its end to its nearest sentence that
+#    names a module: a sentence there that holds a word of request or defect
+#    ("Fix the rate.", "The rate needs an update.", "The formula is wrong."),
+#    or a naming sentence that describes a module without naming it ("Add Y
+#    to the pipeline.", "Fix Y in the following module."), keeps X work. The
+#    block after it (after everything nested in its item) is read up to its
+#    first sentence that names a module: a sentence there that points back
+#    (``_points_back``), stands for a place or manner named before ("there",
+#    "too", "likewise") or holds such a word keeps X work ("See X." before
+#    "Fix the rate.", "- it needs a rule." or "Add Y there.").
+#
+# Paragraphs are read as CommonMark could read them, never narrower
+# (``_blocks``): a line joins the paragraph above it unless it certainly
+# starts a block of its own, so a lazy line ("- See X" over "  and fix it."
+# under a nested item), an ordered item that cannot interrupt a paragraph
+# ("  2. the rate needs a fix."), a line indented four columns past its
+# container and a line of anything but spaces and tabs are all part of it. A
+# module in a heading or a code block is work.
+_FORM_MODULE = "\ue000"
+_FORM_LIST = rf"{_FORM_MODULE}(?:(?:, {_FORM_MODULE})*,? (?:and|or) {_FORM_MODULE})?"
+_FORM_RULES = rf"{_FORM_MODULE}(?:(?:, (?:{_FORM_MODULE}|#[\w.]+))*,? (?:and|or) (?:{_FORM_MODULE}|#[\w.]+))?"
+_FORM_NOUN = (
+    r"(?:(?:existing|current|statutory) )?(?:rates?|amounts?|values?|definitions?|rules?|thresholds?|formulas?|"
+    r"precedents?|patterns?)"
+)
+_FORM_PLACE = r"(?: (?:from|in|into) (?:this|the new|these new|the target) (?:modules?|encodings?|files?))?"
+_RELEASE_FORMS = [
+    (kind, re.compile(form, re.IGNORECASE))
+    for kind, form in (
+        (MENTION, rf"(?:see|cf\.|compare|as in) {_FORM_LIST}\."),
+        (MENTION, rf"(?:see|cf\.|compare) {_FORM_LIST} for the {_FORM_NOUN}\."),
+        (
+            MENTION,
+            rf"keep (?:the existing )?{_FORM_LIST}(?: (?:formulas?|rules?)| and (?:its|their) test contracts?)?"
+            r" (?:unchanged|intact|untouched|active|as-is)\.",
+        ),
+        (IMPORT, rf"import {_FORM_RULES}\."),
+        (IMPORT, rf"import {_FORM_RULES} for the {_FORM_NOUN}\."),
+        (IMPORT, rf"imports: {_FORM_LIST}\."),
+        (DEFERRED, rf"(?:do not|don['’]t|never|must not) import {_FORM_LIST}{_FORM_PLACE}\."),
+        (
+            DEFERRED,
+            r"(?:declare|add|record|write) (?:(?:a|an|the) )?"
+            r"(?:deferred dependenc(?:y|ies) on|deferrals? of|blocked_by entr(?:y|ies) for) "
+            rf"{_FORM_LIST}(?: \(#[\w.]+(?:, #[\w.]+)*\))?\.",
+        ),
+        (DEFERRED, rf"{_FORM_MODULE} (?:cannot|can['’]t|must not|should not|is not to) be imported\."),
+    )
+]
+_FORM_DENIAL = re.compile(
+    r"(?:do not|don['’]t|must not|never) import (?:it|them|either|these|those|(?:any|either|both) of them)"
+    + _FORM_PLACE
+    + r"(?: (?:now|yet|here|directly|at all|for now|anywhere|either|at this stage))*\.",
+    re.IGNORECASE,
+)
+
+
+def _form(sentence: str) -> str:
+    """The sentence as the release forms read it: each module one mark, whitespace single.
+
+    A rule fragment's name may take the sentence's own stop ("X#rule."): the
+    stop stays after the mark. The mark's own character in the text is not a
+    module.
+    """
+    marked = _MODULE_NAME.sub(
+        lambda m: m.group(0) if m.group("dir") else _FORM_MODULE + m.group(0)[len(m.group(0).rstrip(".")) :],
+        sentence.replace(_FORM_MODULE, "\ufffd"),
+    )
+    return re.sub(r"\s+", " ", marked).strip()
+
+
+def _release_kind(sentence: str) -> str | None:
+    """The kind a closed release form gives every module of the sentence, or ``None``."""
+    form = _form(sentence)
+    return next((kind for kind, pattern in _RELEASE_FORMS if pattern.fullmatch(form)), None)
+
+
+def _inert(sentence: str) -> bool:
+    """Does the sentence write nothing: a release form, or a denial on a pronoun?"""
+    return _release_kind(sentence) is not None or bool(_FORM_DENIAL.fullmatch(_form(sentence)))
+
+
+# Words of request or defect a neighbouring sentence may hold (condition 5):
+# a request's word in any form (``_REQUEST_WORD``), on its own or as the last
+# part of a hyphenated word ("bug-fix"), and a few words for a defect.
+_ASKED_WORD = re.compile(r"(?<![\w#])[A-Za-z]+(?:-[A-Za-z]+)*")
+_ASKED_DEFECT = frozenset(
+    {
+        "need",
+        "needs",
+        "needed",
+        "needing",
+        "wrong",
+        "incorrect",
+        "broken",
+        "bug",
+        "bugs",
+        "bugfix",
+        "bugfixes",
+        "overhaul",
+        "overhauls",
+        "overhauled",
+        "cleanup",
+        "cleanups",
+    }
+)
+# Words that may stand for a module named after them: a description ("the
+# pipeline", "this module", "these two files") or a pointer forward ("the
+# following", "below"). A pronoun points back, not forward ("Encode it at Y.").
+_DESCRIBED = re.compile(
+    r"\b(?:(?:the|this|that|these|those)\s+(?:\w+\s+)?(?:modules?|files?|paths?|pipelines?|polic(?:y|ies)|yamls?)"
+    r"|following|below)\b",
+    re.IGNORECASE,
+)
+
+
+# Words that stand for a place or a manner named before: "Add Y there.", "Fix Y too.".
+_POINTS_THERE = re.compile(
+    r"\b(?:there|thereto|therein|thereof|thereon|here|hereto|herein|accordingly|likewise|similarly|too|also|"
+    r"as\s+well|again|ditto)\b",
+    re.IGNORECASE,
+)
+
+
+def _asks(sentence: str) -> bool:
+    """Does a sentence that names no module hold a word of request or defect?"""
+    if _names_module(sentence):
+        return False
+    for word in _ASKED_WORD.findall(_MODULE_NAME.sub(" ", sentence)):
+        last = word.lower().rsplit("-", 1)[-1]
+        if _request_word(word) or _request_word(last) or last in _ASKED_DEFECT:
+            return True
+    return False
+
+
+def _points_ahead(sentence: str) -> bool:
+    """Does a sentence that names a module also point at one it does not name?"""
+    return bool(_DESCRIBED.search(_MODULE_NAME.sub(" MODULE ", sentence)))
+
+
+@dataclass
+class _Block:
+    """One paragraph, heading or code block, as CommonMark could read it, never narrower."""
+
+    text: str
+    kind: str  # "paragraph", "heading" or "code"; every module in a heading or code is work
+    items: tuple[int, ...]  # the list items that hold it, outermost first
+    opened: int  # the level of the outermost list item its first line opens; 0 when it opens none
+
+
+_BLOCK_MARKER = re.compile(r"(?P<marker>[-*+]|(?P<number>\d{1,9})[.)])(?P<space> *)")
+_BLOCK_HEADING = re.compile(r"#{1,6}(?: |$)")
+# A fence of ticks takes no tick in the rest of its line: "``` a`b" is paragraph text.
+_BLOCK_FENCE = re.compile(r"(`{3,})[^`]*$|(~{3,})")
+_BLOCK_BREAK = re.compile(r"([-*_])(?: *\1){2,} *")
+_BLOCK_UNDERLINE = re.compile(r"(?:=+|-+) *")
+_BLOCK_STOP = re.compile(r"[.!?][\"'”’)\]}*_`]*\s*\Z")
+
+
+def _blocks(markdown: str) -> list[_Block]:
+    """The text's blocks, with every line CommonMark might keep in a paragraph kept in it.
+
+    A line ends only at LF, CR or CRLF, and only a line of spaces and tabs is
+    blank. A non-blank line continues the open paragraph unless it certainly
+    starts another block: an ATX heading, a fence, a thematic break or a list
+    item that may interrupt a paragraph (a bullet or "1." with content, or
+    any item with content when the line does not reach the paragraph's own
+    item), each within three columns of the container it reaches. What
+    follows a list marker on its line is read the same way, so an item may
+    start with a heading, a fence, code or an item of its own. A line that
+    could underline its paragraph ("---", "===") makes it a heading, which
+    takes the lines after it too. A fence runs to a closing fence of its own
+    kind and length, or to the end. A block-quote mark is plain text: a quote
+    never starts or ends a block here, so what a quote holds reads as one
+    paragraph that no release form matches (a finding's own quote marks are
+    gone before this reads it). A quote, an HTML block, an underline or any
+    line shaped like a block start that this reading keeps in a paragraph may
+    have closed the list items around it, so once a paragraph holds such a
+    line only a line within three columns of the margin ends it, no numbered
+    item but "1." does, and nothing after it is read as nested. A fence ends
+    with its list item, and an empty item ends at a blank line.
+    """
+    blocks: list[_Block] = []
+    items: list[tuple[int, int]] = []  # (content column, id) of each open list item, outermost first
+    ids = itertools.count()
+    paragraph: int | None = None  # the open paragraph's block
+    depth = 0  # how many items hold the open paragraph
+    loose = False  # the open paragraph holds a line that may have closed its items
+    bare = False  # the last line opened an empty item, which a blank line closes
+    fence: tuple[str, int, int, int] | None = None  # the open fence's character, length, indentation and items
+    for raw in re.split(r"\r\n?|\n", markdown):
+        line = raw.expandtabs(4)
+        indent = len(line) - len(line.lstrip(" "))
+        body = line[indent:].rstrip(" ")
+        reached = 0  # the open items the line is indented into
+        while reached < len(items) and indent >= items[reached][0]:
+            reached += 1
+        if fence is not None:
+            if body and reached < fence[3]:
+                fence = None  # the fence ends with its list item, and the line is read as any other
+            elif indent <= fence[2] + 3 and re.fullmatch(rf"{re.escape(fence[0])}{{{fence[1]},}}", body):
+                fence = None
+                continue
+            else:
+                blocks[-1].text += "\n" + line
+                continue
+        if paragraph is not None and loose and (not body or indent <= 3):
+            items.clear()  # whatever ends such a paragraph starts at the margin
+            reached = 0
+        if not body:
+            if bare:
+                items.pop()
+            paragraph, bare = None, False
+            continue
+        bare = False
+        base = items[reached - 1][0] if reached else 0
+        opened = 0
+        while True:  # once for the line, and once more for what follows each list marker on it
+            start = None
+            marker = _BLOCK_MARKER.match(body)
+            listed = marker and (marker["space"] or marker.end() == len(body))
+            if indent - base <= 3 and not (paragraph is not None and loose and indent > 3):
+                if _BLOCK_HEADING.match(body):
+                    start = "heading"
+                elif _BLOCK_FENCE.match(body):
+                    start = "fence"
+                elif paragraph is not None and _BLOCK_UNDERLINE.fullmatch(body):
+                    # A setext heading, or a lazy line that only looks like its
+                    # underline: work either way, with whatever joins it next.
+                    blocks[paragraph].kind = "heading"
+                elif _BLOCK_BREAK.fullmatch(body):
+                    start = "break"
+                elif listed:
+                    empty = marker.end() == len(body)
+                    later_number = marker["number"] not in (None, "1")  # "01." too: parsers disagree on it
+                    if paragraph is None or not (empty or (later_number and (loose or reached == depth))):
+                        start = "item"
+            if start is None and paragraph is not None:
+                blocks[paragraph].text += "\n" + body
+                # A kept line that a parser might read as a block start may have closed the items.
+                loose = loose or bool(
+                    listed
+                    or body.startswith((">", "<"))
+                    or _BLOCK_UNDERLINE.fullmatch(body)
+                    or _BLOCK_HEADING.match(body)
+                    or _BLOCK_FENCE.match(body)
+                    or _BLOCK_BREAK.fullmatch(body)
+                )
+                break
+            if not opened:
+                del items[reached:]
+            paragraph = None
+            if start == "item":
+                spaces = len(marker["space"])
+                column = indent + len(marker["marker"]) + (spaces if 1 <= spaces <= 4 else 1)
+                items.append((column, next(ids)))
+                opened = opened or len(items)
+                rest = body[marker.end() :]
+                if rest and spaces <= 4:
+                    indent, base, body = column, column, rest
+                    continue
+                # An empty item, or one that starts with indented code.
+                blocks.append(_Block(rest, "code" if rest else "paragraph", tuple(n for _, n in items), opened))
+                bare = not rest
+                break
+            held = tuple(n for _, n in items)
+            if start == "heading":
+                blocks.append(_Block(body, "heading", held, opened))
+            elif start == "fence":
+                mark = _BLOCK_FENCE.match(body)
+                ticks = mark.group(1) or mark.group(2)
+                fence = (ticks[0], len(ticks), indent, len(items))
+                blocks.append(_Block(body, "code", held, opened))
+            elif start == "break":
+                pass
+            elif indent - base >= 4:
+                blocks.append(_Block(body, "code", held, opened))  # an indented code block
+            else:
+                blocks.append(_Block(body, "paragraph", held, opened))
+                paragraph, depth, loose = len(blocks) - 1, len(items), body.startswith((">", "<"))
+            break
+    return blocks
+
+
+def _released(markdown: str) -> dict[str, set[str]]:
+    """Each module every one of whose places meets the release conditions above, with the kinds they give it."""
+    blocks = _blocks(markdown)
+    sentences = [
+        [text] if block.kind != "paragraph" else split_sentences(text)
+        for block, text in ((block, plain(block.text)) for block in blocks)
+    ]
+    names = [
+        [
+            [normal_module(m.group(0)) for m in _MODULE_NAME.finditer(sentence) if not m.group("dir")]
+            for sentence in each
+        ]
+        for each in sentences
+    ]
+    inert = [
+        block.kind == "paragraph" and all(map(_inert, each)) for block, each in zip(blocks, sentences, strict=True)
+    ]
+    reached: set[int] = set()  # blocks an open block hands its predicate to
+    for index, block in enumerate(blocks[:-1]):
+        if block.kind == "heading":
+            for later in range(index + 1, len(blocks)):
+                if blocks[later].kind == "heading":
+                    break
+                reached.add(later)
+            continue
+        last = sentences[index][-1] if sentences[index] else ""
+        if (
+            block.kind == "code"
+            or not _BLOCK_STOP.search(last)
+            or _OPEN_END.search(last)
+            or _ends_on_abbreviation(last)
+        ):
+            following = blocks[index + 1]
+            reached.add(index + 1)
+            if following.opened:
+                level = following.opened
+                for later in range(index + 2, len(blocks)):
+                    if (
+                        len(blocks[later].items) < level
+                        or blocks[later].items[: level - 1] != following.items[: level - 1]
+                    ):
+                        break
+                    reached.add(later)
+
+    def family(index: int) -> set[int]:
+        """The block, and every block of its item, of the items nested in it and of the items it is nested under."""
+        own = blocks[index].items
+        if not own:
+            return {index}
+        return {
+            other
+            for other, block in enumerate(blocks)
+            if block.items and (block.items[: len(own)] == own or block.items == own[: len(block.items)])
+        }
+
+    allowed: dict[str, set[str]] = {}
+    failed: set[str] = set()
+    seen: Counter[str] = Counter()
+    for index in range(len(blocks)):
+        if not any(names[index]):
+            continue
+        near = family(index) if inert[index] and index not in reached else set()
+        free = bool(near) and all(inert[other] for other in near)
+        if free:
+            before = next((other for other in range(index - 1, -1, -1) if other not in near), None)
+            after = next((other for other in range(index + 1, len(blocks)) if other not in near), None)
+            for sentence in reversed(sentences[before]) if before is not None else ():
+                if _names_module(sentence):
+                    free = _inert(sentence) or not _points_ahead(sentence)
+                    break
+                if not _inert(sentence) and _asks(sentence):
+                    free = False
+                    break
+            for sentence in sentences[after] if free and after is not None else ():
+                loose = (
+                    _points_back(sentence) or _asks(sentence) or _POINTS_THERE.search(_MODULE_NAME.sub(" ", sentence))
+                )
+                if loose and not _inert(sentence):
+                    free = False
+                if not free or _names_module(sentence):
+                    break
+        for sentence, named in zip(sentences[index], names[index], strict=True):
+            kind = _release_kind(sentence) if free else None
+            seen.update(named)
+            for name in named:
+                if kind is None:
+                    failed.add(name)
+                else:
+                    allowed.setdefault(name, set()).add(kind)
+    # Every place the readers see must be a place this grammar judged: a name
+    # that ``plain`` spells out across two blocks is not, so it stays work.
+    expected = Counter(normal_module(m.group(0)) for m in _MODULE_NAME.finditer(plain(markdown)) if not m.group("dir"))
+    return {name: kinds for name, kinds in allowed.items() if name not in failed and seen[name] == expected[name]}
 
 
 def _sentences(text: str) -> list[str]:
@@ -1336,7 +1770,7 @@ _TAIL_ANAPHORS = frozenset(
 # Prepositions that name where something is written. After a new clause has
 # started, or after anything but the released module itself, the object of one
 # must be an explicitly named module: "the fix to the pipeline" may name it.
-_TAIL_DESTINATIONS = frozenset({"to", "into", "onto", "in", "within", "inside"})
+_TAIL_DESTINATIONS = frozenset({"to", "into", "in", "within"})
 # "to X", "into the existing X", "in existing and matching X": a determiner and
 # closed adjectives may stand before the named module.
 _EXPLICIT_OBJECT = re.compile(
@@ -1371,7 +1805,7 @@ _TAIL_REFERENCE = re.compile(
 )
 _TAIL_DENIAL = re.compile(
     r"\s*(?:(?:do(?:es)?\s+not|don't|must\s+not|never|not)\s+import|without\s+importing|"
-    r"(?:rather\s+than|instead\s+of)\s+import(?:ing)?)\s*[:=]?\s*[\[(]*\s*",
+    r"(?:rather\s+than|instead\s+of)\s+import)\s*[:=]?\s*[\[(]*\s*",
     re.IGNORECASE,
 )
 _TAIL_STEP = re.compile(r"(?:\s|,|&|\b(?:and|or)\b)+", re.IGNORECASE)
@@ -1859,7 +2293,8 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     # The drain also reads each finding with the lines CommonMark keeps in its
     # quote (``_lazy_quotes``); reading more text can only hold more.
     lazy = [f for t in texts for f in review_findings(_lazy_quotes(t)) if f not in findings]
-    asked = plain("\n\n".join(findings + lazy))
+    written = "\n\n".join(findings + lazy)  # the findings' own Markdown, which the release grammar reads
+    asked = plain(written)
 
     targets = _explicit_targets(joined, cites)
     modules: list[str] = []
@@ -1902,7 +2337,13 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     }
     # Inside a finding, a module and a citation named in one sentence go together too:
     # "Re-encode uk/policies/govuk/x.yaml (corpus uk/guidance/govuk/x) in place".
-    readings = _readings(asked)
+    readings = _readings(asked, written)
+    if texts != raw:
+        # Invariant (round 15): a vertical tab, form feed, NEL or Unicode line
+        # or paragraph separator is a space to the readers and no space to
+        # Markdown, which decides blank lines, list markers and headings by
+        # spaces and tabs alone. An issue that holds one releases nothing.
+        readings = [(clause, rest, [(module, WORK) for module, _ in found]) for clause, rest, found in readings]
     for sentence, _, found in readings:
         here = _corpus_citations(sentence)
         for module, kind in found:

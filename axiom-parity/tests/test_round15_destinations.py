@@ -4,7 +4,18 @@ from conftest import READY_ISSUE_BODY, RS_US
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from axiom_parity.drain import IMPORT, MENTION, WORK, WorkHolds, _readings, issue_inputs, plain, plan, to_json
+from axiom_parity.drain import (
+    IMPORT,
+    MENTION,
+    WORK,
+    WorkHolds,
+    _proposals,
+    _readings,
+    issue_inputs,
+    plain,
+    plan,
+    to_json,
+)
 
 PIPELINE = "us/policies/income_tax/taxable_income_pipeline.yaml"
 OTHER = "us/statutes/26/1/h.yaml"
@@ -37,6 +48,15 @@ def kinds(text: str) -> list[tuple[str, str]]:
 
 def reading(text: str, module: str = PIPELINE) -> set[str]:
     return {kind for name, kind in kinds(text) if name == module}
+
+
+def proposals(text: str) -> list[tuple[str, str]]:
+    """What the readers propose, before the closed release grammar decides."""
+    return [entry for _, _, found in _proposals(plain(text)) for entry in found]
+
+
+def proposed(text: str, module: str = PIPELINE) -> set[str]:
+    return {kind for name, kind in proposals(text) if name == module}
 
 
 def held(block: str):
@@ -75,11 +95,14 @@ def test_an_edit_from_the_released_module_keeps_the_owner_hold():
     ):
         assert reading(block) == {WORK}, (block, kinds(block))
         keeps_the_owner_hold(block)
-    # Controls: a bare reference releases, and so does an import that names its source.
+    # Controls: a bare reference releases. The readers propose an import that names its source
+    # too; the closed release grammar (round 15) holds a source inside a request's sentence.
     row, ready = held(f"See {PIPELINE}.")
     assert reading(f"See {PIPELINE}.") == {MENTION} and row.dispatchable and ready == 1
-    assert reading(f"Import {OTHER} from {PIPELINE}.") == {IMPORT}
-    assert reading(f"Encode {OTHER}, taking the rate from {PIPELINE}.") == {IMPORT}
+    assert reading(f"Import {PIPELINE}.") == {IMPORT}
+    for block in (f"Import {OTHER} from {PIPELINE}.", f"Encode {OTHER}, taking the rate from {PIPELINE}."):
+        assert proposed(block) == {IMPORT} and reading(block) == {WORK}, (block, kinds(block))
+        keeps_the_owner_hold(block)
 
 
 # Invariant (round 15): "from Z" after a request never resolves its
@@ -101,9 +124,14 @@ def test_a_source_after_an_edit_never_releases_an_earlier_module(opener, comma, 
     sentence = f"{first}{joiner}{verb} {wrapper}{OTHER}{wrapper} from {source}{onward}."
     assert kinds(sentence)[0] == (PIPELINE, WORK), (sentence, kinds(sentence))
     assert PIPELINE in held(sentence)[0].work_modules, sentence
-    # Controls: the edit alone writes only its own object; a removal from another module names what it writes.
-    assert kinds(f"{first}{joiner}{verb} {wrapper}{OTHER}{wrapper}.")[0] == (PIPELINE, MENTION)
-    assert kinds(f"{first}{joiner}remove {OTHER} from {THIRD}.")[0] == (PIPELINE, MENTION)
+    # Controls: the edit alone writes only its own object; a removal from another module names what
+    # it writes. That is the readers' proposal: the closed grammar holds every sentence with a request.
+    for control in (
+        f"{first}{joiner}{verb} {wrapper}{OTHER}{wrapper}.",
+        f"{first}{joiner}remove {OTHER} from {THIRD}.",
+    ):
+        assert proposals(control)[0] == (PIPELINE, MENTION), control
+        assert kinds(control)[0] == (PIPELINE, WORK), control
     assert PIPELINE in held(f"{first}{joiner}remove {OTHER} from {PIPELINE}.")[0].work_modules
 
 
@@ -117,8 +145,11 @@ def test_a_module_after_from_is_work_when_the_module_before_it_is(verb, link, on
     sentence = f"{verb} {OTHER}{link}{PIPELINE}{onward}."
     assert reading(sentence) == {WORK}, (sentence, kinds(sentence))
     assert PIPELINE in held(sentence)[0].work_modules, sentence
-    # Control: a source predicate of its own still reads as an import.
-    assert reading(f"{verb} {OTHER}, taking the rate from {PIPELINE}.") == {IMPORT}
+    # Control: a source predicate of its own is still proposed as an import, and the closed
+    # grammar holds it ("Split Y, taking the rule from X" may take the rule out of X).
+    assert proposed(f"{verb} {OTHER}, taking the rate from {PIPELINE}.") == {IMPORT}
+    assert reading(f"{verb} {OTHER}, taking the rate from {PIPELINE}.") == {WORK}
+    assert PIPELINE in held(f"{verb} {OTHER}, taking the rate from {PIPELINE}.")[0].work_modules
 
 
 NOMINALS = [
@@ -157,9 +188,10 @@ def test_an_aside_after_a_request_holds_only_complete_references():
         assert reading(block) == {WORK}, (block, kinds(block))
         keeps_the_owner_hold(block)
     keeps_the_owner_hold(f"See {PIPELINE} and add {OTHER} to {THIRD} (target).")
-    # Control: a labelled reference is accounted for, as it was at fd0b635.
+    # Control: a labelled reference is accounted for by the readers, as it was at fd0b635.
     for aside in ("(corpus us/statute/26/1/h)", "(us/statute/26/1/h, us/statute/26/1/i)"):
-        assert reading(f"See {PIPELINE} and fix {OTHER} {aside}.") == {MENTION}, aside
+        assert proposed(f"See {PIPELINE} and fix {OTHER} {aside}.") == {MENTION}, aside
+        assert reading(f"See {PIPELINE} and fix {OTHER} {aside}.") == {WORK}, aside
 
 
 def test_a_request_word_after_a_module_is_never_a_noun():
@@ -186,12 +218,17 @@ def test_a_request_word_after_a_module_is_never_a_noun():
     # Controls: a placement, an owned noun and a word that asks for nothing release, as the suite and the frozen issues rely on.
     assert WORK not in reading(f"Do not import {PIPELINE} into this module.")
     assert reading(f"Keep the existing {PIPELINE} and its test contract active.") == {MENTION}
-    assert reading(f"The rule must be stated by importing {PIPELINE}, from its statutory elements.") == {IMPORT}
     assert reading(f"See {PIPELINE} for the rate.") == {MENTION}
-    assert reading(f"See {PIPELINE} for the amended rule.") == {MENTION}
-    assert reading(f"See {PIPELINE} for the additional credit.") == {MENTION}
-    assert reading(f"See {PIPELINE} (a).") == {MENTION}
-    assert reading(f"See {PIPELINE} as well as {OTHER}.") == {MENTION}
+    # These the readers account for, and the closed release grammar does not.
+    assert proposed(f"The rule must be stated by importing {PIPELINE}, from its statutory elements.") == {IMPORT}
+    assert reading(f"The rule must be stated by importing {PIPELINE}, from its statutory elements.") == {WORK}
+    for block in (
+        f"See {PIPELINE} for the amended rule.",
+        f"See {PIPELINE} for the additional credit.",
+        f"See {PIPELINE} (a).",
+        f"See {PIPELINE} as well as {OTHER}.",
+    ):
+        assert proposed(block) == {MENTION} and reading(block) == {WORK}, (block, kinds(block))
 
 
 REQUEST_WORDS = [
@@ -246,11 +283,18 @@ def test_a_request_word_in_the_rest_of_a_sentence_keeps_the_module_work(opener, 
     sentence = f"{opener} {PIPELINE} {frame.format(w=word)}."
     assert reading(sentence) == {WORK}, (sentence, kinds(sentence))
     assert PIPELINE in held(sentence)[0].work_modules, sentence
-    # Control: the same frame around a word that asks for nothing releases.
+    # Control: the same frame around a word that asks for nothing is proposed for release; the
+    # closed grammar releases "for the <reference noun>" after a reference or an import alone.
     if frame in ("for the {w}", "for {w}", "with {w} of the rate"):
         for noun in ("rate", "threshold", "amended rule", "additional credit"):
             control = f"{opener} {PIPELINE} {frame.format(w=noun)}."
-            assert WORK not in reading(control), (control, kinds(control))
+            assert WORK not in proposed(control), (control, kinds(control))
+            closed = (
+                frame == "for the {w}"
+                and noun in ("rate", "threshold")
+                and opener in ("See", "Cf.", "Compare", "Import")
+            )
+            assert (WORK not in reading(control)) == closed, (control, kinds(control))
 
 
 def test_a_short_name_never_resolves_a_destination_away_from_an_earlier_module():
@@ -269,8 +313,9 @@ def test_a_short_name_never_resolves_a_destination_away_from_an_earlier_module()
         assert any(PIPELINE in reason for reason in row.blocked), block
     # The sibling the short name may also mean is still read.
     assert (OTHER.rsplit("/", 1)[0] + "/" + short, WORK) in kinds(f"See {PIPELINE} and fix {OTHER} and {short}.")
-    # Control: a short name that repeats no earlier module's file name is a sibling only.
-    assert reading(f"See {PIPELINE} and fix {OTHER} and i.yaml.") == {MENTION}
+    # Control: a short name that repeats no earlier module's file name is a sibling only
+    # (for the readers: the closed grammar holds the sentence for its request).
+    assert proposed(f"See {PIPELINE} and fix {OTHER} and i.yaml.") == {MENTION}
     assert (THIRD, WORK) in kinds(f"See {PIPELINE} and fix {OTHER} and i.yaml.")
 
 

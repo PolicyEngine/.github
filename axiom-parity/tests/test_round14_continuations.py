@@ -8,6 +8,7 @@ from axiom_parity.drain import (
     MENTION,
     WORK,
     WorkHolds,
+    _proposals,
     _readings,
     issue_inputs,
     plain,
@@ -39,21 +40,24 @@ SEPARATORS = [
     "…",
 ]
 # Where the continuation stands: (template, the separator that closes the unit
-# instead, whether the continuation is a Markdown unit of its own).
+# instead, whether the continuation is a Markdown unit of its own, whether it
+# is a block apart from the unit: a sibling item or a paragraph after a blank
+# line, not a nested item, a line or a sentence of the unit's own paragraph).
 FORMS = [
-    ("- {head}{sep}\n  - {tail}", ".", True),  # a nested item
-    ("- {head}{sep}\n- {tail}", ".", True),  # a sibling item
-    ("1. {head}{sep}\n   1. {tail}", ".", True),  # a nested numbered item
-    ("{head}{sep}\n{tail}", ".", False),  # a following line of the paragraph
-    ("- {head}{sep}\n  {tail}", ".", False),  # a following line of the item
-    ("{head}{sep}\n\n{tail}", ".", True),  # a following paragraph
-    ("{head}{sep}\n\n- {tail}", ".", True),  # the list an open paragraph introduces
-    ("{head}{sep}\n\n- Nothing else.\n- {tail}", ".", True),  # a later item of that list
-    ("> {head}{sep}\n> - {tail}", ".", True),  # inside a block quote
-    ("{head}{sep}. {tail}", "", False),  # a following sentence
+    ("- {head}{sep}\n  - {tail}", ".", True, False),  # a nested item
+    ("- {head}{sep}\n- {tail}", ".", True, True),  # a sibling item
+    ("1. {head}{sep}\n   1. {tail}", ".", True, False),  # a nested numbered item
+    ("{head}{sep}\n{tail}", ".", False, False),  # a following line of the paragraph
+    ("- {head}{sep}\n  {tail}", ".", False, False),  # a following line of the item
+    ("{head}{sep}\n\n{tail}", ".", True, True),  # a following paragraph
+    ("{head}{sep}\n\n- {tail}", ".", True, True),  # the list an open paragraph introduces
+    ("{head}{sep}\n\n- Nothing else.\n- {tail}", ".", True, True),  # a later item of that list
+    ("> {head}{sep}\n> - {tail}", ".", True, False),  # inside a block quote
+    ("{head}{sep}. {tail}", "", False, False),  # a following sentence
 ]
 REQUESTS = ["fix it.", "fix the rule.", "update it.", "fix.", "add the rule to it.", "edit them.", "and fix it."]
-OPENERS = ["See", "Cf.", "As in", "Compare", "Keep", "Import", "Do not import"]
+# Openers of the closed release forms ("Keep X" needs "unchanged").
+OPENERS = ["See", "Cf.", "As in", "Compare", "Import", "Do not import"]
 
 
 def kinds(text: str) -> list[tuple[str, str]]:
@@ -62,6 +66,11 @@ def kinds(text: str) -> list[tuple[str, str]]:
 
 def reading(text: str, module: str = PIPELINE) -> set[str]:
     return {kind for name, kind in kinds(text) if name == module}
+
+
+def proposed(text: str, module: str = PIPELINE) -> set[str]:
+    """What the readers propose, before the closed release grammar decides."""
+    return {kind for _, _, found in _proposals(plain(text)) for name, kind in found if name == module}
 
 
 def held(block: str):
@@ -85,8 +94,13 @@ def test_a_terminal_semicolon_keeps_a_nested_edit():
     for control in (f"- See {PIPELINE}:\n  - fix it.", f"- See {PIPELINE}; fix it."):
         row, ready = held(control)
         assert PIPELINE in row.work_modules and ready == 0, control
-    row, ready = held(f"- See {PIPELINE}.\n  - Nothing else.")
-    assert reading(f"- See {PIPELINE}.\n  - Nothing else.") == {MENTION} and row.dispatchable and ready == 1
+    row, ready = held(f"- See {PIPELINE}.\n- Nothing else.")
+    assert reading(f"- See {PIPELINE}.\n- Nothing else.") == {MENTION} and row.dispatchable and ready == 1
+    row, ready = held(f"- See {PIPELINE}.")
+    assert reading(f"- See {PIPELINE}.") == {MENTION} and row.dispatchable and ready == 1
+    # What is nested under the item is part of it: only a reference there releases (round 15).
+    assert reading(f"- See {PIPELINE}.\n  - See {OTHER}.") == {MENTION}
+    assert reading(f"- See {PIPELINE}.\n  - Nothing else.") == {WORK}
     # A semicolon starts a new clause, and the request before it names no
     # module, so it may write the module after it, nested or inline (round 15).
     for continuation in CONTINUATIONS:
@@ -107,15 +121,19 @@ def test_a_terminal_semicolon_keeps_a_nested_edit():
 )
 @settings(max_examples=600, deadline=None, database=None)
 def test_a_module_before_a_trailing_separator_stays_work(opener, sep, form, request, wrapper):
-    template, closing, _ = form
+    template, closing, _, apart = form
     head = f"{opener} {wrapper}{PIPELINE}{wrapper}"
     tail = request[0].upper() + request[1:] if template.endswith(". {tail}") else request
     block = template.format(head=head, sep=sep, tail=tail)
     assert reading(block) == {WORK}, (block, kinds(block))
     assert PIPELINE in held(block)[0].work_modules, block
-    # Control: the same unit closed by a full stop, with no request after it, releases.
+    # Control: the same unit closed by a full stop, with no request after it,
+    # releases when what follows is a block apart from it. The readers propose
+    # the release in every form; the closed grammar (round 15) keeps the module
+    # work where the text after it shares its paragraph or is nested under it.
     control = template.format(head=head, sep=closing, tail="Nothing else.")
-    assert WORK not in reading(control), (control, kinds(control))
+    assert WORK not in proposed(control), (control, kinds(control))
+    assert (WORK not in reading(control)) == apart, (control, kinds(control))
 
 
 INTROS = ["Fix the following", "Update these modules", "Add the rate to", "Encode it with", "Edit the rules in"]
@@ -134,7 +152,7 @@ CONTINUATIONS = ["see {m}.", "keep {m} unchanged.", "import {m}.", "do not impor
 )
 @settings(max_examples=600, deadline=None, database=None)
 def test_a_continuation_reads_after_its_open_clause(intro, sep, form, continuation):
-    template, closing, separate = form
+    template, closing, separate, apart = form
     tail = continuation.format(m=PIPELINE)
     capital = tail[0].upper() + tail[1:]
     if template.endswith(". {tail}"):
@@ -149,7 +167,8 @@ def test_a_continuation_reads_after_its_open_clause(intro, sep, form, continuati
     # (inline, "Do not import: X formulas." is a deferral of X).
     # ("Fix the following." and "Add the rate to." stay open: their words cannot end a predicate.)
     control = template.format(head="Nothing else", sep=closing, tail=capital)
-    assert WORK not in reading(control), (control, kinds(control))
+    assert WORK not in proposed(control), (control, kinds(control))
+    assert (WORK not in reading(control)) == apart, (control, kinds(control))
     bare = template.format(head="Do not import", sep=sep, tail=f"{PIPELINE} formulas.")
     assert not separate or reading(bare) == {WORK}, bare
 
@@ -192,6 +211,10 @@ def test_a_leading_separator_or_an_unclosed_intro_continues_the_unit_before(
     block = unterminated.format(head=head, tail=request)
     assert reading(block) == {WORK}, (block, kinds(block))
     assert PIPELINE in held(block)[0].work_modules, block
-    # Controls: a closed unit, or a sibling an unclosed item does not introduce, still releases.
+    # Controls: a closed unit, or a sibling an unclosed item does not introduce, is proposed for release,
+    # and the closed grammar (round 15) releases the closed unit before a block apart from it.
     for control in (f"- {head}.\n  - Nothing else.", f"- {head}\n- Nothing else.", f"{head}. Nothing else."):
+        assert WORK not in proposed(control), (control, kinds(control))
+        assert reading(control) == {WORK}, (control, kinds(control))
+    for control in (f"- {head}.\n- Nothing else.", f"{head}.\n\nNothing else.", f"{head}."):
         assert WORK not in reading(control), (control, kinds(control))

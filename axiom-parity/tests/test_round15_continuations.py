@@ -4,12 +4,24 @@ from conftest import READY_ISSUE_BODY, RS_US
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from axiom_parity.drain import DEFERRED, MENTION, WORK, WorkHolds, _readings, issue_inputs, plain, plan, to_json
+from axiom_parity.drain import (
+    DEFERRED,
+    MENTION,
+    WORK,
+    WorkHolds,
+    _proposals,
+    _readings,
+    issue_inputs,
+    plain,
+    plan,
+    to_json,
+)
 
 PIPELINE = "us/policies/income_tax/taxable_income_pipeline.yaml"
 OTHER = "us/statutes/26/1/h.yaml"
 THIRD = "us/statutes/26/1/i.yaml"
-OPENERS = ["See", "Cf.", "As in", "Compare", "Keep", "Import", "Do not import"]
+# Openers of the closed release forms ("Keep X" needs "unchanged").
+OPENERS = ["See", "Cf.", "As in", "Compare", "Import", "Do not import"]
 
 
 def kinds(text: str) -> list[tuple[str, str]]:
@@ -18,6 +30,11 @@ def kinds(text: str) -> list[tuple[str, str]]:
 
 def reading(text: str, module: str = PIPELINE) -> set[str]:
     return {kind for name, kind in kinds(text) if name == module}
+
+
+def proposed(text: str, module: str = PIPELINE) -> set[str]:
+    """What the readers propose, before the closed release grammar decides."""
+    return {kind for _, _, found in _proposals(plain(text)) for name, kind in found if name == module}
 
 
 def held(block: str):
@@ -43,6 +60,12 @@ def releases(block: str) -> None:
     assert PIPELINE not in row.work_modules and row.dispatchable and ready == 1, block
 
 
+def only_proposed(block: str) -> None:
+    """The readers propose a release, and the closed release grammar keeps the module work."""
+    assert WORK not in proposed(block), (block, kinds(block))
+    keeps_the_owner_hold(block)
+
+
 def test_a_unit_that_ends_on_an_abbreviation_stays_open():
     # The round 15 verifier's inputs: each released the pipeline at fd0b635 and at d811eb3.
     for block in (
@@ -64,8 +87,10 @@ def test_a_unit_that_ends_on_an_abbreviation_stays_open():
     ):
         keeps_the_owner_hold(block)
     # Controls: a unit that a real stop closes, with no request after it, releases.
-    releases(f"- See {PIPELINE}.\n  - Nothing else.")
+    releases(f"- See {PIPELINE}.\n- Nothing else.")
+    releases(f"- See {PIPELINE}.")
     releases(f"See {PIPELINE}.")
+    only_proposed(f"- See {PIPELINE}.\n  - Nothing else.")  # nested under it: part of it
     # "…/1/a." ends a sentence: the "a" is a path segment, not an article.
     assert reading("Do not import us/statutes/26/1/a.\n\nNothing else.", "us/statutes/26/1/a.yaml") == {DEFERRED}
     assert reading("See us/statutes/26/1/a.\n\n- Nothing else.", "us/statutes/26/1/a.yaml") == {MENTION}
@@ -81,6 +106,8 @@ OPEN_FORMS = [
     "> {head}\n> - {tail}",  # inside a block quote
     "{head}",  # nothing after it at all
 ]
+# Forms where what follows a closed unit is nested in it or quoted with it: the closed grammar holds those.
+OPEN_FORMS_WITHIN = {"- {head}\n  - {tail}", "1. {head}\n   1. {tail}", "> {head}\n> - {tail}"}
 # What follows an open unit need not point back: the unit is open whatever it says.
 FOLLOWERS = ["fix it.", "fix the rule.", "fix.", "the rate table.", "Nothing else.", "add the rule to it."]
 
@@ -101,9 +128,11 @@ def test_a_module_in_a_unit_that_no_stop_closes_is_work(opener, joiner, abbrevia
     block = form.format(head=f"{opener} {PIPELINE}{joiner}{abbreviation}", tail=follower)
     assert reading(block) == {WORK}, (block, kinds(block))
     assert PIPELINE in held(block)[0].work_modules, block
-    # Control: the same structure closed by a real stop, with nothing pointing back, releases.
+    # Control: the same structure closed by a real stop, with nothing pointing back, releases
+    # (the readers propose it everywhere; the closed grammar agrees where the follower is a block apart).
     control = form.format(head=f"{opener} {PIPELINE}.", tail="Nothing else.")
-    assert WORK not in reading(control), (control, kinds(control))
+    assert WORK not in proposed(control), (control, kinds(control))
+    assert (WORK in reading(control)) == (form in OPEN_FORMS_WITHIN), (control, kinds(control))
 
 
 def test_a_request_that_points_back_keeps_the_owner_hold():
@@ -122,7 +151,8 @@ def test_a_request_that_points_back_keeps_the_owner_hold():
         f"- See {PIPELINE}\n- fix it.",
     ):
         keeps_the_owner_hold(block)
-    releases(f"See {PIPELINE}. Nothing else.")
+    releases(f"See {PIPELINE}.\n\nNothing else.")
+    only_proposed(f"See {PIPELINE}. Nothing else.")  # a sentence of its own paragraph
 
 
 POINTING = [
@@ -196,6 +226,8 @@ def test_a_sentence_that_points_back_holds_the_modules_before_it(opener, form, p
     # module's sentence, where only a reference to another module is accounted
     # for. A module in a heading is work whatever follows.)
     strict = "|" in form or "\n(a)" in form or "\ni." in form or form.startswith("#")
+    # The closed grammar (round 15) agrees only where the sentence is in a block apart from the module's.
+    apart = form in ("{head}.\n\n{tail}", "- {head}.\n- {tail}", "1. {head}.\n2. {tail}")
     for quiet in (
         ()
         if strict
@@ -208,10 +240,14 @@ def test_a_sentence_that_points_back_holds_the_modules_before_it(opener, form, p
         )
     ):
         control = form.format(head=head, tail=quiet)
-        assert WORK not in reading(control), (control, kinds(control))
+        assert WORK not in proposed(control), (control, kinds(control))
+        if apart:
+            assert WORK not in reading(control), (control, kinds(control))
     # A sentence of the next unit that names a module comes first: what points after it points at that one.
     own = form.format(head=head, tail=f"Encode {OTHER}. {pointing[0].upper()}{pointing[1:]}")
     if "\n" in form and not strict:
+        assert WORK not in proposed(own), (own, kinds(own))
+    if apart:
         assert WORK not in reading(own), (own, kinds(own))
 
 
@@ -227,11 +263,19 @@ def test_a_request_before_a_module_with_no_named_destination_keeps_the_owner_hol
         f"## Fix the following:\n\nSee {OTHER}.\n\nSee {PIPELINE}.",
     ):
         keeps_the_owner_hold(block)
-    # Controls: a pointer or a request on a named module before it leaves the module alone.
+    # Controls: a pointer or a request on a named module before it leaves the module alone
+    # for the readers; the closed grammar releases it only in a sentence of its own.
     for block in (
         f"See {OTHER}; see {PIPELINE}.",
         f"Fix {OTHER}; see {PIPELINE}.",
         f"- See {OTHER};\n  - see {PIPELINE}.",
+    ):
+        assert proposed(block) == {MENTION}, (block, kinds(block))
+        assert reading(block) == {WORK}, (block, kinds(block))
+    for block in (
+        f"See {OTHER}.\n\nSee {PIPELINE}.",
+        f"Fix {OTHER}.\n\nSee {PIPELINE}.",
+        f"See {OTHER} and {PIPELINE}.",
     ):
         assert reading(block) == {MENTION}, (block, kinds(block))
 
@@ -274,15 +318,19 @@ def test_a_module_after_an_unresolved_clause_is_work(before, form, reference):
     block = form.format(before=clause, tail=reference.format(m=PIPELINE), third=THIRD)
     assert reading(block) == {WORK}, (block, kinds(block))
     assert PIPELINE in held(block)[0].work_modules, block
-    # Control: the same structure after a clause that only names modules releases.
+    # Control: the same structure after a clause that only names modules is proposed for release;
+    # the closed grammar releases the reference in a paragraph of its own after that clause.
     for resolved in RESOLVED_BEFORE:
         control = form.format(before=resolved.format(o=OTHER, t=THIRD), tail=reference.format(m=PIPELINE), third=THIRD)
-        assert WORK not in reading(control), (control, kinds(control))
+        assert WORK not in proposed(control), (control, kinds(control))
+        tail = reference.format(m=PIPELINE)
+        apart = f"{resolved.format(o=OTHER, t=THIRD)}.\n\n{tail[0].upper()}{tail[1:]}"
+        assert WORK not in reading(apart), (apart, kinds(apart))
 
 
 @given(
     intro=st.sampled_from(["Fix the following:", "## Fix the following:", "Update these modules:", "Edit:"]),
-    between=st.lists(st.sampled_from([f"See {OTHER}.", "The rate is 5%.", "- an item", f"Keep {THIRD}."]), max_size=3),
+    between=st.lists(st.sampled_from([f"See {OTHER}.", "The rate is 5%.", "- An item.", f"Keep {THIRD}."]), max_size=3),
     reference=st.sampled_from(["See {m}.", "Keep {m} unchanged.", "Import {m}.", "Do not import {m}."]),
 )
 @settings(max_examples=200, deadline=None, database=None)
@@ -293,9 +341,12 @@ def test_an_open_paragraph_reaches_the_paragraphs_after_it(intro, between, refer
     block = "\n\n".join([intro, f"See {OTHER}.", *between, tail])
     assert reading(block) == {WORK}, (block, kinds(block))
     assert PIPELINE in held(block)[0].work_modules, block
-    # Controls: a closed paragraph introduces nothing, and a new heading ends what the intro reaches.
+    # Controls: a closed paragraph introduces nothing, and a new heading ends what the intro reaches
+    # (for the readers: under the closed grammar the new heading reaches the module itself).
     assert WORK not in reading("\n\n".join(["Nothing else.", f"See {OTHER}.", *between, tail]))
-    assert WORK not in reading("\n\n".join([intro, f"See {OTHER}.", *between, "## Background", tail]))
+    after_heading = "\n\n".join([intro, f"See {OTHER}.", *between, "## Background", tail])
+    assert WORK not in proposed(after_heading)
+    assert reading(after_heading) == {WORK}
 
 
 LAZY_LINES = ["(a) {t}", "(1) {t}", "a) {t}", "i. {t}", "iv) {t}", "2. {t}", "3) {t}", "     - {t}", "| {t} |"]
@@ -328,17 +379,17 @@ def test_a_line_markdown_keeps_in_the_paragraph_continues_its_sentence():
         f"Fix these modules.\n(a) see {PIPELINE}.",
     ):
         keeps_the_owner_hold(block)
-    # Controls: a blank line ends the paragraph, a real list item starts a unit of its own,
-    # and a lazy line that only points at another module leaves this one alone.
+    # Controls: a blank line ends the paragraph, and a real list item starts a unit of its own.
     for block in (
         f"See {PIPELINE}.\n\n(a) Nothing else.",
         f"See {PIPELINE}.\n- Nothing else.",
         f"See {PIPELINE}.\n1. Nothing else.",
         f"1. See {PIPELINE}.\n2. Nothing else.",
         f"- See {PIPELINE}.\n2. Nothing else.",
-        f"See {PIPELINE}.\n(a) see {OTHER}.",
     ):
         releases(block)
+    # A lazy line that only points at another module is still a line of this paragraph.
+    only_proposed(f"See {PIPELINE}.\n(a) see {OTHER}.")
 
 
 # Invariant (round 15): the drain's units are never finer than the paragraphs
@@ -367,7 +418,8 @@ def test_a_request_on_a_lazy_line_holds_the_sentence_before_it(opener, stop, lin
     if not line.startswith("|"):
         assert WORK not in reading(apart), (apart, kinds(apart))
         pointer = f"{opener} {PIPELINE}.\n{line.format(t=f'see {OTHER}.')}"
-        assert WORK not in reading(pointer), (pointer, kinds(pointer))
+        assert WORK not in proposed(pointer), (pointer, kinds(pointer))
+        assert reading(pointer) == {WORK}, (pointer, kinds(pointer))  # a line of the module's own paragraph
 
 
 NESTED_FORMS = [
@@ -399,12 +451,15 @@ def test_a_request_nested_under_an_item_keeps_the_owner_hold():
         f"- Import {PIPELINE}.\n  - Add the 2026 rate.",
     ):
         keeps_the_owner_hold(block)
+    # What is nested under the item is part of it: the readers let these go, the closed grammar does not.
     for block in (
         f"- See {PIPELINE}.\n  - Nothing else.",
         f"- See {PIPELINE}.\n  - The rate is 5%.",
         f"- See {PIPELINE}.\n  - Fix {OTHER}.",
         f"- See {PIPELINE}.\n  - See {OTHER}.\n    - Fix it.",
     ):
+        only_proposed(block)
+    for block in (f"- See {PIPELINE}.\n  - See {OTHER}.", f"- See {PIPELINE}.\n- Fix {OTHER}.", f"- See {PIPELINE}."):
         releases(block)
 
 
@@ -423,9 +478,14 @@ def test_a_request_in_a_nested_item_holds_the_item_above(opener, form, request, 
     block = form.format(head=f"{opener} {PIPELINE}{stop}", tail=request)
     assert reading(block) == {WORK}, (block, kinds(block))
     assert PIPELINE in held(block)[0].work_modules, block
-    # Controls: a nested item that asks for nothing, or names its own object, releases.
+    # Controls: a nested item that asks for nothing, or names its own object, is proposed for release;
+    # the closed grammar releases the item only over nested references.
     for quiet in ("Nothing else.", "The rate is 5%.", f"Fix {OTHER}."):
         control = form.format(head=f"{opener} {PIPELINE}.", tail=quiet)
+        assert WORK not in proposed(control), (control, kinds(control))
+        assert reading(control) == {WORK}, (control, kinds(control))
+    if form in NESTED_FORMS[:3]:
+        control = form.format(head=f"{opener} {PIPELINE}.", tail=f"See {OTHER}.")
         assert WORK not in reading(control), (control, kinds(control))
 
 
