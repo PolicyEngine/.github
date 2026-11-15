@@ -25,10 +25,15 @@ from .github import GitHub
 from .issue_lint import (
     _ARTIFACT,
     _CORPUS_SINGULAR,
+    _FENCE,
     _FIELD,
+    _FINDING_FENCE,
     _JURIS,
     _LABEL,
     _LIST_MARKER,
+    _QUOTE,
+    _YAML_KEY,
+    _finding_at,
     expand_braces,
     lint_issue,
     one_line_breaks,
@@ -2285,6 +2290,62 @@ def _kept_labels(markdown: str) -> str:
     return "\n".join(out)
 
 
+_ATX_HEADING = re.compile(r" {0,3}#{1,6}(?:[ \t]|$)")
+# A bold label that names a field of the issue: its colon stands inside the
+# emphasis or right after it ("**Module path:** x", "**Module path**: x"). A
+# bold sentence ("**Fix it too.**") is text, not a field.
+_FIELD_LABEL = re.compile(r" {0,3}(?:[-*] +)?(?:\*\*|__)[^*_\n]{1,80}?(?::(?:\*\*|__)|(?:\*\*|__) *:)")
+
+
+def _stands_alone(markdown: str) -> bool:
+    """Is each finding the only text between its heading or label and the next one?
+
+    Invariant (round 15): the finding's reader takes a quote, a code block or
+    the paragraphs under a heading or label that names the finding, and leaves
+    out what stands around it: a line of introduction above a quote ("Fix the
+    pipeline first:"), a list or a paragraph below it ("> See X." over
+    "- fix it.", or over a blank line and "Fix it."), and a bold line among a
+    plain finding's paragraphs ("**Fix it too.**"). Markdown shows that text
+    with the finding, under the same heading, and it may continue the
+    finding's predicate (review r14, finding 2: the next unit continues it).
+    The drain does not read it, so an issue whose findings do not stand alone
+    releases nothing. After a finding, only blank lines and code fences may
+    stand before the next heading, the next field label ("**Module path:**")
+    or the end of the text. Between a heading or label and the quote or code
+    block it introduces, only blank lines may stand, and among a plain
+    finding's paragraphs only a field label may be left out. A line that
+    names the finding field and gives no finding (one too short, unfinished
+    or only promised) leaves text under that name unread, so it releases
+    nothing either.
+    """
+    lines = markdown.splitlines()
+    i = 0
+    while i < len(lines):
+        text, end = _finding_at(lines, i)
+        if not text:
+            if _FIELD.search(lines[i]):
+                return False
+            i = end
+            continue
+        after = next((line for line in lines[end:] if line.strip() and not _FENCE.match(line)), None)
+        if after is not None and not (_ATX_HEADING.match(after) or _FIELD_LABEL.match(after)):
+            return False
+        if not (_FINDING_FENCE.match(lines[i]) or _YAML_KEY.match(lines[i])):
+            block = bool(_QUOTE.match(lines[end - 1]) or _FENCE.match(lines[end - 1]))  # a quote or a code block
+            fenced = False
+            for line in lines[i + 1 : end]:
+                if _FENCE.match(line):
+                    fenced = not fenced
+                elif fenced or not line.strip():
+                    continue
+                elif block and not _QUOTE.match(line):
+                    return False  # text between the heading or label and the block
+                elif not block and _LABEL.match(line) and not _FIELD_LABEL.match(line):
+                    return False  # a bold line the reader skipped as a label
+        i = end
+    return True
+
+
 def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]]) -> IssueInputs:
     raw = [issue.get("body") or ""] + [c.get("body") or "" for c in comments]
     # A Unicode line separator inside a line never ends a quoted finding early.
@@ -2356,8 +2417,13 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     # keeps two columns, which put it in the list item above it, while the
     # finding's reader takes the tab with the mark and reads a paragraph of
     # its own. So an issue that holds any white space but spaces and line
-    # ends, anywhere, releases nothing.
-    if texts != raw or any(char.isspace() and char not in " \n\r" for text in raw for char in text):
+    # ends, anywhere, releases nothing. Neither does an issue with text around
+    # a finding that the finding's reader left out (``_stands_alone``).
+    if (
+        texts != raw
+        or any(char.isspace() and char not in " \n\r" for text in raw for char in text)
+        or not all(_stands_alone(_kept_labels(_lazy_quotes(text))) for text in texts)
+    ):
         readings = [(clause, rest, [(module, WORK) for module, _ in found]) for clause, rest, found in readings]
     for sentence, _, found in readings:
         here = _corpus_citations(sentence)
