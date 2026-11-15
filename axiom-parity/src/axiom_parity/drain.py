@@ -145,14 +145,16 @@ def _explicit_targets(text: str, cites: list[str]) -> list[str]:
 # A module named in running text: a path (with or without ".yaml") or a legal id.
 # The plural kind tells a module ("us/statutes/…") from a corpus citation ("us/statute/…").
 # A trailing slash makes it a directory ("at the matching uk/statutes/ukpga/2014/28/ paths").
-# Invariant (round 15): a module's name ends at its ".yaml" (or at the ".test.yaml"
-# named with it). What is written straight after it is not part of the name:
+# Invariant (round 15): a module path after a repository or URL prefix
+# ("rulespec-us/us/policies/x.yaml", ".../blob/main/us/policies/x.yaml") is
+# still a module. Invariant (round 15): a module's name ends at its ".yaml"
+# (or at the ".test.yaml" named with it). What is written straight after it is not part of the name:
 # "See x.yaml/" and "See x.yaml.And fix it" name the module x.yaml, and the
 # slash or the words after it are read as the rest of its sentence.
 _MODULE_KINDS = "statutes|regulations|policies|legislation|programs"
 # Program modules also live at the root: "programs/us-ar/tanf/fy-2026.yaml".
 _MODULE_NAME = re.compile(
-    rf"(?<![\w/-])(?:{_JURIS}[/:](?:{_MODULE_KINDS})|programs/{_JURIS})/"
+    rf"(?:(?<![\w/-])|(?<=[\w.\-]/))(?:{_JURIS}[/:](?:{_MODULE_KINDS})|programs/{_JURIS})/"
     r"(?P<rest>[\w./:\-]*?\.yaml(?:/?\.test\.yaml)?(?!\w)|[\w./:\-]*\w)(?P<dir>(?<!\.yaml)/)?(?:#[\w.]+)?"
 )
 # Why a finding names a module. Unless the words around it say otherwise, a named
