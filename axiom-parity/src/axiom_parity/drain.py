@@ -24,7 +24,9 @@ from .finder.propose import document_of
 from .github import GitHub
 from .issue_lint import (
     _ARTIFACT,
+    _BRACED,
     _CORPUS_SINGULAR,
+    _EXPANDED_PATH,
     _FIELD,
     _FINDING_FENCE,
     _JURIS,
@@ -33,7 +35,6 @@ from .issue_lint import (
     _QUOTE,
     _YAML_KEY,
     _finding_at,
-    expand_braces,
     lint_issue,
     one_line_breaks,
     review_findings,
@@ -74,6 +75,7 @@ class IssueInputs:
     finding_blocks: int = 0  # how many separate findings were joined
     unresolved: list[str] = field(default_factory=list)  # modules a finding asks for, with no citation to be found
     work_modules: list[str] = field(default_factory=list)  # modules a finding, or a pairing line, asks for work on
+    unread: list[str] = field(default_factory=list)  # paths the issue writes that the plan cannot read in full
 
     @property
     def documents(self) -> list[str]:
@@ -538,14 +540,89 @@ def expand_siblings(text: str) -> str:
 
 _EDGE_EMPHASIS = re.compile(r"(?<![\w/{}])[_*]+(?=[\w/{}])|(?<=[\w/{}])[_*]+(?![\w/{}])")
 
+# Invariant (round 15): the readers see every word the text holds. A brace
+# group is spelled out only in full: every alternative, an empty one included,
+# spells a path with the characters joined to the group
+# ("us/statutes/26/1/{i,h}.yaml", "programs/{us-ar,us-ca}/tanf.yaml",
+# "us/statutes/26/1/h{,/1}.yaml"). Any other group stays in the text as
+# written, so no word of it is dropped: "See a/{x.yaml, and fix that file}."
+# is not "See a/x.yaml.", and "Fix a/{i.yaml, h.yaml (rate fix)}." still
+# holds its second file. A brace that is left in the text is then judged
+# where the text is read:
+#
+# - the release grammar releases nothing in findings that hold a brace
+#   (``_released``): every module of a closed form is written in full;
+# - an expression that is not spelled out and could name a module or a corpus
+#   citation holds the issue (``_unspelled``), because the plan cannot say
+#   what it names, and every module one of its spellings names is requested
+#   work, so that module's own holds apply as well.
+_MAX_SPELLINGS = 1024
+_BRACE = re.compile(r"[{}]")
+_BRACE_PART = re.compile(r"[{},]|[^{},]+")
+
+
+def _spellings(expression: str) -> list[str] | None:
+    """Every string a brace expression spells, as a shell reads it, or ``None`` past ``_MAX_SPELLINGS``.
+
+    A comma parts alternatives only inside braces, white space around an
+    alternative is not part of it, an empty alternative spells nothing, and
+    groups nest. A closing brace or a comma outside every group is a character
+    of its own, and a group that is never closed runs to the end.
+    """
+    done: list[list[str]] = []  # the finished alternatives of each open group, outermost first
+    open_: list[list[str]] = [[""]]  # the spellings so far: of the text, then of each open group's current alternative
+
+    def close_alternative() -> None:
+        done[-1].extend(spelling.strip() for spelling in open_.pop())
+
+    def close_group() -> None:
+        close_alternative()
+        alternatives = done.pop()
+        open_[-1] = [before + alternative for before in open_[-1] for alternative in alternatives]
+
+    for part in _BRACE_PART.findall(expression):
+        if part == "{":
+            done.append([])
+            open_.append([""])
+        elif part == "}" and done:
+            close_group()
+        elif part == "," and done:
+            close_alternative()
+            open_.append([""])
+        else:
+            open_[-1] = [before + part for before in open_[-1]]
+        if len(open_[-1]) > _MAX_SPELLINGS or (done and len(done[-1]) > _MAX_SPELLINGS):
+            return None
+    while done:
+        close_group()
+        if len(open_[-1]) > _MAX_SPELLINGS:
+            return None
+    return open_[0]
+
+
+def spell_braces(text: str) -> str:
+    """``a/b/{1,2}.yaml`` -> ``a/b/1.yaml, a/b/2.yaml``, when every alternative spells a path.
+
+    See the invariant above: a group with an alternative that is not a path
+    stays as written.
+    """
+
+    def spell(m: re.Match[str]) -> str:
+        spelled = _spellings(m.group(0))
+        if spelled and all(_EXPANDED_PATH.fullmatch(path) for path in spelled):
+            return ", ".join(spelled)
+        return m.group(0)
+
+    return _BRACED.sub(spell, text)
+
 
 def plain(text: str) -> str:
     """The text as paths are read from it.
 
     No code ticks or emphasis (``_x_``, ``**x**``; underscores inside a name stay),
-    and braces and sibling names spelled out.
+    and sibling names and the brace groups that spell paths spelled out.
     """
-    return expand_siblings(expand_braces(_EDGE_EMPHASIS.sub("", text.replace("`", ""))))
+    return expand_siblings(spell_braces(_EDGE_EMPHASIS.sub("", text.replace("`", ""))))
 
 
 def normal_module(name: str) -> str:
@@ -1116,7 +1193,9 @@ def _readings(text: str, markdown: str | None = None) -> list[tuple[str, str, li
 #
 # Every module in these forms is written in full: findings that give a module
 # by its file name alone after another module's path ("Fix a/d.yaml and
-# c.yaml.") release nothing (``_names_siblings``).
+# c.yaml.") release nothing (``_names_siblings``), and neither do findings
+# that hold a brace ("See a/{x.yaml, and fix that file}."; the invariant at
+# ``spell_braces``).
 #
 # Paragraphs are read as CommonMark could read them, never narrower
 # (``_blocks``): a line joins the paragraph above it unless it certainly
@@ -1219,7 +1298,7 @@ def _names_siblings(text: str) -> bool:
     a short sibling name release nothing: the name is spelled out as the
     sibling, as before, and every module the findings name stays work.
     """
-    spelled = expand_braces(_EDGE_EMPHASIS.sub("", text.replace("`", "")))
+    spelled = spell_braces(_EDGE_EMPHASIS.sub("", text.replace("`", "")))
     return expand_siblings(spelled) != spelled
 
 
@@ -1375,7 +1454,7 @@ def _blocks(markdown: str) -> list[_Block]:
 
 def _released(markdown: str) -> dict[str, set[str]]:
     """Each module every one of whose places meets the release conditions above, with the kinds they give it."""
-    if _names_siblings(markdown):
+    if _names_siblings(markdown) or _BRACE.search(markdown):
         return {}
     blocks = _blocks(markdown)
     sentences = [
@@ -2225,6 +2304,134 @@ def _corpus_citations(text: str) -> list[str]:
     return out
 
 
+# Invariant (round 15): a brace expression that is not spelled out never hides
+# what it names. An expression is a brace that ``spell_braces`` left in the
+# text, with the path characters joined to it and everything its groups hold
+# (nested groups too; a group that is never closed runs to the end of its
+# paragraph). Where work is read (the findings, and any line of the issue that
+# holds a corpus citation), an expression holds the issue when
+#
+# - the readers read a module in it, as written or in one of its spellings
+#   with the alternatives as written ("us/policies/x/{p.yaml, and fix that
+#   file}", "us/statutes/26/1/{i.yaml, h.yaml (rate fix)}", "a/x.yaml{, and
+#   fix it}");
+# - a spelling gives them a corpus citation that the text as written does not
+#   ("us/statute/26/{32, 24 (new)}"); or
+# - a spelling holds a path they cannot read at all: a kind word of a module
+#   path or a corpus citation straight after a slash or a colon, or the word
+#   "programs" in a spelling with a slash, outside every module and citation
+#   they read there ("{us (federal)}/statutes/26/1/h.yaml", "us/{statutes
+#   (the federal ones)}/26/1/h.yaml").
+#
+# Every module the spellings name in full is then requested work. Anywhere
+# else in the issue only a hidden corpus citation holds the issue: a target
+# the plan would drop. An expression too long to spell, or with more than
+# ``_MAX_SPELLINGS`` spellings, counts when it holds a kind word in a path or
+# next to a brace or a comma. A group that joins nothing holds nothing: a YAML
+# flow map or a JSON object (a corpus citation written out inside it is read
+# as written), and "policies/{cdss,cms}" with no jurisdiction before it.
+_PATH_CHAR = re.compile(r"[\w.:\-/]")
+_PARAGRAPH_ENDS = re.compile(r"\n[ \t>]*(?:\n|\Z)")
+_MAX_EXPRESSION = 20000
+_KINDS = _MODULE_KINDS + "|statute|regulation|guidance|policy|manual|form|notice|instruction"
+_KIND_IN_PATH = re.compile(rf"(?<=[/:])(?:{_KINDS})(?![\w.\-])")
+_ROOT_KIND = re.compile(r"(?<![\w.\-])programs(?![\w.\-])")
+_KIND_AT_BRACE = re.compile(rf"(?<=[{{}},])[ \t]*(?:{_KINDS})(?![\w.\-])|(?<![\w.\-])(?:{_KINDS})[ \t]*(?=[{{}},])")
+
+
+def _brace_expressions(text: str) -> list[str]:
+    """Each brace expression left in the text, in order (see the invariant above)."""
+    out: list[str] = []
+    end = 0
+    for m in _BRACE.finditer(text):
+        if m.start() < end:
+            continue
+        start = m.start()
+        while start > end and _PATH_CHAR.match(text[start - 1]):
+            start -= 1
+        depth, at = 0, m.start()
+        while at < len(text):
+            char = text[at]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth = max(depth - 1, 0)
+            elif depth == 0 and not _PATH_CHAR.match(char):
+                break
+            elif char == "\n" and _PARAGRAPH_ENDS.match(text, at):
+                break
+            at += 1
+        end = at
+        out.append(text[start:end])
+    return out
+
+
+def _read_names(text: str) -> tuple[set[str], set[str], list[tuple[int, int]]]:
+    """(modules, corpus citations, the spans they stand in) as the readers read ``text``."""
+    modules: set[str] = set()
+    cites: set[str] = set()
+    spans: list[tuple[int, int]] = []
+    for m in _MODULE_NAME.finditer(text):
+        spans.append(m.span())
+        if not m.group("dir"):
+            modules.add(normal_module(m.group(0)))
+    for m in _CORPUS_SINGULAR.finditer(text):
+        spans.append(m.span())
+        cites.add(m.group(0).rstrip(".,;:)"))
+    return modules, cites, spans
+
+
+def _unread_kind(text: str) -> bool:
+    """Does ``text`` hold a path the readers cannot read: a kind word outside every module and citation they read?"""
+    spans = _read_names(text)[2]
+    kinds = list(_KIND_IN_PATH.finditer(text)) + (list(_ROOT_KIND.finditer(text)) if "/" in text else [])
+    return any(not any(start <= m.start() < end for start, end in spans) for m in kinds)
+
+
+def _unspelled(text: str, work: bool = True) -> list[tuple[str, list[str]]]:
+    """(expression, the modules its spellings name in full) for each brace expression of ``text`` that may hide a name.
+
+    ``text`` is plain text, with the groups that spell paths already spelled
+    out. With ``work``, the text is one that work is read from; without it,
+    only an expression that hides a corpus citation counts.
+    """
+    out: list[tuple[str, list[str]]] = []
+    for expression in _brace_expressions(text):
+        spelled = _spellings(expression) if len(expression) <= _MAX_EXPRESSION else None
+        named: list[str] = []
+        if spelled is None:
+            hides = bool(
+                _KIND_IN_PATH.search(expression)
+                or _KIND_AT_BRACE.search(expression)
+                or ("/" in expression and _ROOT_KIND.search(expression))
+            )
+        else:
+            modules, cites, _ = _read_names(expression)
+            hides = work and bool(modules)
+            for spelling in spelled:
+                spelled_modules, spelled_cites, _ = _read_names(spelling)
+                hides = hides or bool(spelled_cites - cites)
+                if work:
+                    hides = hides or bool(spelled_modules) or _unread_kind(spelling)
+                    # A word after a directory reads as a file name ("a/b/and fix it"): only a
+                    # name that ends in ".yaml", or a spelling that is a path, names a module.
+                    named += [
+                        normal_module(m.group(0))
+                        for m in _MODULE_NAME.finditer(spelling)
+                        if not m.group("dir")
+                        and (m.group("rest").endswith(".yaml") or _EXPANDED_PATH.fullmatch(spelling))
+                    ]
+        if hides:
+            out.append((expression, list(dict.fromkeys(named))))
+    return out
+
+
+def _shown(path: str) -> str:
+    """A path the plan cannot read, as a blocker shows it: on one line, cut at 120 characters."""
+    flat = " ".join(path.split()).rstrip(".,;:")
+    return flat if len(flat) <= 120 else flat[:117] + "..."
+
+
 # A line that only pairs a module with a citation: "- us-nm/statutes/7-2-18/13.yaml — us-nm/statute/7-2-18.13",
 # "Module path: us/statutes/26/32/d.yaml (corpus citation us/statute/26/32/d)", or a table row of the two.
 _PAIR_FILLER = re.compile(
@@ -2658,8 +2865,9 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     # takes (U+2028, form feed, NEL ...), so a pairing line either model sees
     # declares work and targets. A pairing names a module's citation only where
     # both models pair them, so neither model's reading releases a hold.
+    models = (joined, plain("\n".join(raw)))
     by_model: list[dict[str, list[str]]] = []
-    for model in (joined, plain("\n".join(raw))):
+    for model in models:
         pairs: dict[str, list[str]] = {}
         for line in model.splitlines():
             line_modules, line_cites = _pair_line(line)
@@ -2679,6 +2887,18 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     # Inside a finding, a module and a citation named in one sentence go together too:
     # "Re-encode uk/policies/govuk/x.yaml (corpus uk/guidance/govuk/x) in place".
     readings = _readings(asked, written)
+    # Paths the plan cannot read in full (the invariant at ``_unspelled``). Work is read from the
+    # findings and from the lines that pair a module with a citation, so a brace expression there
+    # that could name a module holds the issue; one that hides a corpus citation does anywhere.
+    # The modules its spellings name are requested work, so their own holds apply too.
+    unread: list[str] = []
+    spelled: list[tuple[str, list[str]]] = []
+    work_texts = [asked] + [line for model in models for line in model.splitlines() if _corpus_citations(line)]
+    for text, work in [(text, True) for text in dict.fromkeys(work_texts)] + [(model, False) for model in models]:
+        for expression, named in _unspelled(text, work):
+            add([_shown(expression)], unread)
+            if work:
+                spelled.append((expression, named))
     # Invariant (round 15): Markdown decides blank lines, indentation, list
     # markers and headings by spaces and tabs alone, and ends a line only at
     # LF, CR or CRLF. Any other white space (a vertical tab, form feed, NEL, a
@@ -2693,14 +2913,17 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
     # ends, anywhere, releases nothing. Neither does an issue with a finding
     # whose section is not laid out as the closed reading follows it
     # (``_stands_alone``), in the text as written or with the lines Markdown
-    # keeps in a finding's paragraph marked.
+    # keeps in a finding's paragraph marked, nor one that writes a path the
+    # plan cannot read in full.
     if (
         texts != raw
         or any(char.isspace() and char not in " \n\r" for text in raw for char in text)
         or not alone
         or around
+        or unread
     ):
         readings = [(clause, rest, [(module, WORK) for module, _ in found]) for clause, rest, found in readings]
+    readings += [(expression, "", [(module, WORK) for module in named]) for expression, named in spelled]
     for sentence, _, found in readings:
         here = _corpus_citations(sentence)
         for module, kind in found:
@@ -2748,6 +2971,7 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
         len(findings),
         unresolved,
         work_modules,
+        unread,
     )
 
 
@@ -2941,6 +3165,9 @@ def plan(
                 "a finding asks for work on a module whose corpus citation the issue doesn't give: "
                 + ", ".join(unresolved)
             )
+        if r.unread:
+            # The plan cannot say which modules or citations these name, so no run is planned on a guess.
+            r.blocked.append("writes a path the plan cannot read in full (write each path out): " + "; ".join(r.unread))
         for doc in r.documents:
             groups.setdefault((r.repo, doc), []).append(r)
     batches = [Batch(doc, repo, issues) for (repo, doc), issues in groups.items()]

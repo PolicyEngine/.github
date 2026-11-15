@@ -59,7 +59,17 @@ def test_program_layouts_cross_with_each_brace_group(root_first, jurisdictions, 
 
 
 @pytest.mark.parametrize("jurisdiction", ["bad", "us_ca", "1a", "us-"])
-def test_invalid_grouped_jurisdiction_is_not_a_module(jurisdiction):
-    assert _modules_in(plain(f"Repair programs/{{us-ca,{jurisdiction}}}/tanf/fy-2026.yaml.")) == [
-        ("programs/us-ca/tanf/fy-2026.yaml", WORK)
-    ]
+def test_a_group_with_an_invalid_jurisdiction_is_not_spelled_out(jurisdiction):
+    # Round 15: a group is spelled out only in full, so no alternative is dropped (it could hold
+    # words as well as a bad jurisdiction). The text keeps the group as written, the issue is
+    # held, and the module its one valid spelling names is requested work. At 1fb2474 the invalid
+    # alternative was dropped and the valid one read alone (run refix9-f12-3-prev-1fb2474).
+    request = f"Repair programs/{{us-ca,{jurisdiction}}}/tanf/fy-2026.yaml."
+    assert _modules_in(plain(request)) == []
+    body = READY_ISSUE_BODY.replace("\n## Companion tests", f"\n> {request}\n\n## Companion tests")
+    row = issue_inputs(RS_US, {"number": 1, "body": body}, [])
+    assert "programs/us-ca/tanf/fy-2026.yaml" in row.work_modules
+    assert row.unread == [f"programs/{{us-ca,{jurisdiction}}}/tanf/fy-2026.yaml"]
+    plan([row], corpus={"us/statute/26/32/d"})
+    assert row.ready and not row.dispatchable
+    assert any(reason.startswith("writes a path the plan cannot read in full") for reason in row.blocked)
