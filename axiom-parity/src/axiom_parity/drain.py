@@ -10,6 +10,7 @@ under whatever approval Max has given.
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 from collections.abc import Callable, Iterable
@@ -143,11 +144,15 @@ def _explicit_targets(text: str, cites: list[str]) -> list[str]:
 # A module named in running text: a path (with or without ".yaml") or a legal id.
 # The plural kind tells a module ("us/statutes/…") from a corpus citation ("us/statute/…").
 # A trailing slash makes it a directory ("at the matching uk/statutes/ukpga/2014/28/ paths").
+# Invariant (round 15): a module's name ends at its ".yaml" (or at the ".test.yaml"
+# named with it). What is written straight after it is not part of the name:
+# "See x.yaml/" and "See x.yaml.And fix it" name the module x.yaml, and the
+# slash or the words after it are read as the rest of its sentence.
 _MODULE_KINDS = "statutes|regulations|policies|legislation|programs"
 # Program modules also live at the root: "programs/us-ar/tanf/fy-2026.yaml".
 _MODULE_NAME = re.compile(
     rf"(?<![\w/-])(?:{_JURIS}[/:](?:{_MODULE_KINDS})|programs/{_JURIS})/"
-    r"(?P<rest>[\w./:\-]*\w)(?P<dir>/)?(?:#[\w.]+)?"
+    r"(?P<rest>[\w./:\-]*?\.yaml(?:/?\.test\.yaml)?(?!\w)|[\w./:\-]*\w)(?P<dir>(?<!\.yaml)/)?(?:#[\w.]+)?"
 )
 # Why a finding names a module. Unless the words around it say otherwise, a named
 # module is work for the encoder: that is the safe reading, because a plan that
@@ -598,29 +603,32 @@ def _clauses(text: str) -> list[tuple[str, str]]:
     fix it") still reaches the module.
     """
     return [
-        clause
+        (clause, rest)
         for unit in markdown_units(text)
         for sentence in split_sentences(unit.text)
         for _, clauses in _sentence_clauses(sentence)
-        for clause in clauses
+        for clause, rest, _ in clauses
     ]
 
 
-def _sentence_clauses(sentence: str) -> list[tuple[str, list[tuple[str, str]]]]:
-    """(narrowest sentence, its (clause, rest) pairs) for each narrowest sentence of one grammatical sentence.
+def _sentence_clauses(sentence: str) -> list[tuple[str, list[tuple[str, str, str]]]]:
+    """(narrowest sentence, its (clause, rest, before) triples) for each narrowest sentence of one grammatical sentence.
 
     Invariant (round 14, P1.2): a separator that ends the sentence leaves it
     open. An empty semicolon part is kept in the rest as a bare ``;``, so a
     module before "See X;" over a nested "- fix it." sees the sentence stop
-    after a separator and stays work.
+    after a separator and stays work. ``before`` is every clause of the
+    grammatical sentence that stands before this one: a module is released
+    only when those leave it alone too (``_before_accounted``).
     """
     narrows = split_sentences(sentence, joins=False)
     parts = [(n, part) for n, narrow in enumerate(narrows) for part in re.split(r";\s*", narrow)]
     evidence = [part if part.strip() else ";" for _, part in parts]
-    grouped: list[tuple[str, list[tuple[str, str]]]] = [(narrow, []) for narrow in narrows]
+    grouped: list[tuple[str, list[tuple[str, str, str]]]] = [(narrow, []) for narrow in narrows]
     for k, (n, part) in enumerate(parts):
         if part.strip():
-            grouped[n][1].append((part, "; ".join(evidence[k + 1 :])))
+            before = "; ".join(e for e in evidence[:k] if e != ";")
+            grouped[n][1].append((part, "; ".join(evidence[k + 1 :]), before))
     return grouped
 
 
@@ -631,12 +639,31 @@ def _sentence_clauses(sentence: str) -> list[tuple[str, list[tuple[str, str]]]]:
 # sibling list item, the list an open paragraph introduces, a following line,
 # paragraph or sentence. A module in a continuation reads at least as
 # conservatively as it would with the open sentence written inline before it.
+# A module in the open sentence itself is work: what the sentence leaves open
+# may be a predicate on it. The last segment of a path ("us/statutes/26/1/a.")
+# is a name, not an open word. A section or paragraph sign with no number after
+# it, and a word that points at what comes next ("as below"), leave it open too.
 _OPEN_END = re.compile(
-    r"(?:[,;:/&+(\[{—–-]|\.{2,}|…|(?<![\w'’.\-])(?:and|or|nor|but|then|plus|yet|to|into|onto|of|for|with|from|by|at|"
+    r"(?:[,;:/&+(\[{—–§¶-]|\.(?:\s*\.)+|…|(?<![\w'’.\-/:#])(?:and|or|nor|but|then|plus|yet|to|into|onto|of|for|with|from|by|at|"
     r"under|per|via|within|than|as|the|a|an|its|their|every|which|whose|whom|if|unless|because|whereas|"
-    r"although|whether|must|should|shall|would|could|might|not|including|namely|viz|e\.g|i\.e|follows|"
-    r"following))[\s.!?*_\"'”’`]*\Z"
+    r"although|whether|must|should|shall|would|could|might|not|including|namely|viz|e\.g|i\.e|cf|follows|"
+    r"following|below))[\s.!?*_\"'”’`]*\Z"
 )
+_CLOSING_MARKS = "\"'”’)]}*_`"
+
+
+def _ends_on_abbreviation(text: str) -> bool:
+    """Does the text end on a period that the sentence rule gives to an abbreviation?
+
+    Invariant (round 15): a unit closes only on a stop that would end its
+    sentence with more text after it. "See X, e.g.", "See X, cf." and "See X
+    etc." end on an abbreviation's own period (``split_sentences`` would join
+    what follows), so nothing closes them and they stay open.
+    """
+    stripped = text.rstrip().rstrip(_CLOSING_MARKS).rstrip()
+    if not stripped.endswith(".") or stripped.endswith(".."):
+        return False
+    return len(split_sentences(stripped + " Zz")) == len(split_sentences(stripped))
 
 
 def _open_context(sentence: str) -> str | None:
@@ -651,6 +678,9 @@ def _open_context(sentence: str) -> str | None:
     return sentence.rsplit(";", 1)[1].strip() if ";" in sentence else sentence.strip()
 
 
+_HEADING = re.compile(r"\s{0,3}#{1,6}(?:\s|$)")
+
+
 @dataclass(frozen=True)
 class _Continuation:
     """An open unit, and the units its predicate reaches."""
@@ -658,18 +688,24 @@ class _Continuation:
     origin: int  # the open unit's index
     indent: int | None  # an open list item's marker indentation; None for a paragraph or row
     context: str  # the clause the continuation reads after
+    before: str = ""  # the open sentences' clauses that stand before ``context``
+    whole: str = ""  # the open sentences in full
 
-    def reaches(self, unit: TextUnit) -> bool:
+    def reaches(self, unit: TextUnit, after: TextUnit | None) -> bool:
         """After the next unit: an open item reaches its nested and later sibling items; an open
-        paragraph or row reaches the list or table it introduces."""
+        paragraph, heading or row reaches the list or table it introduces. When a paragraph follows
+        it (``after``), it introduces the paragraphs up to the next heading too."""
         if self.indent is None:
-            return unit.indent is not None or unit.cells is not None
+            if unit.indent is not None or unit.cells is not None:
+                return True
+            return bool(after and after.paragraph and unit.paragraph) and not _HEADING.match(unit.text)
         return unit.indent is not None and unit.indent >= self.indent
 
 
-# A sentence or unit that starts on a separator or a list word ("and fix it",
-# "; fix it", "— then fix it") continues the one before it, which is open too.
-_LEADING_CONTINUATION = re.compile(r"\s*(?:[,;:/&—–]|-(?=\s)|(?:and|or|nor|but|then|plus)\b)", re.IGNORECASE)
+# A sentence or unit that starts on a separator, an ellipsis or a list word
+# ("and fix it", "; fix it", "— then fix it", "… fix the rate") continues the
+# one before it, which is open too.
+_LEADING_CONTINUATION = re.compile(r"\s*(?:[,;:/&—–…]|\.{2,}|-(?=\s)|(?:and|or|nor|but|then|plus)\b)", re.IGNORECASE)
 # A unit that no stop closes ("- See X" over nested items, a paragraph before
 # its list) introduces the items after it, so it is open too.
 _TERMINATED = re.compile(r"[.!?][\"'”’)\]}*_`]*\s*\Z")
@@ -685,7 +721,7 @@ def _introduces(unit: TextUnit, following: TextUnit | None) -> bool:
         return False
     if unit.indent is not None:
         return following.indent > unit.indent
-    return unit.cells is None and not re.match(r"\s{0,3}#{1,6}(?:\s|$)", unit.text)
+    return unit.cells is None and not _HEADING.match(unit.text)
 
 
 def _merged(found: list[tuple[str, str]], other: list[tuple[str, str]]) -> list[tuple[str, str]]:
@@ -695,52 +731,298 @@ def _merged(found: list[tuple[str, str]], other: list[tuple[str, str]]) -> list[
     ]
 
 
+# Invariant (round 15): a sentence that points back at something named earlier
+# counts as writing to it. The pointing words are closed classes: a pronoun
+# ("fix it", "edit them", "they need a rule"), a demonstrative on its own or
+# with a word for a module ("fix this", "do that", "this module", "that
+# file"), an anaphor ("the former", "the same", "both") or a request that
+# names no object at all ("Fix.", "Update accordingly."). A possessive, a
+# demonstrative before any other noun or a description of a module ("fix its
+# rule", "update those formulas", "add Y to the pipeline", "fix the module")
+# points back when its sentence starts with a request, and a possessive that
+# starts its sentence ("Its formula is wrong.") has nothing else to bind to;
+# elsewhere they usually bind inside their own sentence ("state each element
+# with its proof excerpt", "this encoding does not close its holds"). Such a
+# sentence makes work of every module named before it in its unit; when no
+# sentence before it in its unit names a module, it reaches the modules of
+# the unit right before it, whatever kind of unit either is (an item, a row,
+# a paragraph), and of the items it is nested under (``pointed_after``). Only
+# a denial of an import ("Do not import it.") writes nothing.
+_POINTED_NOUN = r"(?:modules?|files?|paths?|pipelines?|polic(?:y|ies)|yamls?|ones?|two|three|pair)"
+_POINTED_END = r"(?=\s+" + _POINTED_NOUN + r"\b|[\s\"'”’)\]*_`]*(?:[.,;:!?]|\Z))"
+_POINTS_BACK = re.compile(
+    r"(?<![\w/#.:\-])(?:"
+    r"it|itself|they|them|themselves"
+    r"|(?:this|that|these|those)" + _POINTED_END + r"|both(?:\s+of\b|" + _POINTED_END + r")"
+    r"|the\s+(?:(?:very|two|three)\s+)?(?:"
+    r"(?:former|latter|above-?mentioned|aforementioned|aforesaid|foregoing)\b"
+    r"|(?:above|said|same|previous|preceding|prior|earlier|other|others|first|second|third|last)" + _POINTED_END + r")"
+    r")(?![\w/#:\-])",
+    re.IGNORECASE,
+)
+_POINTS_WEAKLY = re.compile(
+    r"(?<![\w/#.:\-])(?:its|their|theirs|this|these|those|"
+    r"the\s+(?:modules?|files?|paths?|pipelines?|polic(?:y|ies)|yamls?))(?![\w/#:\-])",
+    re.IGNORECASE,
+)
+_REQUEST_VERBS = (
+    _REQUESTS.pattern
+    + r"|\b(?:edit|amend|modify|revise|adjust|rewrite|rework|redo|patch|refactor|overwrite|rebuild|regenerate)\b"
+)
+_REQUEST_LED = re.compile(
+    r"\W*(?:(?:and|or|then|also|now|please|next|finally|first)\b\W*)*(?:" + _REQUEST_VERBS + r")", re.IGNORECASE
+)
+_POSSESSIVE_LED = re.compile(r"\W*(?:(?:and|or|then|also|but|now)\b\W*)*(?:its|their|theirs)\b", re.IGNORECASE)
+_BARE_REQUEST = re.compile(
+    _REQUEST_LED.pattern
+    + r"(?:\s+(?:accordingly|too|also|as\s+well|as\s+needed|in\s+place|now|instead|here|likewise|similarly|again|"
+    r"later|first|please))*\W*",
+    re.IGNORECASE,
+)
+_POINTED_DENIAL = re.compile(
+    r"\W*(?:(?:and|but|also)\s+)*(?:do(?:es)?\s+not|don't|must\s+not|never)\s+import\s+"
+    r"(?:it|them|either|these|those|(?:any|either|both)\s+of\s+them)"
+    r"(?:\s+(?:in|into|from)\s+(?:this|the\s+new|these\s+new|the\s+target)\s+(?:module|modules|encoding|file))?"
+    r"(?:\s+(?:now|yet|here|directly|at\s+all|for\s+now|anywhere|either|at\s+this\s+stage))*\W*",
+    re.IGNORECASE,
+)
+
+
+def _points_back(sentence: str) -> bool:
+    """Does the sentence point at something named before it (see the invariant above)?"""
+    text = _MODULE_NAME.sub(" MODULE ", sentence)  # a path's own words never point, and a named object is one
+    if _POINTED_DENIAL.fullmatch(text):
+        return False
+    if _POINTS_BACK.search(text) or _BARE_REQUEST.fullmatch(text):
+        return True
+    return bool(_POSSESSIVE_LED.match(text) or (_REQUEST_LED.match(text) and _POINTS_WEAKLY.search(text)))
+
+
+def _names_module(sentence: str) -> bool:
+    return any(not m.group("dir") for m in _MODULE_NAME.finditer(sentence))
+
+
+# Invariant (round 15): the drain's units are never finer than the paragraphs
+# Markdown renders. ``markdown_units`` starts a unit at every line that looks
+# like a list item or a table row, but CommonMark keeps some of those lines in
+# the paragraph before them: a line that starts with "(a)", "(1)", "a)" or
+# "i." (no list marker at all), a numbered item that does not start at 1 or an
+# item indented four or more columns directly after a paragraph line that is
+# in no list, and a "| row |" line that no table holds. Such a line is lazy:
+# its unit continues the sentence before it. A module in that sentence reads
+# with the lazy units after it as the rest of its sentence, a module in a lazy
+# unit reads after that sentence, and a sentence that points back from a lazy
+# unit reaches every unit of its paragraph.
+_LAZY = "\ue002"
+_QUOTE_PREFIX = re.compile(r"\s*(?:>\s?)+")
+_CM_ITEM = re.compile(r"(?P<indent>[ \t]*)(?:[-*+]|(?P<number>\d{1,9})[.)])(?:[ \t]+|$)")
+_PSEUDO_ITEM = re.compile(r"\s*(?:\(\d+\)|\(?[a-z]\)|[ivx]+[.)])\s+")
+_ROW_LINE = re.compile(r"\s*\|.*\|\s*$")
+_DELIMITER_ROW = re.compile(r"\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$")
+_FENCE_LINE = re.compile(r"\s{0,3}(?:```|~~~)")
+
+
+def _mark_lazy(text: str) -> str:
+    """``text`` with ``_LAZY`` at the start of each item or row line that CommonMark keeps in the paragraph before it."""
+    lines = text.splitlines()
+    out: list[str] = []
+    in_list = fenced = table = False
+    previous = ""  # the line before, without its quote marks; empty after a blank line or a block of its own
+    for index, raw in enumerate(lines):
+        quote = _QUOTE_PREFIX.match(raw)
+        line = raw[quote.end() :] if quote else raw
+        if _FENCE_LINE.match(line):
+            fenced = not fenced
+            previous, table = "", False
+            out.append(raw)
+            continue
+        if fenced:
+            out.append(raw)
+            continue
+        if not line.strip():
+            previous, table = "", False
+            out.append(raw)
+            continue
+        if _HEADING.match(line):
+            previous, table, in_list = "", False, False
+            out.append(raw)
+            continue
+        following = lines[index + 1] if index + 1 < len(lines) else ""
+        following = following[m.end() :] if (m := _QUOTE_PREFIX.match(following)) else following
+        if "|" in line and "-" in following and _DELIMITER_ROW.match(following):
+            table = True
+        item = _CM_ITEM.match(line)
+        pseudo = None if item else _PSEUDO_ITEM.match(line)
+        mark: int | None = None
+        if previous and not table:
+            if pseudo:
+                mark = pseudo.end()
+            elif (
+                item
+                and not in_list
+                and (
+                    (item["number"] is not None and int(item["number"]) != 1) or len(item["indent"].expandtabs(4)) >= 4
+                )
+            ):
+                mark = item.end()
+            elif not item and _ROW_LINE.match(line):
+                mark = line.index("|") + 1
+        if item and mark is None:
+            in_list = True
+        elif not item and not pseudo and not previous and line[:1] not in " \t":
+            in_list = False  # a paragraph that starts at the margin after a blank line ends the list
+        out.append(raw if mark is None else raw[: len(raw) - len(line) + mark] + _LAZY + line[mark:])
+        previous = line
+    return "\n".join(out)
+
+
+def _drain_units(text: str) -> tuple[list[TextUnit], list[bool]]:
+    """The text's Markdown units, and for each whether it is lazy (see ``_LAZY``)."""
+    units = markdown_units(_mark_lazy(text))
+    lazy: list[bool] = []
+    for unit in units:
+        lazy.append(unit.text.startswith(_LAZY) if unit.cells is None else _LAZY in unit.text)
+        unit.text = unit.text.replace(_LAZY, "")
+        if unit.cells is not None:
+            unit.cells = tuple(cell.replace(_LAZY, "") for cell in unit.cells)
+    return units, lazy
+
+
 def _readings(text: str) -> list[tuple[str, str, list[tuple[str, str]]]]:
     """(clause, rest, its modules' readings) for each semicolon clause, continuations included.
 
     A clause pairs citations only within itself, as ``_clauses`` gives it. Its
-    modules read as ``_modules_in`` reads them. The first clause of a sentence
-    that continues an open sentence or unit also reads after that open clause,
-    and a sentence that the next one continues ("See X." before "- and fix
-    it.") also reads with the next one in its rest. A module is work when any
-    reading says so, so a continuation never releases what its own unit holds.
+    modules read as ``_modules_in`` reads them, with the clauses before it in
+    its sentence. The first clause of a sentence that continues an open
+    sentence or unit also reads after that open clause, and every clause of it
+    reads with the open sentence's earlier clauses before it. A sentence that
+    the next one continues ("See X." before "- and fix it.") also reads with
+    the next one in its rest. A module in a sentence that ends open, in a unit
+    that ends on an abbreviation's period, or before a sentence that points
+    back at it, is work. A lazy unit continues the sentence before it (see
+    ``_LAZY``). A module is work when any reading says so, so a continuation
+    never releases what its own unit holds.
     """
-    units = markdown_units(text)
+    units, lazy = _drain_units(text)
+    # The last unit of the lazy run that follows each unit (the unit itself when none does).
+    run_end = list(range(len(units)))
+    for index in range(len(units) - 2, -1, -1):
+        if lazy[index + 1]:
+            run_end[index] = run_end[index + 1]
     # A narrowest sentence ("Fix the following or." before "See X.") can end
     # open inside a wider one, so the chain runs over the narrowest.
     narrows = [
         [pair for sentence in split_sentences(unit.text) for pair in _sentence_clauses(sentence)] for unit in units
     ]
+    points = [[_points_back(narrow) for narrow, _ in entries] for entries in narrows]
+    # Does a sentence of the lazy run after each unit point back?
+    run_points = [False] * len(units)
+    for index in range(len(units) - 2, -1, -1):
+        run_points[index] = lazy[index + 1] and (any(points[index + 1]) or run_points[index + 1])
+
+    def pointed_after(index: int) -> bool:
+        """Does what follows unit ``index`` and its lazy run point back at it?
+
+        The unit right after is read, up to its first sentence that names a
+        module: what points after that points at that module. Reaching over
+        every later unit that names no module was measured on the frozen
+        issues (round 15): it turns the imports and deferrals of twelve real
+        issues into work, because a later output item says "it". The items
+        nested under an item are part of it, so they are all read, and there a
+        sentence that starts with a request and names no module ("- See X."
+        over a nested "- fix the rate.") counts as a request on the item above.
+        """
+        first = run_end[index] + 1
+        own = units[index].indent
+        for later in range(first, len(units)):
+            nested = own is not None and units[later].indent is not None and units[later].indent > own
+            if later > first and not nested:
+                return False
+            for (narrow, _), pointing in zip(narrows[later], points[later], strict=True):
+                if pointing:
+                    return True
+                if _names_module(narrow):
+                    return False
+                if nested and _REQUEST_LED.match(narrow):
+                    return True
+        return False
+
     out: list[tuple[str, str, list[tuple[str, str]]]] = []
     open_units: list[_Continuation] = []
     for index, unit in enumerate(units):
-        open_units = [o for o in open_units if index == o.origin + 1 or o.reaches(unit)]
+        open_units = [
+            o
+            for o in open_units
+            if index == o.origin + 1 or o.reaches(unit, units[o.origin + 1] if o.origin + 1 < len(units) else None)
+        ]
         carry = " ".join(o.context for o in open_units if o.context)
+        carry_before = "; ".join(o.before for o in open_units if o.before)
+        carry_whole = "; ".join(o.whole for o in open_units if o.whole)
         own: str | None = None  # this unit's open chain, while its sentences end open
+        own_before = own_whole = ""
         introduces = _introduces(unit, units[index + 1] if index + 1 < len(units) else None)
+        # The lazy units after this one are in its paragraph: what they say is
+        # the rest of its last sentence, and what points back from them, or
+        # from the unit after them, points at this unit too.
+        lazy_next = run_end[index] > index
+        pointed_next = pointed_after(index) or run_points[index]
         for position, (narrow, clauses) in enumerate(narrows[index]):
             later = narrows[index][position + 1 :] or (narrows[index + 1][:1] if index + 1 < len(units) else [])
             onward = later[0][0] if later and _LEADING_CONTINUATION.match(later[0][0]) else ""
-            last = position == len(narrows[index]) - 1
+            # Sentences of marks alone ("See X. -", "See X. …") are not sentences
+            # of their own: a separator among them leaves the one before them open.
+            marks = list(
+                itertools.takewhile(
+                    lambda text: not re.search(r"\w", text), (e[0] for e in narrows[index][position + 1 :])
+                )
+            )
+            last = position + len(marks) == len(narrows[index]) - 1
             if last and introduces and not onward:
                 onward = ";"  # what the items say is the rest of this predicate
-            for number, (clause, rest) in enumerate(clauses):
-                found = _modules_in(clause, rest)
+            opening = _open_context(narrow)
+            if opening is None and marks and _OPEN_END.search(" ".join(marks)):
+                opening = narrow.rsplit(";", 1)[-1].strip()
+            held = (
+                opening is not None
+                or (last and _ends_on_abbreviation(narrow))
+                or any(points[index][position + 1 :])
+                or pointed_next
+            )
+            for number, (clause, rest, before) in enumerate(clauses):
+                earlier = "; ".join(part for part in ((carry_whole, before) if number else (carry_before,)) if part)
+                found = _modules_in(clause, rest, earlier)
+                if held:
+                    found = [(module, WORK) for module, _ in found]
                 if number == 0 and carry and found:
                     found = _merged(found, _modules_in(f"{carry} {clause}", rest)[-len(found) :])
                 if onward and found:
                     found = _merged(found, _modules_in(clause, f"{rest}; {onward}" if rest else onward))
+                if last and lazy_next and any(kind != WORK for _, kind in found):
+                    lazy_text = "; ".join(entry[0] for run in narrows[index + 1 : run_end[index] + 1] for entry in run)
+                    found = _merged(found, _modules_in(clause, f"{rest}; {lazy_text}" if rest else lazy_text))
                 out.append((clause, rest, found))
-            opening = _open_context(narrow)
-            if opening is None and last and introduces:
+            if opening is None and last and (introduces or lazy_next):
                 opening = narrow.rsplit(";", 1)[-1].strip()
+            if opening is None and position and not re.search(r"\w", narrow):
+                continue  # marks alone close nothing: the sentence before them still stands
             if opening is None:
                 carry, own = "", None
+                carry_before = carry_whole = own_before = own_whole = ""
             else:
+                # The open sentence's last clause is the lead of what continues
+                # it; its earlier clauses, and the sentences before it in its
+                # grammatical sentence, stand before the continuation.
+                leading = clauses[0][2] if clauses else ""
+                before_here = "; ".join(part for part in (leading, narrow.rpartition(";")[0]) if part.strip())
+                whole_here = "; ".join(part for part in (leading, narrow) if part.strip())
                 carry = f"{carry} {opening}".strip()
                 own = f"{own or ''} {opening}".strip()
+                carry_before = "; ".join(part for part in (carry_before, before_here) if part)
+                own_before = "; ".join(part for part in (own_before, before_here) if part)
+                carry_whole = "; ".join(part for part in (carry_whole, whole_here) if part)
+                own_whole = "; ".join(part for part in (own_whole, whole_here) if part)
         if own is not None:
-            open_units.append(_Continuation(index, unit.indent, own))
+            open_units.append(_Continuation(index, unit.indent, own, own_before, own_whole))
     return out
 
 
@@ -1383,7 +1665,22 @@ def _tail_accounted(tail: str) -> bool:
     return state in ("after", "phrase") and not pending
 
 
-def _modules_in(sentence: str, rest: str = "") -> list[tuple[str, str]]:
+def _before_accounted(before: str) -> bool:
+    """Do the clauses that stand before a module's own clause in its sentence leave it alone?
+
+    Invariant (round 15): a module is released only when every other clause
+    of its sentence is accounted for, before it as well as after it. An
+    earlier clause is read by the grammar of ``_tail_accounted``, as if it
+    followed the module: a pointer at a named module ("See Y; see X") or a
+    write whose destination is an explicitly named module ("Fix Y; see X")
+    leaves X alone. A request whose object or destination is not named ("Fix
+    the following; see X", "Add Y to the pipeline; see X") may write X.
+    """
+    text = re.sub(r"[\s,;:/&—–\-(\[{.…!?]+\Z", "", before)
+    return not text or _tail_accounted("; " + _tail_text(text))
+
+
+def _modules_in(sentence: str, rest: str = "", before: str = "") -> list[tuple[str, str]]:
     """(module, WORK | IMPORT | MENTION | DEFERRED) for each module one sentence of plain text names.
 
     The words between the start of the module's own clause and the module
@@ -1391,9 +1688,11 @@ def _modules_in(sentence: str, rest: str = "") -> list[tuple[str, str]]:
     ("a.yaml, b.yaml and c.yaml") shares the first module's kind. ``rest`` is
     the remainder of the grammatical sentence after this semicolon clause: a
     module is released from work only when no predicate after it, there or in
-    its own clause, can write to it.
+    its own clause, can write to it. ``before`` is the clauses of the sentence
+    before this one, which must leave the module alone too.
     """
     out: list[tuple[str, str]] = []
+    before_accounted = _before_accounted(before)
     matches = [m for m in _MODULE_NAME.finditer(sentence) if not m.group("dir")]
     following = _tail_text(rest)
     # Invariant P1.2: a removal governs every subsequent module until a genuine
@@ -1461,7 +1760,7 @@ def _modules_in(sentence: str, rest: str = "") -> list[tuple[str, str]]:
             # release survives only if the rest of the sentence after the
             # module is accounted for without a predicate that could write to it.
             own_tail = "" if released_by_after else _tail_text(sentence[m.end() :])
-            if not _tail_accounted(own_tail + ("; " + following if following else "")):
+            if not before_accounted or not _tail_accounted(own_tail + ("; " + following if following else "")):
                 kind = WORK
         out.append((normal_module(m.group(0)), kind))
         last_end = m.end()

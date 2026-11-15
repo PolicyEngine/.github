@@ -87,10 +87,11 @@ def test_a_terminal_semicolon_keeps_a_nested_edit():
         assert PIPELINE in row.work_modules and ready == 0, control
     row, ready = held(f"- See {PIPELINE}.\n  - Nothing else.")
     assert reading(f"- See {PIPELINE}.\n  - Nothing else.") == {MENTION} and row.dispatchable and ready == 1
-    # A semicolon starts a new clause, so a reference after one releases as it does inline.
+    # A semicolon starts a new clause, and the request before it names no
+    # module, so it may write the module after it, nested or inline (round 15).
     for continuation in CONTINUATIONS:
         tail = continuation.format(m=PIPELINE)
-        assert reading(f"- Fix the following;\n  - {tail}") == reading(f"Fix the following; {tail}") != {WORK}
+        assert reading(f"- Fix the following;\n  - {tail}") == reading(f"Fix the following; {tail}") == {WORK}
 
 
 # Invariant (round 14, P1.2): a separator that ends a unit (semicolon, colon,
