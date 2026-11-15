@@ -150,18 +150,6 @@ def test_a_demonstrative_or_a_possessive_request_keeps_the_module_work(opener, n
     assert PIPELINE in held(sentence)[0].work_modules, sentence
 
 
-def test_a_placement_or_an_owned_noun_still_releases():
-    # Controls for the property above, each a reading the suite or the frozen issues rely on.
-    assert WORK not in reading(f"Do not import {PIPELINE} into this module.")
-    assert reading(f"Keep the existing {PIPELINE} and its test contract active.") == {MENTION}
-    assert reading(f"The rule must be stated by importing {PIPELINE}, from its statutory elements.") == {IMPORT}
-    assert reading(f"See {PIPELINE} for the rate.") == {MENTION}
-    assert reading(f"See {PIPELINE} for the amended rule.") == {MENTION}
-    assert reading(f"See {PIPELINE} for the additional credit.") == {MENTION}
-    assert reading(f"See {PIPELINE} (a).") == {MENTION}
-    assert reading(f"See {PIPELINE} as well as {OTHER}.") == {MENTION}
-
-
 def test_an_aside_after_a_request_holds_only_complete_references():
     # The round 15 verifier's regression: each of these held at fd0b635 and released at d811eb3.
     for aside in ("(corpus)", "(corpus, and)", "(corpus;)", "()", "(e.g.)", "(target, us/statute/26/1/h and)"):
@@ -195,6 +183,15 @@ def test_a_request_word_after_a_module_is_never_a_noun():
     ):
         assert reading(block) == {WORK}, (block, kinds(block))
         keeps_the_owner_hold(block)
+    # Controls: a placement, an owned noun and a word that asks for nothing release, as the suite and the frozen issues rely on.
+    assert WORK not in reading(f"Do not import {PIPELINE} into this module.")
+    assert reading(f"Keep the existing {PIPELINE} and its test contract active.") == {MENTION}
+    assert reading(f"The rule must be stated by importing {PIPELINE}, from its statutory elements.") == {IMPORT}
+    assert reading(f"See {PIPELINE} for the rate.") == {MENTION}
+    assert reading(f"See {PIPELINE} for the amended rule.") == {MENTION}
+    assert reading(f"See {PIPELINE} for the additional credit.") == {MENTION}
+    assert reading(f"See {PIPELINE} (a).") == {MENTION}
+    assert reading(f"See {PIPELINE} as well as {OTHER}.") == {MENTION}
 
 
 REQUEST_WORDS = [

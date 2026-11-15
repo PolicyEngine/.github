@@ -66,6 +66,9 @@ def test_a_unit_that_ends_on_an_abbreviation_stays_open():
     # Controls: a unit that a real stop closes, with no request after it, releases.
     releases(f"- See {PIPELINE}.\n  - Nothing else.")
     releases(f"See {PIPELINE}.")
+    # "…/1/a." ends a sentence: the "a" is a path segment, not an article.
+    assert reading("Do not import us/statutes/26/1/a.\n\nNothing else.", "us/statutes/26/1/a.yaml") == {DEFERRED}
+    assert reading("See us/statutes/26/1/a.\n\n- Nothing else.", "us/statutes/26/1/a.yaml") == {MENTION}
 
 
 ABBREVIATIONS = ["e.g.", "i.e.", "viz.", "cf.", "etc.", "E.g.", "incl.", "vs.", "(e.g.", "(cf.", "e.g.)", "e.g.*"]
@@ -101,12 +104,6 @@ def test_a_module_in_a_unit_that_no_stop_closes_is_work(opener, joiner, abbrevia
     # Control: the same structure closed by a real stop, with nothing pointing back, releases.
     control = form.format(head=f"{opener} {PIPELINE}.", tail="Nothing else.")
     assert WORK not in reading(control), (control, kinds(control))
-
-
-def test_a_path_that_ends_in_a_short_word_is_not_an_open_end():
-    # "…/1/a." ends a sentence: the "a" is a path segment, not an article.
-    assert reading("Do not import us/statutes/26/1/a.\n\nNothing else.", "us/statutes/26/1/a.yaml") == {DEFERRED}
-    assert reading("See us/statutes/26/1/a.\n\n- Nothing else.", "us/statutes/26/1/a.yaml") == {MENTION}
 
 
 def test_a_request_that_points_back_keeps_the_owner_hold():
