@@ -1808,8 +1808,9 @@ def _pair_line(line: str) -> tuple[list[str], list[str]]:
 
 
 def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]]) -> IssueInputs:
+    raw = [issue.get("body") or ""] + [c.get("body") or "" for c in comments]
     # A Unicode line separator inside a line never ends a quoted finding early.
-    texts = [one_line_breaks(t) for t in [issue.get("body") or ""] + [c.get("body") or "" for c in comments]]
+    texts = [one_line_breaks(t) for t in raw]
     joined = plain("\n".join(texts))
     res = lint_issue(issue, comments)
     cites = _corpus_citations(joined)
@@ -1835,16 +1836,29 @@ def issue_inputs(repo: str, issue: dict[str, Any], comments: list[dict[str, Any]
         modules.append(normal_module(declared))
     # A line anywhere in the issue that only pairs a module with a citation of its
     # jurisdiction declares both as work: "- us-nm/statutes/7-2-18/13.yaml — us-nm/statute/7-2-18.13".
-    paired: dict[str, list[str]] = {}
-    for line in joined.splitlines():
-        line_modules, line_cites = _pair_line(line)
-        for module in line_modules:
-            same = [c for c in line_cites if c.split("/")[0] == module_jurisdiction(module)]
-            if same:
-                add(same, paired.setdefault(module, []))
-                add([module], modules)
-                add([module], work_modules)
-                add(same, targets)
+    # Invariant (round 15): the lines are read under both line models, with
+    # Markdown's line ends (``joined``) and with every break ``str.splitlines``
+    # takes (U+2028, form feed, NEL ...), so a pairing line either model sees
+    # declares work and targets. A pairing names a module's citation only where
+    # both models pair them, so neither model's reading releases a hold.
+    by_model: list[dict[str, list[str]]] = []
+    for model in (joined, plain("\n".join(raw))):
+        pairs: dict[str, list[str]] = {}
+        for line in model.splitlines():
+            line_modules, line_cites = _pair_line(line)
+            for module in line_modules:
+                same = [c for c in line_cites if c.split("/")[0] == module_jurisdiction(module)]
+                if same:
+                    add(same, pairs.setdefault(module, []))
+                    add([module], modules)
+                    add([module], work_modules)
+                    add(same, targets)
+        by_model.append(pairs)
+    paired = {
+        module: both
+        for module, cites_here in by_model[0].items()
+        if (both := [c for c in cites_here if c in by_model[1].get(module, [])])
+    }
     # Inside a finding, a module and a citation named in one sentence go together too:
     # "Re-encode uk/policies/govuk/x.yaml (corpus uk/guidance/govuk/x) in place".
     readings = _readings(asked)

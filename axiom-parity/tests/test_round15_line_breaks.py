@@ -61,3 +61,42 @@ def test_no_line_boundary_but_a_newline_ends_a_quoted_finding(mark, request, ope
     assert mark not in one_line_breaks(body)
     # Control: a real newline still ends a line, and the text is otherwise unchanged.
     assert one_line_breaks("a\nb\r\nc") == "a\nb\r\nc"
+
+
+def paired(mark: str, line: str = f"{PIPELINE} — us/statute/26/32/d"):
+    row = issue_inputs(RS_US, {"number": 1, "body": READY_ISSUE_BODY + f"\nNote:{mark}{line}\n"}, [])
+    holds = WorkHolds("Assembled pipelines need a hand edit.", {PIPELINE: ("pipeline file name",)})
+    batches = plan([row], corpus={"us/statute/26/32/d", "us/statute/26/1/h"}, work_holds=holds)
+    return row, to_json(batches, 10)["summary"]["ready_issues"]
+
+
+def test_a_pairing_line_after_a_line_separator_still_declares_work():
+    # The round 15 verifier's regression: after U+2028, a form feed or NEL the pairing line
+    # declared the pipeline as work at fd0b635 and no longer did at df17e39 (run at both).
+    for mark in ("\u2028", "\x0c", "\x85"):
+        row, ready = paired(mark)
+        assert PIPELINE in row.work_modules and not row.dispatchable and ready == 0, repr(mark)
+    # Controls: after a newline it declares work as before; a line that is no pairing declares nothing.
+    row, ready = paired("\n")
+    assert PIPELINE in row.work_modules and ready == 0
+    row, ready = paired("\n", f"{PIPELINE} is related.")
+    assert PIPELINE not in row.work_modules and row.dispatchable and ready == 1
+
+
+# Invariant (round 15): a pairing line that either line model sees (Markdown's
+# line ends, or every break str.splitlines takes) declares its module as work.
+@given(
+    mark=st.sampled_from(["\n", *BREAKS]),
+    line=st.sampled_from(
+        [
+            f"{PIPELINE} — us/statute/26/32/d",
+            f"- {PIPELINE} — us/statute/26/32/d",
+            f"Module path: {PIPELINE} (corpus citation us/statute/26/32/d)",
+            f"| {PIPELINE} | us/statute/26/32/d |",
+        ]
+    ),
+)
+@settings(max_examples=100, deadline=None, database=None)
+def test_a_pairing_line_declares_work_under_either_line_model(mark, line):
+    row, ready = paired(mark, line)
+    assert PIPELINE in row.work_modules and ready == 0, (mark, line)
