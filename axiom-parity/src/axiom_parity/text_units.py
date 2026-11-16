@@ -172,59 +172,6 @@ def _code_regions(lines: list[str]) -> tuple[list[str], dict[int, int]]:
     return masked_lines, starts
 
 
-_LITERAL_STOPS = str.maketrans(".!?", "")
-_RESTORED_STOPS = str.maketrans("", ".!?")
-
-
-def protect_literal_stops(text: str) -> str:
-    """Hide sentence punctuation inside code spans, fenced blocks and HTML tables.
-
-    Invariant (round 11, P1.3): code and HTML table contents are literal, so
-    punctuation inside them never ends a sentence of the unit that holds
-    them. ``restore_literal_stops`` puts it back after splitting.
-    """
-    lines = text.split("\n")
-    offsets, pos = [], 0
-    for line in lines:
-        offsets.append(pos)
-        pos += len(line) + 1
-    fenced: set[int] = set()
-    index = 0
-    while index < len(lines):
-        if fence := _FENCE.match(lines[index]):
-            mark = fence.group(1)
-            close = re.compile(rf"^\s*{re.escape(mark[0])}{{{len(mark)},}}\s*$")
-            end = next((n for n in range(index + 1, len(lines)) if close.match(lines[n])), len(lines) - 1)
-            fenced.update(range(index, end + 1))
-            index = end + 1
-        else:
-            index += 1
-    spans = [(offsets[n], offsets[n] + len(lines[n])) for n in fenced]
-    outside = "\n".join(" " * len(line) if n in fenced else line for n, line in enumerate(lines))
-    runs = list(re.finditer(r"`+", outside))
-    k = 0
-    while k < len(runs):
-        size = len(runs[k][0])
-        close = next((j for j in range(k + 1, len(runs)) if len(runs[j][0]) == size), None)
-        if close is None:
-            k += 1  # an unmatched run is literal backticks, not a span
-            continue
-        spans.append((runs[k].start(), runs[close].end()))
-        k = close + 1
-    for opening in _HTML_TABLE.finditer(outside):
-        closing = _HTML_TABLE_END.search(outside, opening.end())
-        spans.append((opening.start(), closing.end() if closing else len(text)))
-    chars = list(text)
-    for start, end in spans:
-        for n in range(start, end):
-            chars[n] = chars[n].translate(_LITERAL_STOPS)
-    return "".join(chars)
-
-
-def restore_literal_stops(text: str) -> str:
-    return text.translate(_RESTORED_STOPS)
-
-
 def markdown_units(text: str) -> list[TextUnit]:
     """One list item, table row or paragraph, preserving nested item boundaries.
 

@@ -13,9 +13,9 @@ dispatch-ready when the issue body and its comments together carry:
   input;
 - ``companion_tests``: companion cases with externally sourced expectations.
 
-Each element is found either in a section whose heading names it, with real
-content under the heading, or in an inline cue followed by that content. The
-lint reports the evidence it used so a reviewer can check it.
+Required outputs use only the finite layouts in ``output_layouts``. Other
+elements use named sections or inline cues with content. The lint reports its
+evidence so a reviewer can check it.
 """
 
 from __future__ import annotations
@@ -24,7 +24,8 @@ import re
 from dataclasses import dataclass, field
 from textwrap import dedent
 
-from .text_units import markdown_units, protect_literal_stops, restore_literal_stops, split_sentences
+from .output_layouts import output_witnesses
+from .text_units import split_sentences
 
 ELEMENTS = (
     "module_path",
@@ -39,7 +40,7 @@ HINTS = {
     "module_path": "name the target module, e.g. `us/statutes/26/32/d.yaml` (or its legal id `us:statutes/26/32/d`)",
     "corpus_citation": "give the corpus citation path the encoder takes as `citation`, e.g. `us/statute/26/32/d` (a release file such as `us/statute/2026-07-13-...-dedup.jsonl` is not a citation)",
     "verbatim_law": "quote the operative law under a heading such as `## Law (verbatim)`",
-    "required_outputs": "list the outputs under `## Required outputs`",
+    "required_outputs": "use a `## Required outputs` heading or `Required outputs:` line, then one output per list item with a name and optional type and description",
     "review_finding": "add a pasteable finding under `## review_finding (paste as-is)` as a quote or code block",
     "companion_tests": "list companion cases with externally sourced expected values under `## Companion tests`",
 }
@@ -66,16 +67,11 @@ _TITLES = {
         re.IGNORECASE,
     ),
     "review_finding": re.compile(r"review[\s_-]?finding", re.IGNORECASE),
-    "required_outputs": re.compile(r"\boutputs?\b", re.IGNORECASE),
     "companion_tests": re.compile(r"companion|test cases?|\btests?\b|expected values|cases and", re.IGNORECASE),
 }
 _INLINE = {
     "verbatim_law": re.compile(r"verbatim", re.IGNORECASE),
     "review_finding": re.compile(r"review_finding|review finding", re.IGNORECASE),
-    "required_outputs": re.compile(
-        r"required (?:[\w-]+ ){0,2}outputs?\b|outputs? (?:required|needed)\b|must (?:output|produce|expose)\b",
-        re.IGNORECASE,
-    ),
     "companion_tests": re.compile(r"companion (?:tests?|cases?)", re.IGNORECASE),
 }
 # Issues write several provisions of one document as "uk/regulation/uksi/2006/213/{2,19,13D}",
@@ -299,14 +295,6 @@ def _has_content(element: str, lines: list[str]) -> bool:
         return False  # cases without an expected outcome are not companion tests
     if element == "verbatim_law":
         return _quoted_chars(lines) >= 60 or _content_chars(lines) >= 300
-    if element == "review_finding":
-        return _quoted_chars(lines) >= 80 or _content_chars(lines) >= 120
-    if element == "required_outputs":
-        units = _retained_evidence("\n".join(lines))
-        items = sum(1 for unit in units if unit.item)
-        return any(re.search(r"\w", unit.text) for unit in units) and (
-            items >= 1 or sum(len(unit.text) for unit in units) >= 80
-        )
     if element == "companion_tests":
         return _items(lines) >= 1 or _quoted_chars(lines) >= 80 or _content_chars(lines) >= 120
     return False
@@ -315,7 +303,7 @@ def _has_content(element: str, lines: list[str]) -> bool:
 def _introduces_content(element: str, line: str, following: list[str]) -> bool:
     """Does an inline cue introduce the element, on its own line or just below?
 
-    "Required outputs: `a`, `b`" and "Companion cases:" followed by a list do.
+    "Companion cases:" followed by a list does.
     A back-reference in running prose ("state each required output below")
     doesn't.
     """
@@ -346,13 +334,7 @@ def _introduces_content(element: str, line: str, following: list[str]) -> bool:
     text = " ".join(b.strip() for b in block).strip()
     if element == "companion_tests":
         return len(text) >= 40 and _states_outcome(block)
-    # The cue declares outputs, but cannot override a designation in their own
-    # unit. Keep Markdown boundaries until the same exclusion used by findings,
-    # and read the evidence only from the units that survive it.
-    units = _retained_evidence("\n".join(block))
-    return any(re.search(r"\w", unit.text) for unit in units) and (
-        any(re.search(r"`[^`\n]{2,}`", unit.raw) for unit in units) or sum(len(unit.text) for unit in units) >= 20
-    )
+    return False
 
 
 def _snippet(text: str, n: int = 90) -> str:
@@ -564,267 +546,6 @@ def review_finding_text(markdown: str) -> str | None:
     return found[0] if found else None
 
 
-# An output named in running text, in one of a closed set of declarations:
-# "Output Money x_y_z", "outputs `x_y_z`", "Judgment x_y_z", "Add `x_y_z` Money (TaxUnit) = …",
-# "Name them x_y_z", "Add … to 9.yaml#x_y". A bare "Add x_y_z" or "a leaf x_y_z" is not one:
-# it could as well be an input.
-_NOT_OUTPUT = r"(?!\b(?:inputs?|import\w*|from|tests?|cases?)\b)"
-_TYPES = r"(?:Judge?ments?|Money|Rates?|Amounts?|Counts?|Integers?|Booleans?|Dates?|Decimals?|Percentages?)"
-_IDENT = r"`?\b[a-z][a-z0-9]*(?:_[a-z0-9]+){2,}\b`?"
-_NAMED_OUTPUT = re.compile(
-    rf"\boutputs?\s*:?\s*(?:(?:an?|the|new)\s+)?(?:{_TYPES}\s+)?{_IDENT}"
-    rf"|\bJudge?ments?\s+{_IDENT}"
-    rf"|\badd(?:s|ed)?\s+(?:(?:an?|the|new)\s+)*{_IDENT}\s+{_TYPES}\b"
-    rf"|\bname (?:it|them|each|the outputs?)\b(?:{_NOT_OUTPUT}[^.\n]){{0,80}}?{_IDENT}"
-    r"|\b(?:add|output|state|change|correct|repair|update|extend)(?:s|ed|es|d)?\b"
-    rf"(?:{_NOT_OUTPUT}[^.\n]){{0,120}}?(?:\.yaml|[a-z0-9])#[a-z][a-z0-9_]+",
-    re.IGNORECASE,
-)
-
-
-_DECLARATION_LINK = re.compile(r"\[([^\]\n]*)\](?:\((?:[^()\n]|\([^()\n]*\))*\)|\[[^\]\n]*\])")
-_DECLARATION_EMPHASIS = re.compile(r"(?<!\w)_+(?=\S)|(?<=\S)_+(?!\w)")
-_ANNOTATION_TOKEN = r"(?:[A-Za-z][\w.-]*|\[[A-Za-z][\w.-]*\])"
-_DECLARATION_ANNOTATION = re.compile(rf"\(\s*{_ANNOTATION_TOKEN}(?:\s*,\s*{_ANNOTATION_TOKEN})*\s*\)")
-
-
-def _declaration_text(finding: str) -> str:
-    """Read displayed Markdown words, retaining underscores inside rule names.
-
-    The name, type, entity, period and input designation belong to one
-    declaration even when their words use different Markdown formatting.
-    Normalize inside a structural unit before any output or designation pattern
-    reads it; a line break or Unicode space inside it never changes its classification.
-    """
-    finding = " ".join(finding.split())
-    finding = _DECLARATION_LINK.sub(r"\1", finding)
-    finding = _DECLARATION_EMPHASIS.sub("", finding.replace("`", "").replace("*", ""))
-    # A shortcut link's definition may be outside the extracted finding.
-    # Within an annotation, read bracketed entity/period tokens conservatively;
-    # their closed identifier-list grammar cannot introduce an output declaration.
-    return _DECLARATION_ANNOTATION.sub(lambda m: m[0].replace("[", "").replace("]", ""), finding)
-
-
-def _input_column(block) -> bool:
-    """Does a table header's input column reach a declaration in this data row?
-
-    Invariant (round 11, P1.2): a column whose header designates an input
-    classifies every declaration in that column's data rows as an input, with
-    or without outer pipes, emphasis or code spans in the header. When the row
-    does not line up with the header, the column scope is ambiguous: read input.
-    """
-    if not block.header:
-        return False
-    columns = [n for n, cell in enumerate(block.header) if re.search(r"\binputs?\b", _declaration_text(cell), re.I)]
-    if not columns:
-        return False
-    # Code joined from later lines sits outside every cell: its column is unknown.
-    if block.joined or not block.cells or len(block.cells) != len(block.header):
-        return True
-    # GFM splits a row at every unescaped pipe, inside code spans too, and keeps
-    # an escaped pipe in its cell. Where that reading and this one could differ,
-    # the column is unknown: read input (review r11).
-    if "\\|" in block.text or any(cell.endswith("\\") for cell in block.header):
-        return True
-    # A pipe inside a code span in the header splits the header in GFM, which
-    # shifts every later column (review r13).
-    if any("|" in cell for cell in block.header):
-        return True
-    if len(_cells(block.text)) != len(block.cells):
-        return True
-    cells = [_declaration_text(cell) for cell in block.cells]
-    spans, text = [], ""
-    for cell in cells:
-        text += " | " if text or spans else ""
-        spans.append((len(text), len(text) + len(cell)))
-        text += cell
-    matches = list(_NAMED_OUTPUT.finditer(text))
-    names = {
-        name.lower()
-        for match in matches
-        for name in re.findall(r"\b[a-z][a-z0-9]*_[a-z0-9_]+\b|(?<=#)[a-z][a-z0-9_]*", match[0], re.I)
-    }
-    for n in columns:
-        start, end = spans[n]
-        if any(match.start() < end and match.end() > start for match in matches):
-            return True
-        if any(re.search(rf"(?<![\w#]){re.escape(name)}(?!\w)", cells[n], re.I) for name in names):
-            return True
-    return False
-
-
-# A source predicate names the input it reads: "using the leaf input gross_wages".
-# One naming word may stand before the name ("input named gross_wages"); the name
-# must then close the phrase, before punctuation, the end or a preposition.
-_SOURCE = re.compile(
-    r"\busing\s+(?:(?:the|an?|existing)\s+)?(?:[\w-]+\s+){0,3}input\s+"
-    r"(?:(?:named|called|labell?ed|titled|known\s+as)\s+)?(?P<name>[a-z][a-z0-9_]*)\b"
-    r"(?=\s*(?:[.,;:)!?]|$)|\s+(?:and|or|for|from|in|into|to|as|at|of|with|by|per|on|under)\b)",
-    re.IGNORECASE,
-)
-# Words that designate, name or qualify an input never stand in for its identifier.
-_NOT_A_NAME = frozenset(
-    "as is are for to from and or named called labelled labeled titled known input inputs output outputs leaf "
-    "scoped existing new the a an it this that its rule value amount name same declared supplied".split()
-)
-
-
-def _distinct_source(source: re.Match[str], declared: set[str], unit: str) -> bool:
-    """Does a source predicate resolve to an identifier distinct from every declared name?
-
-    Invariant (round 11, P1.4): a designation word, a naming word, a participle
-    or an unresolved phrase never stands in for the source's identifier. Only a
-    resolved identifier that differs from every declared name establishes that
-    the input designation in the unit belongs to another name, and only while
-    no declared name follows it in the unit ("input namely, a_b_c" and "input
-    x for a_b_c" stay ambiguous, so they read input).
-    """
-    name = source["name"].lower()
-    if name in declared or name in _NOT_A_NAME:
-        return False
-    # Only a rule identifier resolves: a plain word ("pattern", "rate", "type",
-    # "itself", "directly") may name the kind of input the declaration is, so it
-    # stays unresolved and the designation keeps its scope (review r11).
-    if "_" not in name:
-        return False
-    after = unit[source.start("name") :]
-    return not any(re.search(rf"(?<![\w#]){re.escape(other)}(?!\w)", after, re.I) for other in declared)
-
-
-@dataclass
-class _Evidence:
-    text: str  # the unit's normalized words
-    raw: str  # its Markdown, where the whole block survived; else the normalized words
-    item: bool  # a list item or a table data row
-    position: int = 0  # the order of its block in the text
-    introduces: bool = False  # a list item that ends in a colon or holds nested items
-
-
-# A rule name, but not a segment of a path ("us/policies/income_tax/x.yaml"):
-# a path names a file, not an output (review r11).
-_RULE_NAME = re.compile(
-    r"(?<![\w/.#-])[a-z][a-z0-9]*_[a-z0-9_]+\b(?![/-]|\.\w)|(?<=#)[a-z][\w]*",
-    re.IGNORECASE,
-)
-
-
-_URL = re.compile(r"\b(?:https?|ftp)://[^\s)>\]]*", re.IGNORECASE)
-
-
-def _rule_names(text: str) -> set[str]:
-    # A URL's fragment or query ("…/it196i.pdf#page=2", "?doc_id=12") names no rule (review r13).
-    return {match.group(0).lower() for match in _RULE_NAME.finditer(_URL.sub(" ", text))}
-
-
-def _retained_evidence(text: str) -> list[_Evidence]:
-    """The output evidence that survives the input exclusion.
-
-    Invariant (round 11, P1.5): evidence for required outputs comes only from
-    units that survive the exclusion. An excluded declaration supplies
-    nothing, and no preamble stands in for it. Once a unit is excluded, a
-    retained unit counts only if it names a rule that is not an excluded
-    unit's subject (what it declares, or a name before its designation), or
-    if it is a list item or table row that follows every excluded unit and
-    introduces nothing: no closing colon and no nested items. A code span that
-    holds no rule name (a path, a file) names no output, and a preamble that
-    repeats an excluded subject ("This adds a_b_c ...:") stands in for it, so
-    neither counts (review r11). A paragraph, an introducing item and any unit
-    before an excluded one may be a preamble ("The following:").
-    """
-    units, last_excluded, excluded_names = _output_evidence(text)
-    if last_excluded >= 0:
-        units = [
-            unit
-            for unit in units
-            if _rule_names(unit.raw + " " + unit.text) - excluded_names
-            or (unit.item and not unit.introduces and unit.position > last_excluded)
-        ]
-    return units
-
-
-def _output_units(finding: str) -> list[str]:
-    return [unit.text for unit in _output_evidence(finding)[0]]
-
-
-def _output_evidence(finding: str) -> tuple[list[_Evidence], int, set[str]]:
-    """Declarations can supply evidence only in units with no input designation.
-
-    An unresolved designation excludes every declaration in its unit, including
-    under an explicit output heading or cue. Only a source predicate naming a
-    distinct input can establish that it designates another name.
-    """
-    out: list[_Evidence] = []
-    last_excluded = -1  # the position of the last block with a unit the input check excluded
-    excluded_names: set[str] = set()  # the rule names that excluded units declare or lead with
-    blocks = markdown_units(finding)
-    for position, block in enumerate(blocks):
-        if block.table_header:
-            continue
-        if _input_column(block):
-            last_excluded = position
-            excluded_names |= _rule_names(block.text)
-            continue
-        following = blocks[position + 1] if position + 1 < len(blocks) else None
-        nested = following is not None and following.indent is not None and following.indent > (block.indent or 0)
-        introduces = block.indent is not None and (block.text.rstrip().endswith(":") or nested)
-        # Punctuation inside code or an HTML table never ends a sentence.
-        text = _declaration_text(protect_literal_stops(block.text))
-        units = [restore_literal_stops(unit) for unit in (split_sentences(text) if block.paragraph else [text])]
-        kept: list[_Evidence] = []
-        block_excluded = False
-        for unit in units:
-            matches = list(_NAMED_OUTPUT.finditer(unit))
-            declared = {
-                name.lower()
-                for match in matches
-                for name in re.findall(r"\b[a-z][a-z0-9]*_[a-z0-9_]+\b|(?<=#)[a-z][a-z0-9_]*", match[0], re.I)
-            }
-            sources = [
-                source for source in _SOURCE.finditer(unit) if declared and _distinct_source(source, declared, unit)
-            ]
-            designations = [
-                label.start()
-                for label in re.finditer(r"\binputs?\b", unit, re.I)
-                if not any(source.start() <= label.start() < source.end() for source in sources)
-            ] + [
-                found.start() for match in matches if (found := re.search(r"\bimport\w*\b", unit[: match.end()], re.I))
-            ]
-            if designations:
-                block_excluded = True
-                # The excluded unit's own subject: what it declares, and any name
-                # before its designation. A name it only refers to after the
-                # designation ("leaf-input Judgments that gate `x_y_z`") is
-                # another unit's output, and stays evidence there (review r11).
-                excluded_names |= declared | _rule_names(unit[: min(designations)])
-                continue
-            # A table's header and separator are structure, not declarations.
-            if block.cells and all(not re.search(r"\w", cell) for cell in block.cells):
-                continue
-            kept.append(_Evidence(unit, unit, not block.paragraph, position, introduces))
-        if not block_excluded:
-            for unit in kept:
-                unit.raw = block.text
-        else:
-            last_excluded = position
-        out.extend(kept)
-    return out, last_excluded, excluded_names
-
-
-def _named_output(finding: str) -> re.Match[str] | None:
-    """The first declaration of an output in the finding, or None.
-
-    A declaration is skipped when its clause speaks of an input or an import
-    before the name ("Add an input rule a_b_c", "the rule imported from …"), or
-    when its declaring sentence designates it an input ("Add a rule a_b_c
-    Money (TaxUnit) as a new input"). An annotation parse cannot hide that
-    designation, and a designation in a later sentence cannot reach back.
-    """
-    for unit in _output_units(finding):
-        if match := _NAMED_OUTPUT.search(unit):
-            return match
-    return None
-
-
 # Characters that ``str.splitlines`` breaks a line at and GitHub renders inside one line.
 _INLINE_BREAKS = dict.fromkeys(map(ord, "\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"), " ")
 
@@ -842,8 +563,15 @@ def one_line_breaks(text: str) -> str:
 
 def lint_texts(texts: list[tuple[str, str]]) -> LintResult:
     """Lint an issue given (source label, markdown) pairs: body, then comments."""
+    # C inspects raw whitespace before finding/claim normalization can erase it.
+    outputs = output_witnesses([(source, text or "") for source, text in texts])
     texts = [(source, one_line_breaks(text or "")) for source, text in texts]
     result = LintResult()
+    if outputs:
+        evidence = outputs[0]
+        result.found["required_outputs"] = (
+            f"{evidence['source']}: line {evidence['line']} (root line {evidence['root_line']}): {evidence['raw']}"
+        )
     sections: list[Section] = []
     for source, text in texts:
         sections.extend(_sections(text or "", source, labels=False))
@@ -867,15 +595,13 @@ def lint_texts(texts: list[tuple[str, str]]) -> LintResult:
             result.found["review_finding"] = f"{source}: “{_snippet(finding, 70)}”"
             break
 
-    for element in ("verbatim_law", "required_outputs", "companion_tests"):
+    for element in ("verbatim_law", "companion_tests"):
         title_re = _TITLES[element]
         for sec in sections:
             if not sec.title or not title_re.search(sec.title):
                 continue
             # A review_finding section is not the verbatim law, and vice versa.
             if element == "verbatim_law" and _TITLES["review_finding"].search(sec.title):
-                continue
-            if element == "required_outputs" and not re.search(r"required|outputs?\b", sec.title, re.I):
                 continue
             if _has_content(element, sec.lines):
                 result.found[element] = f"{sec.source}: section “{_snippet(sec.title, 60)}”"
@@ -901,15 +627,6 @@ def lint_texts(texts: list[tuple[str, str]]) -> LintResult:
                     result.found[element] = f"{sec.source}: “{_snippet(line)}”"
                     break
             if element in result.found:
-                break
-
-    if "required_outputs" not in result.found:
-        # The finding itself may name the outputs: "Add a Judgment x_holds_for_year",
-        # "54.yaml outputs `person_earned_income`".
-        for source, text in texts:
-            m = next((m for f in review_findings(text or "") if (m := _named_output(f))), None)
-            if m:
-                result.found["required_outputs"] = f"{source}: review_finding names “{_snippet(m.group(0), 70)}”"
                 break
 
     result.missing = [e for e in ELEMENTS if e not in result.found]
