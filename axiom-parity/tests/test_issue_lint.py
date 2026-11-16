@@ -128,7 +128,7 @@ def test_natural_output_wording_counts():
         "\n## review_finding\n\n> Encode 26 USC 32(d). Required statutory outputs are `separated_spouse_not_married` "
         "and `joint_return_required`, each with a verbatim excerpt.\n"
     )
-    assert lint_issue({"body": body}).ready
+    assert lint_issue({"body": body}).missing == ["required_outputs"]
 
 
 @given(st.integers(1, 12), st.booleans())
@@ -171,7 +171,7 @@ def test_negative_judgment_outcomes_and_short_output_lists_count():
     base = build(["module_and_corpus", "verbatim_law", "required_outputs", "review_finding"])
     assert lint_issue({"body": base + "\n## Companion tests\n\n- a joint filer: does not hold\n"}).ready
     base = build(["module_and_corpus", "verbatim_law", "review_finding", "companion_tests"])
-    assert lint_issue({"body": base + "\nRequired outputs: `a`, `b`\n"}).ready
+    assert lint_issue({"body": base + "\nRequired outputs: `a`, `b`\n"}).missing == ["required_outputs"]
 
 
 def test_a_denied_review_finding_is_not_one():
@@ -188,7 +188,7 @@ def test_outputs_named_inside_the_finding_count():
         "\n## review_finding\n\n> Add a Judgment regulation_10_specifies_amounts_for_tax_year that holds only for "
         "the tax year beginning 6 April 2026, using the leaf input tax_year_is_2026_27.\n"
     )
-    assert lint_issue({"body": body}).ready
+    assert lint_issue({"body": body}).missing == ["required_outputs"]
 
 
 def _without(section: str, body: str = READY_ISSUE_BODY) -> str:
@@ -253,7 +253,7 @@ def test_an_output_declared_in_the_finding_counts():
             "> stated from its statutory elements.",
             "> " + finding,
         )
-        assert lint_issue({"body": body}).ready, finding
+        assert lint_issue({"body": body}).missing == ["required_outputs"], finding
 
 
 @given(

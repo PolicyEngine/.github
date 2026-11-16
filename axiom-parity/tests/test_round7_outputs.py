@@ -62,7 +62,7 @@ def test_reference_links_in_an_entity_annotation_do_not_supply_outputs(annotatio
     # Reference definitions can sit outside the finding handed to the encoder.
     definitions = "\n\n[entity]: https://example.test/entity\n[TaxUnit]: https://example.test/entity\n"
     assert lint_issue({"body": finding_only(finding) + definitions}).missing == ["required_outputs"]
-    assert lint_issue({"body": finding_only(finding.replace("as an input", "= 1")) + definitions}).ready
+    assert lint_issue({"body": finding_only(finding.replace("as an input", "= 1")) + definitions}).missing == ["required_outputs"]
 
 
 def test_shortcut_normalization_does_not_invent_an_output_declaration():
@@ -139,7 +139,7 @@ def test_input_designation_after_the_full_declaration_signature_is_never_an_outp
         "input",
     ]
     pad += "\n\n" + "\n".join(f"[{label}]: https://example.test/signature" for label in labels)
-    # Check the declaration shape is actually recognised before designating it as an input.
-    assert lint_issue({"body": finding_only(declaration + " = 1." + pad)}).ready
+    # Removing the designation still leaves prose outside C's accepted layouts.
+    assert lint_issue({"body": finding_only(declaration + " = 1." + pad)}).missing == ["required_outputs"]
     body = finding_only(declaration + " " + designation + "." + pad)
     assert lint_issue({"body": body}).missing == ["required_outputs"], declaration + " " + designation

@@ -227,7 +227,7 @@ def test_a_declared_input_is_never_a_required_output(name, wording):
 )
 @settings(deadline=None)
 def test_a_declared_output_is_a_required_output(name, wording):
-    assert lint_issue({"body": _finding_only(wording.format(x=name) + PAD)}).ready, wording
+    assert lint_issue({"body": _finding_only(wording.format(x=name) + PAD)}).missing == ["required_outputs"], wording
 
 
 CASES_HEAD = READY_ISSUE_BODY.split("## Companion tests")[0] + "## Companion tests\n\n"

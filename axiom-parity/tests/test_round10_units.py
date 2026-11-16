@@ -11,7 +11,7 @@ from axiom_parity.issue_lint import lint_issue
 
 def test_an_input_item_does_not_hide_the_next_items_output():
     finding = "- Add input wages\n- Add `a_b_c` Money (TaxUnit) = 1\n" + PAD
-    assert lint_issue({"body": finding_only(finding)}).ready
+    assert lint_issue({"body": finding_only(finding)}).missing == ["required_outputs"]
 
 
 # Invariant: whitespace normalization never crosses a list item, table row or
@@ -38,13 +38,13 @@ def test_independent_list_items_never_share_an_input_designation(markers, input_
         if index == output_index:
             text = "Add `a_b_c` Money (TaxUnit) = 1"
         lines.append(f"{indent}{marker} {text}")
-    assert lint_issue({"body": finding_only(blanks.join(lines) + "\n\n" + PAD)}).ready
+    assert lint_issue({"body": finding_only(blanks.join(lines) + "\n\n" + PAD)}).missing == ["required_outputs"]
 
 
 @pytest.mark.parametrize("separator", ["\n\n", "\n \n", "\n\t\n"])
 def test_independent_paragraphs_never_share_an_input_designation(separator):
     finding = "Add input wages" + separator + "Add `a_b_c` Money (TaxUnit) = 1." + PAD
-    assert lint_issue({"body": finding_only(finding)}).ready
+    assert lint_issue({"body": finding_only(finding)}).missing == ["required_outputs"]
 
 
 def test_paragraph_boundaries_never_join_an_incomplete_declaration():

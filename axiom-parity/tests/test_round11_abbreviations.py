@@ -63,7 +63,7 @@ LOWER_NEXT = st.sampled_from(["32", "(c)", "§ 2", "code", "the Act", "[1]", "s 
 def test_generated_abbreviations_never_end_the_declaring_sentence(abbreviation, designation):
     locator = " ".join(abbreviation)
     declaration = f"Add `a_b_c` Money under {locator}"
-    assert lint_issue({"body": finding_only(declaration + " = 1." + PAD)}).ready, declaration
+    assert lint_issue({"body": finding_only(declaration + " = 1." + PAD)}).missing == ["required_outputs"], declaration
     assert lint_issue({"body": finding_only(f"{declaration} {designation}." + PAD)}).missing == ["required_outputs"], (
         declaration
     )
@@ -72,7 +72,7 @@ def test_generated_abbreviations_never_end_the_declaring_sentence(abbreviation, 
 def test_a_real_sentence_end_still_splits():
     assert split_sentences("Add `a_b_c` Money. It is an input.") == ["Add `a_b_c` Money.", "It is an input."]
     assert split_sentences("Set the rate at 1.5. Then stop.") == ["Set the rate at 1.5.", "Then stop."]
-    assert lint_issue({"body": finding_only("Add `a_b_c` Money (TaxUnit). It is an input." + PAD)}).ready
+    assert lint_issue({"body": finding_only("Add `a_b_c` Money (TaxUnit). It is an input." + PAD)}).missing == ["required_outputs"]
     # rulespec-uk#427 and rulespec-us#1426: a possessive or an alphanumeric
     # label ends in one or two letters, but the whole token is longer.
     assert split_sentences("They are never the applicant's. Inputs are leaves.") == [
@@ -102,7 +102,7 @@ def test_a_real_sentence_end_still_splits():
 def test_a_long_token_still_ends_the_sentence(token):
     finding = f"Add `a_b_c` Money for {token}. It is an input."
     assert len(split_sentences(finding)) == 2, finding
-    assert lint_issue({"body": finding_only(finding + PAD)}).ready, finding
+    assert lint_issue({"body": finding_only(finding + PAD)}).missing == ["required_outputs"], finding
 
 
 # The drain side of P1.6. The rest of a module's sentence runs over every period

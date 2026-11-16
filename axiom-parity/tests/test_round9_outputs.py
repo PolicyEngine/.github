@@ -16,8 +16,8 @@ from axiom_parity.policy_paths import PolicyPaths
 
 # Invariant: a name designated as an input in its declaring sentence never
 # supplies a required output, regardless of whitespace or Markdown at any
-# name, type, entity or period token boundary. Removing the designation keeps
-# the same supported declaration usable as an output.
+# name, type, entity or period token boundary. C also refuses these finding-only
+# declarations when their designation is removed, since no accepted root exists.
 PAD = " Preserve the existing statutory text and its proof excerpts as they are."
 WHITESPACE = [" ", "  ", "\t", "\n", "\u00a0", "\u2009"]
 MARKUP = ["{}", "`{}`", "**{}**", "__{}__", "*{}*", "_{}_", "[{}](https://example.test/type)"]
@@ -78,8 +78,8 @@ def test_property_input_designation_survives_every_signature_token_boundary(
         # paragraph boundaries are independently checked in test_round10_units.
         rendered = re.sub(r"\n(?:[^\S\n]*\n)+", "\n", rendered)
         declaration = ("Add " if typed else "Output ") + rendered
-        # The designation is the only semantic difference from the control.
-        assert lint_issue({"body": finding_only(declaration + " = 1." + PAD)}).ready, declaration
+        # Both variations remain outside C's closed layouts.
+        assert lint_issue({"body": finding_only(declaration + " = 1." + PAD)}).missing == ["required_outputs"], declaration
         assert lint_issue({"body": finding_only(declaration + " " + designation + "." + PAD)}).missing == [
             "required_outputs"
         ], declaration + " " + designation
@@ -87,7 +87,7 @@ def test_property_input_designation_survives_every_signature_token_boundary(
 
 def test_a_later_sentence_input_does_not_reclassify_an_output():
     finding = "Add `a_b_c` Money (TaxUnit). Add a separate name as an input." + PAD
-    assert lint_issue({"body": finding_only(finding)}).ready
+    assert lint_issue({"body": finding_only(finding)}).missing == ["required_outputs"]
 
 
 def test_an_input_designation_in_the_same_sentence_keeps_its_scope_across_a_semicolon():
@@ -97,4 +97,4 @@ def test_an_input_designation_in_the_same_sentence_keeps_its_scope_across_a_semi
 
 def test_using_another_leaf_input_does_not_reclassify_an_output():
     finding = "Add a Judgment a_b_c that holds for the year, using the leaf input gross_wages." + PAD
-    assert lint_issue({"body": finding_only(finding)}).ready
+    assert lint_issue({"body": finding_only(finding)}).missing == ["required_outputs"]

@@ -120,7 +120,7 @@ def test_a_plain_word_is_not_a_distinct_source(word):
 
 @pytest.mark.parametrize("name", ["x_y_z", "gross_wages", "tax_year_is_2026_27"])
 def test_a_rule_identifier_is_a_distinct_source(name):
-    assert missing(f"Add `a_b_c` Money using the leaf input {name}.") == []
+    assert missing(f"Add `a_b_c` Money using the leaf input {name}.") == ["required_outputs"]
 
 
 # F5: a preamble's code span (a path) or its repetition of an excluded name
@@ -136,12 +136,12 @@ def test_a_rule_identifier_is_a_distinct_source(name):
 def test_no_preamble_names_an_excluded_output(preamble):
     body = BASE + f"\n\n## Required outputs\n\n{preamble}\n- Add `a_b_c` Money as an input."
     assert lint_issue({"body": body}).missing == ["required_outputs"]
-    # Control: a preamble naming a different rule still counts.
+    # A preamble naming a different rule still lacks C's closed field layout.
     body = (
         BASE
         + "\n\n## Required outputs\n\nOutputs: `d_e_f` Money, the credit amount after the phase-out and the separated-spouse rule, with:\n- Add `a_b_c` Money as an input."
     )
-    assert lint_issue({"body": body}).ready
+    assert lint_issue({"body": body}).missing == ["required_outputs"]
 
 
 # rulespec-us#1425: a later unit that refers to an output after its own
@@ -159,13 +159,19 @@ def test_a_reference_after_a_designation_keeps_the_output(cue):
             "Also encode the qualifications as leaf-input Judgments that gate `ar_low_table_applies`.",
         ]
     )
-    assert lint_issue({"body": BASE + "\n\n" + section}).ready
-    # The same reference before the designation is the excluded unit's subject.
+    # The quoted rendering uses a space after its empty quote marker. C accepts
+    # only "" or ">" as the blank boundary, so that rendering refuses the group.
+    expected_missing = ["required_outputs"] if quote else []
+    assert lint_issue({"body": BASE + "\n\n" + section}).missing == expected_missing
+    # With a valid group boundary, C checks each row independently; the later
+    # paragraph never vetoes the accepted second row.
     swapped = section.replace(
         "Also encode the qualifications as leaf-input Judgments that gate `ar_low_table_applies`.",
         "Also `ar_low_table_applies` is a leaf-input Judgment.",
     )
-    assert lint_issue({"body": BASE + "\n\n" + swapped}).missing == ["required_outputs"]
+    assert lint_issue({"body": BASE + "\n\n" + swapped}).missing == expected_missing
+    if quote:
+        assert lint_issue({"body": BASE + "\n\n" + swapped.replace("\n> \n", "\n>\n")}).ready
 
 
 # F6: capitalized legal abbreviations the issues use never end the declaring sentence.
@@ -187,7 +193,7 @@ def test_a_reference_after_a_designation_keeps_the_output(cue):
 )
 def test_a_capitalized_legal_abbreviation_keeps_the_designation(locator):
     assert missing(f"Add `a_b_c` Money under {locator} as an input.") == ["required_outputs"]
-    assert missing(f"Add `a_b_c` Money under {locator} = 1.") == []
+    assert missing(f"Add `a_b_c` Money under {locator} = 1.") == ["required_outputs"]
 
 
 def test_a_capitalized_word_ending_a_sentence_still_ends_it():

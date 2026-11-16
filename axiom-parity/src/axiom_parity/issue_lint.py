@@ -300,16 +300,11 @@ def _has_content(element: str, lines: list[str]) -> bool:
     return False
 
 
-def _introduces_content(element: str, line: str, following: list[str]) -> bool:
-    """Does an inline cue introduce the element, on its own line or just below?
-
-    "Companion cases:" followed by a list does.
-    A back-reference in running prose ("state each required output below")
-    doesn't.
-    """
+def _introduces_tests(line: str, following: list[str]) -> bool:
+    """Does an inline companion-test cue introduce cases with an outcome?"""
     if _TODO.search(line):
         return False
-    m = _INLINE[element].search(line)
+    m = _INLINE["companion_tests"].search(line)
     rest = line[m.end() :]
     if re.match(r"\s*(?:below|above|listed|in the)\b", rest, re.I):
         return False
@@ -321,20 +316,15 @@ def _introduces_content(element: str, line: str, following: list[str]) -> bool:
         if _HEADING.match(nxt) and not fenced:
             break
         if not nxt.strip():
-            # Cases often run over several paragraphs: a list, a note, then a table of
-            # expected values. Other elements end at the first blank line.
-            if element != "companion_tests" and any(b.strip() for b in block[1:]):
-                break
+            # Cases often run over several paragraphs: a list, a note, then a table of expected values.
             continue
-        if element == "companion_tests" and _LABEL.match(nxt):
+        if _LABEL.match(nxt):
             break
         block.append(nxt)
     if any(_TODO.search(b) for b in block):
         return False
     text = " ".join(b.strip() for b in block).strip()
-    if element == "companion_tests":
-        return len(text) >= 40 and _states_outcome(block)
-    return False
+    return len(text) >= 40 and _states_outcome(block)
 
 
 def _snippet(text: str, n: int = 90) -> str:
@@ -622,7 +612,7 @@ def lint_texts(texts: list[tuple[str, str]]) -> LintResult:
                 if element == "verbatim_law":
                     ok = _quoted_chars(_finished(window)) >= 60 and not any(_TODO.search(w) for w in window)
                 else:
-                    ok = _introduces_content(element, line, lines[i + 1 : i + 16])
+                    ok = _introduces_tests(line, lines[i + 1 : i + 16])
                 if ok:
                     result.found[element] = f"{sec.source}: “{_snippet(line)}”"
                     break

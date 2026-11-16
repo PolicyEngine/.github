@@ -62,9 +62,9 @@ def test_a_code_span_is_one_unit(ticks, marker, blank, outer, designation):
     span = f"{ticks}Add a_b_c Money\n{chr(10) if blank else ''}{marker}{designation}{ticks}"
     finding = outer + span.replace("\n", "\n" + " " * len(outer))
     assert lint_issue({"body": finding_only(finding + "\n\n" + PAD)}).missing == ["required_outputs"], finding
-    # Control: the declaration on its own, in the same span, is an output.
+    # The declaration alone still lacks an accepted C root and field layout.
     control = outer + f"{ticks}Add a_b_c Money{ticks}"
-    assert lint_issue({"body": finding_only(control + "\n\n" + PAD)}).ready, control
+    assert lint_issue({"body": finding_only(control + "\n\n" + PAD)}).missing == ["required_outputs"], control
 
 
 @given(
@@ -85,7 +85,7 @@ def test_a_fenced_block_in_an_item_stays_in_the_item(fence, language, marker, bl
 
 def test_real_list_items_around_code_still_split():
     finding = "- Add input `wages - and | x`\n- Add `a_b_c` Money (TaxUnit) = 1\n\n" + PAD
-    assert lint_issue({"body": finding_only(finding)}).ready
+    assert lint_issue({"body": finding_only(finding)}).missing == ["required_outputs"]
     units = markdown_units("- `a\n- b`\n- c")
     assert [unit.text for unit in units] == ["`a\n- b`", "c"]
 

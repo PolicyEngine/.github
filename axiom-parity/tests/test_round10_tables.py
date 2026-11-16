@@ -55,12 +55,12 @@ def test_every_input_classification_cell_excludes_the_whole_row(
 @pytest.mark.parametrize("classification", ["output", "outputs", "existing output", "Existing outputs: `d_e_f`"])
 def test_output_classifications_keep_declared_outputs(classification):
     finding = f"| Declaration | Role |\n|---|---|\n| Add `a_b_c` Money | {classification} |\n\n" + PAD
-    assert lint_issue({"body": finding_only(finding)}).ready
+    assert lint_issue({"body": finding_only(finding)}).missing == ["required_outputs"]
 
 
 def test_input_row_does_not_reclassify_a_separate_output_row():
     finding = "| Declaration | Kind |\n|---|---|\n| Add `a_b_c` Money | input |\n| Output `d_e_f` | output |\n\n" + PAD
-    assert lint_issue({"body": finding_only(finding)}).ready
+    assert lint_issue({"body": finding_only(finding)}).missing == ["required_outputs"]
 
 
 @pytest.mark.parametrize("outer_pipes", [False, True])

@@ -33,7 +33,7 @@ def missing(finding: str) -> list[str]:
 )
 def test_an_abbreviation_after_a_hyphen_or_slash_keeps_the_designation(locator):
     assert missing(f"Add `a_b_c` Money per {locator} as an input.") == ["required_outputs"]
-    assert missing(f"Add `a_b_c` Money per {locator} = 1.") == []
+    assert missing(f"Add `a_b_c` Money per {locator} = 1.") == ["required_outputs"]
 
 
 @pytest.mark.parametrize("segment", ["c", "C", "v", "pp", "s"])
@@ -86,9 +86,9 @@ def test_a_url_fragment_names_no_output(link):
         + f"\n\n## Required outputs\n\nPer the [instructions]({link}), the module declares the credit amount after the phase-out and the separated-spouse rule, as follows:\n- Add `a_b_c` Money as an input."
     )
     assert lint_issue({"body": body}).missing == ["required_outputs"]
-    # Control: a rule reference outside a URL still counts.
+    # A rule reference in prose still lacks C's closed field layout.
     body = (
         BASE
         + "\n\n## Required outputs\n\nAs in 32.yaml#eitc_phase_in, the module declares the credit amount after the phase-out and the separated-spouse rule, as follows:\n- Add `a_b_c` Money as an input."
     )
-    assert lint_issue({"body": body}).ready
+    assert lint_issue({"body": body}).missing == ["required_outputs"]

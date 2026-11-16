@@ -30,7 +30,7 @@ def test_test_only_review_example_needs_an_explicit_existing_output_list():
         "- us:statutes/26/32#eitc_allowed\n"
         "- us:statutes/26/32#eitc\n"
     )
-    assert lint_issue({"body": body}).ready
+    assert lint_issue({"body": body}).missing == ["required_outputs"]
 
 
 @given(
@@ -46,4 +46,4 @@ def test_existing_outputs_can_be_repeated_for_any_test_only_handoff(names):
     assert lint_issue({"body": body}).missing == ["required_outputs"]
     body += "\n## Required outputs\n\nExisting rules to assert:\n"
     body += "\n".join(f"- us:statutes/26/32#{name}" for name in names)
-    assert lint_issue({"body": body}).ready
+    assert lint_issue({"body": body}).missing == ["required_outputs"]

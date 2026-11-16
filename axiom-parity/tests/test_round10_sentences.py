@@ -63,7 +63,7 @@ def test_abbreviation_input_does_not_release_a_queued_claim(locator, mode):
 def test_input_designation_survives_abbreviations_and_punctuation(abbreviation, designation, case, suffix, punctuation):
     locator = punctuation.format(getattr(abbreviation, case)() + suffix)
     declaration = f"Add `a_b_c` Money {locator}"
-    assert lint_issue({"body": finding_only(declaration + " = 1." + PAD)}).ready
+    assert lint_issue({"body": finding_only(declaration + " = 1." + PAD)}).missing == ["required_outputs"]
     assert lint_issue({"body": finding_only(declaration + " " + designation + "." + PAD)}).missing == [
         "required_outputs"
     ]
@@ -74,7 +74,7 @@ def test_decimal_keeps_the_designation_and_a_real_sentence_end_bounds_it():
     assert lint_issue({"body": finding_only(declaration + " at 1.5 as an input." + PAD)}).missing == [
         "required_outputs"
     ]
-    assert lint_issue({"body": finding_only(declaration + ". It is an input." + PAD)}).ready
+    assert lint_issue({"body": finding_only(declaration + ". It is an input." + PAD)}).missing == ["required_outputs"]
 
 
 def test_ambiguous_designation_excludes_every_declaration_in_its_sentence():
@@ -90,7 +90,7 @@ def test_ambiguous_designation_excludes_every_declaration_in_its_sentence():
 @settings(max_examples=36, deadline=None, database=None, derandomize=True)
 def test_only_a_source_naming_a_distinct_input_can_preserve_an_output(name, declaration, modifier):
     source = f" using the {modifier}input {name}."
-    assert lint_issue({"body": finding_only(declaration + source + PAD)}).ready
+    assert lint_issue({"body": finding_only(declaration + source + PAD)}).missing == ["required_outputs"]
     assert lint_issue({"body": finding_only(declaration + source.replace(name, "a_b_c") + PAD)}).missing == [
         "required_outputs"
     ]

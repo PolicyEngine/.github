@@ -109,11 +109,15 @@ def test_no_preamble_keeps_excluded_declarations_as_evidence(
         return BASE + "\n\n" + lead + opening + separator + "\n".join(lines)
 
     assert lint_issue({"body": body(rows)}).missing == ["required_outputs"], body(rows)
-    # Controls: a retained item that names an output counts anywhere; an
-    # unnamed item that follows every excluded unit and introduces nothing
-    # is not a preamble, so it counts too.
-    assert lint_issue({"body": body([*rows, row(marker, "`d_e_f`, a Judgment.")])}).ready
-    assert lint_issue({"body": body([*rows, row(marker, "A count rule for one claim a year.")])}).ready
+    # C accepts a named sibling only inside one uninterrupted flat list
+    # directly below an exact root. An unnamed sibling never supplies evidence.
+    named_missing = (
+        []
+        if form == "heading" and shape in {"item", "colon item"} and marker != "| " and separator == "\n"
+        else ["required_outputs"]
+    )
+    assert lint_issue({"body": body([*rows, row(marker, "`d_e_f`, a Judgment.")])}).missing == named_missing
+    assert lint_issue({"body": body([*rows, row(marker, "A count rule for one claim a year.")])}).missing == ["required_outputs"]
 
 
 def test_an_unnamed_item_after_the_excluded_items_counts():
@@ -123,7 +127,7 @@ def test_an_unnamed_item_after_the_excluded_items_counts():
         "1. A Judgment that a person may file a claim (leaf inputs: age; head of household).\n"
         "2. A count rule or Judgment stating that each head of household may file only one claim per year."
     )
-    assert lint_issue({"body": BASE + "\n\n" + section}).ready
+    assert lint_issue({"body": BASE + "\n\n" + section}).missing == ["required_outputs"]
     # The same unnamed item before the excluded one may be a preamble.
     before = section.replace("1. A", "2. B").replace("2. A count", "1. A count").splitlines()
     assert lint_issue({"body": BASE + "\n\n" + "\n".join([before[0], before[2], before[1]])}).missing == [
@@ -133,5 +137,5 @@ def test_an_unnamed_item_after_the_excluded_items_counts():
 
 def test_prose_still_counts_where_nothing_was_excluded():
     prose = "The module must produce the separated-spouse determination for each tax unit and each year it covers."
-    assert lint_issue({"body": BASE + "\n\n## Required outputs\n\n" + prose}).ready
-    assert lint_issue({"body": BASE + "\n\n## Required outputs\n\n- The separated-spouse determination"}).ready
+    assert lint_issue({"body": BASE + "\n\n## Required outputs\n\n" + prose}).missing == ["required_outputs"]
+    assert lint_issue({"body": BASE + "\n\n## Required outputs\n\n- The separated-spouse determination"}).missing == ["required_outputs"]

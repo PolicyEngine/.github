@@ -59,7 +59,9 @@ def test_no_line_boundary_but_a_newline_ends_a_quoted_finding(mark, request, ope
     # The lint and the drain read the same finding.
     body = body_with(block)
     assert request in review_findings(one_line_breaks(body))[0]
-    assert lint_issue({"number": 1, "body": body}, []).ready
+    result = lint_issue({"number": 1, "body": body}, [])
+    assert "review_finding" in result.found
+    assert result.missing == ["required_outputs"]  # C refuses unsupported raw whitespace anywhere in this source.
     assert mark not in one_line_breaks(body)
     # Control: a real newline still ends a line, and the text is otherwise unchanged.
     assert one_line_breaks("a\nb\r\nc") == "a\nb\r\nc"

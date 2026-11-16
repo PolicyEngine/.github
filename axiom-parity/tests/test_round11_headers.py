@@ -71,10 +71,10 @@ def test_every_declaration_in_an_input_column_is_an_input(
     ragged = table([headers, *context], outer_pipes) + "\n" + ("| " if outer_pipes else "")
     ragged += declaration + " | extra" * width
     assert lint_issue({"body": finding_only(ragged + "\n\n" + PAD)}).missing == ["required_outputs"], ragged
-    # Control: the same table under an output header supplies the output.
+    # Changing this header still leaves a table outside C's exact allowlist.
     headers[position] = style.format("Output")
     control = table([headers, *body], outer_pipes)
-    assert lint_issue({"body": finding_only(control + "\n\n" + PAD)}).ready, control
+    assert lint_issue({"body": finding_only(control + "\n\n" + PAD)}).missing == ["required_outputs"], control
 
 
 def test_a_row_without_pipes_after_a_table_is_still_in_its_input_column():
@@ -85,7 +85,7 @@ def test_a_row_without_pipes_after_a_table_is_still_in_its_input_column():
 @pytest.mark.parametrize("outer_pipes", [False, True])
 def test_an_output_column_beside_an_input_column_still_counts(outer_pipes):
     finding = table([["Output", "Input"], ["Add `d_e_f` Money", "`wages`"]], outer_pipes)
-    assert lint_issue({"body": finding_only(finding + "\n\n" + PAD)}).ready
+    assert lint_issue({"body": finding_only(finding + "\n\n" + PAD)}).missing == ["required_outputs"]
     # The same name in the input column makes the row ambiguous: read input.
     finding = table([["Output", "Input"], ["Add `d_e_f` Money", "`d_e_f`"]], outer_pipes)
     assert lint_issue({"body": finding_only(finding + "\n\n" + PAD)}).missing == ["required_outputs"]
