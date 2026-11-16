@@ -523,12 +523,13 @@ def _shown(path: str) -> str:
 # or unknown jurisdictions and Unicode punctuation in rooted module paths
 # must hold an issue rather than disappear or read as a shorter module.
 # A slash may precede a root in a repository/URL prefix. Dots are neither
-# jurisdiction characters nor a root boundary, so hosts cannot supply a root.
+# jurisdiction characters nor a root boundary; a colon cannot start a root
+# at a web host's port number.
 _RAW_PATH_PART = r"[^\s`*<>\"'{}\[\](),;!?/]+"
 _RAW_MODULE_PATH = re.compile(
-    rf"(?<![\w.\-])(?:[\w\-]+[/:](?:{_MODULE_KINDS})/|programs/[\w\-]+/)"
+    rf"(?<![\w.:\-])(?:[\w\-]+[/:](?:{_MODULE_KINDS})/|programs/[\w\-]+/)"
     rf"(?:{_RAW_PATH_PART}/)*?{_RAW_PATH_PART}?\.yaml(?:/?\.test\.yaml)?(?!\w)"
-    rf"|(?<![\w.\-])(?:[\w\-]+[/:](?:{_MODULE_KINDS})/|programs/[\w\-]+/)[^\s`*<>\"'{{}}\[\](),;!?]+",
+    rf"|(?<![\w.:\-])(?:[\w\-]+[/:](?:{_MODULE_KINDS})/|programs/[\w\-]+/)[^\s`*<>\"'{{}}\[\](),;!?]+",
     re.IGNORECASE,
 )
 

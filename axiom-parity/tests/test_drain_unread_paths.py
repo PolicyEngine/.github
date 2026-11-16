@@ -66,6 +66,7 @@ def test_an_unread_uppercase_module_behind_a_prefix_is_held(prefix, root):
     "path",
     [
         "https://nysenate.gov/legislation/bills/2025/S9009/amendment/C",
+        "https://nysenate.gov:443/legislation/x.yaml",
         "nysenate.gov/legislation/x.yaml",
         "programs/nysenate.gov/x.yaml",
         "policyengine_us/tests/policy/baseline/gov/irs/income_tax/x.yaml",
