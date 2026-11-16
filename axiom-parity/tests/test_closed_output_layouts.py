@@ -14,7 +14,6 @@ from test_round9_outputs import PAD
 
 from axiom_parity.issue_lint import lint_issue, lint_texts
 
-
 ROOTS = (
     "## Required outputs",
     "required_outputs:",
