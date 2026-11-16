@@ -82,6 +82,9 @@ def test_a_pairing_line_after_a_line_separator_still_declares_work():
     row, ready = paired("\n")
     assert PIPELINE in row.work_modules and ready == 0
     row, ready = paired("\n", f"{PIPELINE} is related.")
+    assert PIPELINE not in row.work_modules and row.dispatchable and ready == 1
+    # The same mention inside a finding is requested work and keeps its hold.
+    row, ready = held(f"{PIPELINE} is related.")
     assert PIPELINE in row.work_modules and not row.dispatchable and ready == 0
 
 

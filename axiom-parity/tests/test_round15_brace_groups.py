@@ -9,7 +9,7 @@ from itertools import product
 
 import pytest
 from conftest import REQUEST_ONLY_BODY, RS_US
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from axiom_parity.drain import (
@@ -314,26 +314,39 @@ def test_a_brace_that_joins_nothing_holds_nothing(comment):
     joints=st.lists(st.sampled_from(["/", "", ".yaml", "-"]), min_size=3, max_size=3),
     padded=st.booleans(),
 )
+@example(prefix="us/statutes/26/1/", groups=[["a"], [""]], joints=["/", "/", "/"], padded=False)
 @settings(max_examples=300, deadline=None, database=None)
 def test_a_group_is_spelled_as_a_shell_spells_it(prefix, groups, joints, padded):
     pad = " " if padded else ""
-    expression = prefix + "".join(
+    written = [
         "{" + ",".join(pad + alternative + pad for alternative in group) + "}" + joint
         for group, joint in zip(groups, joints, strict=False)
-    )
+    ]
+    expression = prefix + "".join(written)
     expected = [
         prefix + "".join(alternative + joint for alternative, joint in zip(choice, joints, strict=False))
         for choice in product(*groups)
     ]
     assert _spellings(expression) == expected
-    # Spelled out in the text only when every spelling is a path; otherwise left as written.
-    assert spell_braces(f"Fix {expression} now") in (f"Fix {', '.join(expected)} now", f"Fix {expression} now")
+    # Literal {} interrupts the supported path group. Complete groups before
+    # it can expand; the empty braces and the rest stay as written.
+    stop = next((i for i, group in enumerate(groups) if group == [""] and not padded), len(groups))
+    head_expected = [
+        prefix + "".join(alternative + joint for alternative, joint in zip(choice, joints[:stop], strict=True))
+        for choice in product(*groups[:stop])
+    ]
+    tail = "".join(written[stop:])
+    assert spell_braces(f"Fix {expression} now") in (
+        f"Fix {', '.join(head_expected)}{tail} now",
+        f"Fix {expression} now",
+    )
 
 
 def test_spellings_nest_stop_at_the_cap_and_keep_loose_braces():
     assert _spellings("a/{b,{c,d}/e}/f") == ["a/b/f", "a/c/e/f", "a/d/e/f"]
     assert _spellings("a/{b,c") == ["a/b", "a/c"]  # a group that is never closed runs to the end
     assert _spellings("a}/b,c") == ["a}/b,c"]  # no group: the brace and the comma are characters
+    assert spell_braces("us/statutes/26/1/{a}/{}/") == "us/statutes/26/1/a/{}/"
     assert _spellings("{" + ",".join(map(str, range(40))) + "}/{" + ",".join(map(str, range(40))) + "}") is None
     assert spell_braces("us/statutes/26/1/h{,/1}.yaml") == "us/statutes/26/1/h.yaml, us/statutes/26/1/h/1.yaml"
     assert _modules_in(plain("Repair us/statutes/26/1/h{,/1}.yaml.")) == [
