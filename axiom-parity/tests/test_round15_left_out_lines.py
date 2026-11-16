@@ -7,7 +7,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from test_round15_finding_layout import ENCODE, THIRD, F, P, assert_held, build, planned
 
-from axiom_parity.drain import _left_out, _stands_alone
+from axiom_parity.drain import _left_out
 from axiom_parity.issue_lint import review_findings
 
 LEFT_OUT = [
@@ -46,7 +46,7 @@ LEFT_OUT = [
 def test_a_module_named_only_in_text_the_reader_left_out_is_work(text, verb):
     text = text.replace("VERB", verb)
     assert P not in "".join(review_findings(text)), text
-    assert P in _left_out(text) and not _stands_alone(text), text
+    assert P in _left_out(text), text
     assert_held("comment", text)
 
 
@@ -72,23 +72,23 @@ def test_a_closed_layout_leaves_nothing_out():
         ("comment", F + f"{ENCODE}\n\n- See {P}.\n\n## Required outputs\n\nFix it."),
     ):
         text = build(mode, block)[1][0]["body"] if mode == "comment" else build(mode, block)[0]
-        assert _stands_alone(text) and _left_out(text) == "", block
+        assert _left_out(text) == "", block
         row, ready = planned(mode, block)
-        assert P not in row.work_modules and row.dispatchable and ready == 1, block
+        assert P in row.work_modules and not row.dispatchable and ready == 0, block
 
 
 def test_the_layout_readers_agree_on_what_a_section_holds():
-    # ``_stands_alone`` affirms a layout; ``_left_out`` gives the lines the reader passed over.
+    # ``_left_out`` gives the lines the finding reader passed over; they still contribute work.
     fenced = F + f"```\n{ENCODE}\n```and fix it.\n```"
-    assert not _stands_alone(fenced) and _left_out(fenced) == "```and fix it."
+    assert _left_out(fenced) == "```and fix it."
     keyed = F + f"> review_finding: |-\n>   {ENCODE}\n> note: fix it."
-    assert not _stands_alone(keyed) and _left_out(keyed) == "> review_finding: |-\n\n> note: fix it."
+    assert _left_out(keyed) == "> review_finding: |-\n\n> note: fix it."
     below = F + f"> {ENCODE}\n\n- fix it.\n\n## Companion tests\n\n- one case"
-    assert not _stands_alone(below) and _left_out(below) == "- fix it."
+    assert _left_out(below) == "- fix it."
     # A line that may close a fence under one reading of its container and not under another
     # leaves the rest of the text uncertain, and all of it is read.
     listed = f"- **review_finding:**\n  ```\n  {ENCODE}\n```\n## Companion tests\nfix it\n```"
     assert _left_out(listed) == "## Companion tests\nfix it"
     # Text under another field's heading, and above the finding's introduction, is not read.
     alone = f"Fix it.\n\n{F}> {ENCODE}\n\n## Companion tests\n\n- fix it"
-    assert _stands_alone(alone) and _left_out(alone) == ""
+    assert _left_out(alone) == ""

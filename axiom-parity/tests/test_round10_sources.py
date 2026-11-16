@@ -3,7 +3,7 @@
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from axiom_parity.drain import IMPORT, WORK, _modules_in, plain
+from axiom_parity.drain import WORK, _modules_in, plain
 
 SOURCE = "us/policies/income_tax/taxable_income_pipeline.yaml"
 REMOVED = [f"us/statutes/26/32/{letter}.yaml" for letter in "def"]
@@ -12,7 +12,7 @@ PARTICIPLES = ["taking", "reading", "using", "drawing", "declaring"]
 
 def test_taking_a_rate_starts_a_source_clause_after_the_removal_object():
     request = f"Remove a rule from {REMOVED[0]}, taking the rate from {SOURCE}."
-    assert _modules_in(plain(request)) == [(REMOVED[0], WORK), (SOURCE, IMPORT)]
+    assert _modules_in(plain(request)) == [(REMOVED[0], WORK), (SOURCE, WORK)]
 
 
 @given(
@@ -28,10 +28,10 @@ def test_a_participial_source_predicate_starts_after_the_removal_object(
     verb, participle, boundary, count, joiner, object_name
 ):
     # Invariant P2.6: a participial source predicate starts a new clause only
-    # after a removal's object; its from-object is IMPORT and removals stay WORK.
+    # after a removal's object; its from-object is WORK and removals stay WORK.
     removed = REMOVED[:count]
     request = f"{verb} a rule from {joiner.join(removed)}{boundary}{participle} {object_name} from {SOURCE}."
-    assert _modules_in(plain(request)) == [(module, WORK) for module in removed] + [(SOURCE, IMPORT)], request
+    assert _modules_in(plain(request)) == [(module, WORK) for module in removed] + [(SOURCE, WORK)], request
     # The same participle within the removed object never begins a new clause.
     embedded = f"{verb} the rule {participle} {object_name} from {SOURCE}."
     assert _modules_in(plain(embedded)) == [(SOURCE, WORK)], embedded
@@ -40,7 +40,7 @@ def test_a_participial_source_predicate_starts_after_the_removal_object(
     routed = request.removesuffix(".") + f" into {destination}."
     assert _modules_in(plain(routed)) == [
         *((module, WORK) for module in removed),
-        (SOURCE, IMPORT),
+        (SOURCE, WORK),
         (destination, WORK),
     ], routed
 
@@ -57,6 +57,6 @@ def test_only_a_complete_first_removal_clause_can_introduce_a_source(verb, artic
     # A finite affirmative removal clause can end before its first module;
     # unknown context before or after that clause can never be discarded.
     removal = f"{verb} {article} {modifier}rule"
-    assert _modules_in(plain(f"{removal}, {source} {SOURCE}.")) == [(SOURCE, IMPORT)]
+    assert _modules_in(plain(f"{removal}, {source} {SOURCE}.")) == [(SOURCE, WORK)]
     assert _modules_in(plain(f"{unknown} {removal.lower()}, {source} {SOURCE}.")) == [(SOURCE, WORK)]
     assert _modules_in(plain(f"{removal} {unknown}, {source} {SOURCE}.")) == [(SOURCE, WORK)]

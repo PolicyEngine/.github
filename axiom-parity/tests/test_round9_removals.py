@@ -6,8 +6,6 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from axiom_parity.drain import (
-    DEFERRED,
-    IMPORT,
     WORK,
     WorkHolds,
     _modules_in,
@@ -115,25 +113,25 @@ def test_removing_metadata_never_affirms_a_deferral(verb, object_name, determine
     st.sampled_from([", and ", " and ", " or ", ", then ", " but ", "; "]),
     st.sampled_from(
         [
-            ("import X from", IMPORT),
-            ("importing from", IMPORT),
-            ("read X from", IMPORT),
-            ("using a rule from", IMPORT),
-            ("add a rule from", IMPORT),
-            ("declare a deferred dependency on", DEFERRED),
-            ("do not import", DEFERRED),
-            ("never import", DEFERRED),
-            ("without importing", DEFERRED),
-            ("defers", DEFERRED),
-            ("deferring", DEFERRED),
-            ("blocked_by", DEFERRED),
-            ("blocked_by:", DEFERRED),
-            ("does not import", DEFERRED),
-            ("don't import", DEFERRED),
-            ("must not import", DEFERRED),
-            ("not import", DEFERRED),
-            ("rather than import", DEFERRED),
-            ("instead of import", DEFERRED),
+            ("import X from", WORK),
+            ("importing from", WORK),
+            ("read X from", WORK),
+            ("using a rule from", WORK),
+            ("add a rule from", WORK),
+            ("declare a deferred dependency on", WORK),
+            ("do not import", WORK),
+            ("never import", WORK),
+            ("without importing", WORK),
+            ("defers", WORK),
+            ("deferring", WORK),
+            ("blocked_by", WORK),
+            ("blocked_by:", WORK),
+            ("does not import", WORK),
+            ("don't import", WORK),
+            ("must not import", WORK),
+            ("not import", WORK),
+            ("rather than import", WORK),
+            ("instead of import", WORK),
         ]
     ),
     st.integers(2, 4),
@@ -148,4 +146,4 @@ def test_a_genuine_new_predicate_ends_removal_scope(joiner, predicate, count, ea
     assert _modules_in(plain(request)) == [(m, WORK) for m in earlier] + [(last, expected)], request
     # Affirmative post-module forms also remain deferrals in their own clause.
     for refusal in ["cannot", "can't", "must not", "should not", "is not to"]:
-        assert _modules_in(f"{last} {refusal} be imported.") == [(last, DEFERRED)]
+        assert _modules_in(f"{last} {refusal} be imported.") == [(last, WORK)]

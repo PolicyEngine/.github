@@ -17,7 +17,7 @@ from hypothesis import strategies as st
 
 from axiom_parity.axiom_line import QUEUED, parse_line
 from axiom_parity.check import Context, run_check
-from axiom_parity.drain import DEFERRED, IMPORT, MENTION, WORK, _modules_in, _pair_line, issue_inputs, plan
+from axiom_parity.drain import WORK, _modules_in, _pair_line, issue_inputs, plan
 from axiom_parity.issue_lint import lint_issue, review_finding_text
 from axiom_parity.policy_paths import PolicyPaths
 
@@ -336,30 +336,29 @@ def test_requested_work_is_work_whatever_follows_the_module(request, after):
 @given(
     st.sampled_from(
         [
-            ("Add the new amount to the guarantee that {m} composes.", WORK),
-            ("Compose it into the gains that {m} reads.", WORK),
-            ("Add a companion case to {m}.", WORK),
-            ("(3) In {m}, compose the deduction into Step 2.", WORK),
-            ("Modules: {m}.", WORK),
-            ("{m} needs a rule for the separated spouse.", WORK),
-            ("Import {m} for the rate.", IMPORT),
-            ("Encode it by importing {m}.", IMPORT),
-            ("Imports: {m}.", IMPORT),
-            ("Take the amount from {m}.", IMPORT),
-            ("Do not import {m}.", DEFERRED),
-            ("Encode it without importing {m}.", DEFERRED),
-            ("Declare a deferred dependency on {m}.", DEFERRED),
-            ("Encode it mirroring the existing {m}.", MENTION),
-            ("{m} currently carries the amount as an input.", MENTION),
-            ("Keep {m} unchanged.", MENTION),
-            ("It is defined in {m}.", MENTION),
+            "Add the new amount to the guarantee that {m} composes.",
+            "Compose it into the gains that {m} reads.",
+            "Add a companion case to {m}.",
+            "(3) In {m}, compose the deduction into Step 2.",
+            "Modules: {m}.",
+            "{m} needs a rule for the separated spouse.",
+            "Import {m} for the rate.",
+            "Encode it by importing {m}.",
+            "Imports: {m}.",
+            "Take the amount from {m}.",
+            "Do not import {m}.",
+            "Encode it without importing {m}.",
+            "Declare a deferred dependency on {m}.",
+            "Encode it mirroring the existing {m}.",
+            "{m} currently carries the amount as an input.",
+            "Keep {m} unchanged.",
+            "It is defined in {m}.",
         ]
     )
 )
 @settings(deadline=None)
-def test_each_reason_for_naming_a_module_is_told_apart(case):
-    sentence, kind = case
-    assert _modules_in(sentence.format(m=A)) == [(A, kind)], sentence
+def test_each_reason_for_naming_a_module_keeps_it_work(sentence):
+    assert _modules_in(sentence.format(m=A)) == [(A, WORK)], sentence
 
 
 def test_a_program_module_with_no_citation_is_held():

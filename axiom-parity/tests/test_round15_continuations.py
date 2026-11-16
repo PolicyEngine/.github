@@ -5,11 +5,9 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from axiom_parity.drain import (
-    DEFERRED,
-    MENTION,
     WORK,
     WorkHolds,
-    _proposals,
+    _modules_in,
     _readings,
     issue_inputs,
     plain,
@@ -20,7 +18,7 @@ from axiom_parity.drain import (
 PIPELINE = "us/policies/income_tax/taxable_income_pipeline.yaml"
 OTHER = "us/statutes/26/1/h.yaml"
 THIRD = "us/statutes/26/1/i.yaml"
-# Openers of the closed release forms ("Keep X" needs "unchanged").
+# Every named module remains work, including these former reference controls.
 OPENERS = ["See", "Cf.", "As in", "Compare", "Import", "Do not import"]
 
 
@@ -32,9 +30,9 @@ def reading(text: str, module: str = PIPELINE) -> set[str]:
     return {kind for name, kind in kinds(text) if name == module}
 
 
-def proposed(text: str, module: str = PIPELINE) -> set[str]:
-    """What the readers propose, before the closed release grammar decides."""
-    return {kind for _, _, found in _proposals(plain(text)) for name, kind in found if name == module}
+def extracted_kind(text: str, module: str = PIPELINE) -> set[str]:
+    """Modules extracted directly, independently of clause grouping."""
+    return {kind for name, kind in _modules_in(plain(text)) if name == module}
 
 
 def held(block: str):
@@ -54,15 +52,13 @@ def keeps_the_owner_hold(block: str) -> None:
     assert any(PIPELINE in reason for reason in row.blocked), block
 
 
-def releases(block: str) -> None:
-    assert WORK not in reading(block), (block, kinds(block))
-    row, ready = held(block)
-    assert PIPELINE not in row.work_modules and row.dispatchable and ready == 1, block
+def reference_keeps_hold(block: str) -> None:
+    keeps_the_owner_hold(block)
 
 
-def only_proposed(block: str) -> None:
-    """The readers propose a release, and the closed release grammar keeps the module work."""
-    assert WORK not in proposed(block), (block, kinds(block))
+def direct_and_grouped_work(block: str) -> None:
+    """Direct extraction and clause readings both retain the named module as work."""
+    assert extracted_kind(block) == {WORK}, (block, kinds(block))
     keeps_the_owner_hold(block)
 
 
@@ -86,17 +82,16 @@ def test_a_unit_that_ends_on_an_abbreviation_stays_open():
         f"- Import {PIPELINE}, i.e.\n  - fix it.",
     ):
         keeps_the_owner_hold(block)
-    # Controls: a unit that a real stop closes, with nothing after it, releases (the readers
-    # propose it before any item that asks for nothing; the closed grammar wants references last).
-    only_proposed(f"- See {PIPELINE}.\n- Nothing else.")
-    releases(f"- See {PIPELINE}.")
-    releases(f"See {PIPELINE}.")
-    only_proposed(f"- See {PIPELINE}.\n  - Nothing else.")  # nested under it: part of it
+    # Every named module remains work, including these former reference controls.
+    direct_and_grouped_work(f"- See {PIPELINE}.\n- Nothing else.")
+    reference_keeps_hold(f"- See {PIPELINE}.")
+    reference_keeps_hold(f"See {PIPELINE}.")
+    direct_and_grouped_work(f"- See {PIPELINE}.\n  - Nothing else.")  # nested under it: part of it
     # "…/1/a." ends a sentence: the "a" is a path segment, not an article.
-    assert proposed("Do not import us/statutes/26/1/a.\n\nNothing else.", "us/statutes/26/1/a.yaml") == {DEFERRED}
-    assert proposed("See us/statutes/26/1/a.\n\n- Nothing else.", "us/statutes/26/1/a.yaml") == {MENTION}
-    assert reading("Do not import us/statutes/26/1/a.", "us/statutes/26/1/a.yaml") == {DEFERRED}
-    assert reading("- See us/statutes/26/1/a.", "us/statutes/26/1/a.yaml") == {MENTION}
+    assert extracted_kind("Do not import us/statutes/26/1/a.\n\nNothing else.", "us/statutes/26/1/a.yaml") == {WORK}
+    assert extracted_kind("See us/statutes/26/1/a.\n\n- Nothing else.", "us/statutes/26/1/a.yaml") == {WORK}
+    assert reading("Do not import us/statutes/26/1/a.", "us/statutes/26/1/a.yaml") == {WORK}
+    assert reading("- See us/statutes/26/1/a.", "us/statutes/26/1/a.yaml") == {WORK}
 
 
 ABBREVIATIONS = ["e.g.", "i.e.", "viz.", "cf.", "etc.", "E.g.", "incl.", "vs.", "(e.g.", "(cf.", "e.g.)", "e.g.*"]
@@ -129,11 +124,10 @@ def test_a_module_in_a_unit_that_no_stop_closes_is_work(opener, joiner, abbrevia
     block = form.format(head=f"{opener} {PIPELINE}{joiner}{abbreviation}", tail=follower)
     assert reading(block) == {WORK}, (block, kinds(block))
     assert PIPELINE in held(block)[0].work_modules, block
-    # Control: the same structure closed by a real stop, with nothing pointing back, releases
-    # (the readers propose it everywhere; the closed grammar agrees where nothing follows it).
+    # Every named module remains work, including these former reference controls.
     control = form.format(head=f"{opener} {PIPELINE}.", tail="Nothing else.")
-    assert WORK not in proposed(control), (control, kinds(control))
-    assert (WORK in reading(control)) == (form != "{head}"), (control, kinds(control))
+    assert WORK in extracted_kind(control), (control, kinds(control))
+    assert reading(control) == {WORK}, (control, kinds(control))
 
 
 def test_a_request_that_points_back_keeps_the_owner_hold():
@@ -152,9 +146,9 @@ def test_a_request_that_points_back_keeps_the_owner_hold():
         f"- See {PIPELINE}\n- fix it.",
     ):
         keeps_the_owner_hold(block)
-    only_proposed(f"See {PIPELINE}.\n\nNothing else.")  # text after it, in any block
-    only_proposed(f"See {PIPELINE}. Nothing else.")  # a sentence of its own paragraph
-    releases(f"Encode {OTHER}.\n\nSee {PIPELINE}.")
+    direct_and_grouped_work(f"See {PIPELINE}.\n\nNothing else.")  # text after it, in any block
+    direct_and_grouped_work(f"See {PIPELINE}. Nothing else.")  # a sentence of its own paragraph
+    reference_keeps_hold(f"Encode {OTHER}.\n\nSee {PIPELINE}.")
 
 
 POINTING = [
@@ -243,13 +237,13 @@ def test_a_sentence_that_points_back_holds_the_modules_before_it(opener, form, p
         )
     ):
         control = form.format(head=head, tail=quiet)
-        assert WORK not in proposed(control), (control, kinds(control))
+        assert WORK in extracted_kind(control), (control, kinds(control))
         if apart:
-            assert (WORK not in reading(control)) == quiet.startswith("Do not import"), (control, kinds(control))
+            assert reading(control) == {WORK}, (control, kinds(control))
     # A sentence of the next unit that names a module comes first: what points after it points at that one.
     own = form.format(head=head, tail=f"Encode {OTHER}. {pointing[0].upper()}{pointing[1:]}")
     if "\n" in form and not strict:
-        assert WORK not in proposed(own), (own, kinds(own))
+        assert WORK in extracted_kind(own), (own, kinds(own))
     if apart:
         assert reading(own) == {WORK}, (own, kinds(own))  # the closed grammar: text follows the reference
 
@@ -266,21 +260,20 @@ def test_a_request_before_a_module_with_no_named_destination_keeps_the_owner_hol
         f"## Fix the following:\n\nSee {OTHER}.\n\nSee {PIPELINE}.",
     ):
         keeps_the_owner_hold(block)
-    # Controls: a pointer or a request on a named module before it leaves the module alone
-    # for the readers; the closed grammar releases it only in a sentence of its own.
+    # Every named module remains work, including these former reference controls.
     for block in (
         f"See {OTHER}; see {PIPELINE}.",
         f"Fix {OTHER}; see {PIPELINE}.",
         f"- See {OTHER};\n  - see {PIPELINE}.",
     ):
-        assert proposed(block) == {MENTION}, (block, kinds(block))
+        assert extracted_kind(block) == {WORK}, (block, kinds(block))
         assert reading(block) == {WORK}, (block, kinds(block))
     for block in (
         f"See {OTHER}.\n\nSee {PIPELINE}.",
         f"Fix {OTHER}.\n\nSee {PIPELINE}.",
         f"See {OTHER} and {PIPELINE}.",
     ):
-        assert reading(block) == {MENTION}, (block, kinds(block))
+        assert reading(block) == {WORK}, (block, kinds(block))
 
 
 UNRESOLVED_BEFORE = [
@@ -308,9 +301,7 @@ BEFORE_FORMS = [
 ]
 
 
-# Invariant (round 15): a module is released only when every other clause of
-# its sentence is accounted for, before it as well as after it, and a unit
-# that continues an open sentence reads that sentence's clauses before it.
+# Every named module remains work, including these former reference controls.
 @given(
     before=st.sampled_from(UNRESOLVED_BEFORE),
     form=st.sampled_from(BEFORE_FORMS),
@@ -322,16 +313,15 @@ def test_a_module_after_an_unresolved_clause_is_work(before, form, reference):
     block = form.format(before=clause, tail=reference.format(m=PIPELINE), third=THIRD)
     assert reading(block) == {WORK}, (block, kinds(block))
     assert PIPELINE in held(block)[0].work_modules, block
-    # Control: the same structure after a clause that only names modules is proposed for release;
-    # the closed grammar releases the reference in a paragraph of its own after that clause.
+    # Every named module remains work, including these former reference controls.
     for resolved in RESOLVED_BEFORE:
         control = form.format(before=resolved.format(o=OTHER, t=THIRD), tail=reference.format(m=PIPELINE), third=THIRD)
-        assert WORK not in proposed(control), (control, kinds(control))
+        assert WORK in extracted_kind(control), (control, kinds(control))
         tail = reference.format(m=PIPELINE)
         apart = f"{resolved.format(o=OTHER, t=THIRD)}.\n\n{tail[0].upper()}{tail[1:]}"
         # Only a reference or a request in a closed form may stand before it: "Add Y to Z.",
         # "Keep Y." and a bare "Y." are none, so they keep it work.
-        assert (WORK not in reading(apart)) == (resolved in CLOSED_BEFORE), (apart, kinds(apart))
+        assert reading(apart) == {WORK}, (apart, kinds(apart))
 
 
 @given(
@@ -351,10 +341,10 @@ def test_an_open_paragraph_reaches_the_paragraphs_after_it(intro, between, refer
     # (for the readers: under the closed grammar the new heading reaches the module itself, and so
     # does any paragraph between them that is no reference).
     control = "\n\n".join([f"Encode {THIRD}.", f"See {OTHER}.", *between, tail])
-    assert WORK not in proposed(control)
-    assert (WORK not in reading(control)) == all(part == f"See {OTHER}." for part in between), control
+    assert WORK in extracted_kind(control)
+    assert reading(control) == {WORK}, control
     after_heading = "\n\n".join([intro, f"See {OTHER}.", *between, "## Background", tail])
-    assert WORK not in proposed(after_heading)
+    assert WORK in extracted_kind(after_heading)
     assert reading(after_heading) == {WORK}
 
 
@@ -397,11 +387,11 @@ def test_a_line_markdown_keeps_in_the_paragraph_continues_its_sentence():
         f"1. See {PIPELINE}.\n2. Nothing else.",
         f"- See {PIPELINE}.\n2. Nothing else.",
     ):
-        only_proposed(block)
+        direct_and_grouped_work(block)
     for block in (f"Encode {OTHER}.\n\nSee {PIPELINE}.", f"Encode {OTHER}.\n- See {PIPELINE}."):
-        releases(block)
+        reference_keeps_hold(block)
     # A lazy line that only points at another module is still a line of this paragraph.
-    only_proposed(f"See {PIPELINE}.\n(a) see {OTHER}.")
+    direct_and_grouped_work(f"See {PIPELINE}.\n(a) see {OTHER}.")
 
 
 # Invariant (round 15): the drain's units are never finer than the paragraphs
@@ -428,10 +418,10 @@ def test_a_request_on_a_lazy_line_holds_the_sentence_before_it(opener, stop, lin
     # a lazy line that only points at another module leaves this one alone.
     apart = f"{opener} {PIPELINE}.\n\n{line.format(t='Nothing else.')}"
     if not line.startswith("|"):
-        assert WORK not in proposed(apart), (apart, kinds(apart))
+        assert WORK in extracted_kind(apart), (apart, kinds(apart))
         assert reading(apart) == {WORK}, (apart, kinds(apart))  # text follows the reference
         pointer = f"{opener} {PIPELINE}.\n{line.format(t=f'see {OTHER}.')}"
-        assert WORK not in proposed(pointer), (pointer, kinds(pointer))
+        assert WORK in extracted_kind(pointer), (pointer, kinds(pointer))
         assert reading(pointer) == {WORK}, (pointer, kinds(pointer))  # a line of the module's own paragraph
 
 
@@ -471,10 +461,10 @@ def test_a_request_nested_under_an_item_keeps_the_owner_hold():
         f"- See {PIPELINE}.\n  - Fix {OTHER}.",
         f"- See {PIPELINE}.\n  - See {OTHER}.\n    - Fix it.",
     ):
-        only_proposed(block)
-    only_proposed(f"- See {PIPELINE}.\n- Fix {OTHER}.")  # a request follows it
+        direct_and_grouped_work(block)
+    direct_and_grouped_work(f"- See {PIPELINE}.\n- Fix {OTHER}.")  # a request follows it
     for block in (f"- See {PIPELINE}.\n  - See {OTHER}.", f"- Fix {OTHER}.\n- See {PIPELINE}.", f"- See {PIPELINE}."):
-        releases(block)
+        reference_keeps_hold(block)
 
 
 # Invariant (round 15): the items nested under an item are part of it. A
@@ -492,15 +482,14 @@ def test_a_request_in_a_nested_item_holds_the_item_above(opener, form, request, 
     block = form.format(head=f"{opener} {PIPELINE}{stop}", tail=request)
     assert reading(block) == {WORK}, (block, kinds(block))
     assert PIPELINE in held(block)[0].work_modules, block
-    # Controls: a nested item that asks for nothing, or names its own object, is proposed for release;
-    # the closed grammar releases the item only over nested references.
+    # Every named module remains work, including these former reference controls.
     for quiet in ("Nothing else.", "The rate is 5%.", f"Fix {OTHER}."):
         control = form.format(head=f"{opener} {PIPELINE}.", tail=quiet)
-        assert WORK not in proposed(control), (control, kinds(control))
+        assert WORK in extracted_kind(control), (control, kinds(control))
         assert reading(control) == {WORK}, (control, kinds(control))
     if form in NESTED_FORMS[:3]:
         control = form.format(head=f"{opener} {PIPELINE}.", tail=f"See {OTHER}.")
-        assert WORK not in reading(control), (control, kinds(control))
+        assert WORK in reading(control), (control, kinds(control))
 
 
 def test_a_module_name_ends_at_its_file_name():
@@ -517,8 +506,8 @@ def test_a_module_name_ends_at_its_file_name():
         keeps_the_owner_hold(block)
     # Controls: a directory still names no module, and a module with its test file is one module.
     assert kinds("See us/policies/income_tax/ for the layout.") == []
-    assert kinds(f"See {PIPELINE}/.test.yaml.") == [(PIPELINE, MENTION)]
-    assert kinds(f"See {PIPELINE}#taxable_income.") == [(PIPELINE, MENTION)]
+    assert kinds(f"See {PIPELINE}/.test.yaml.") == [(PIPELINE, WORK)]
+    assert kinds(f"See {PIPELINE}#taxable_income.") == [(PIPELINE, WORK)]
 
 
 OPEN_ENDS = [" §", " ¶", " as below", " (see below", ". -", ". —", ". …", ". . .", "...", " . . .", ". ;", ". ("]

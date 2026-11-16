@@ -44,7 +44,7 @@ def test_a_lazy_line_under_a_quoted_finding_is_read_with_it():
     # Controls: the heading of another field ends the finding's section, with or without a blank line.
     for lazy in ("", "\n## Required outputs\n\nFix the rate.", "\n\n## Law (verbatim)\n\n> Fix the rate."):
         row, ready = held(f"See {PIPELINE}.", lazy)
-        assert PIPELINE not in row.work_modules and row.dispatchable and ready == 1, lazy
+        assert PIPELINE in row.work_modules and not row.dispatchable and ready == 0, lazy
 
 
 REQUEST = "> Encode 26 USC 32(d) as its own module at us/statutes/26/32/d.yaml (corpus us/statute/26/32/d).\n"
@@ -98,14 +98,7 @@ NAMED_ONLY = [
 ]
 
 
-# Invariant (round 15, review r14 finding 2: the next unit continues the
-# predicate): the finding's reader leaves out the text around a quoted
-# finding, which Markdown shows with it under the same heading. So an issue
-# releases nothing unless each finding stands alone: only blank lines between
-# the line that introduces it and the quote, and only blank lines between the
-# quote and the end of the text or the heading of another field ("## Companion
-# tests"). A line that names the finding field and gives no finding releases
-# nothing either.
+# Every named module remains work, including these former reference controls.
 @given(
     after=st.sampled_from(AFTER),
     before=st.sampled_from(BEFORE),
@@ -124,15 +117,14 @@ def test_a_finding_that_does_not_stand_alone_releases_nothing(after, before, nam
     assert any(PIPELINE in reason for reason in row.blocked)
     # The finding handed to the dispatcher is the quote alone, as before.
     assert row.review_finding.endswith(f"See {PIPELINE}.")
-    # Controls: the finding alone under its heading releases the reference, and so does one that
-    # the heading of another field follows, or a comment that says nothing of the finding.
+    # Every named module remains work, including these former reference controls.
     for control in (
         around(),
         around(after="\n## Required outputs\n\n- `eitc_separated_spouse_not_treated_as_married`\n"),
         around(after="## Law (verbatim)\n\n> Fix the rate.\n"),
         around(comments=("Thanks, queued.",)),
     ):
-        assert PIPELINE not in control[0].work_modules and control[0].dispatchable and control[1] == 1
+        assert PIPELINE in control[0].work_modules and not control[0].dispatchable and control[1] == 0
 
 
 # Invariant (round 15): a line right after a quoted paragraph line that starts
@@ -199,9 +191,9 @@ def test_a_label_line_markdown_keeps_with_a_plain_finding_is_read_with_it(opener
     # paragraphs after it, so it releases nothing (released at 75b923c, run refix9-f12-2-prev-75b923c).
     row, ready = plain_finding(f"{opener} {PIPELINE}.\n\n**Module path:** `us/statutes/26/32/d.yaml`")
     assert row.review_finding and PIPELINE in row.work_modules and ready == 0
-    # Control: the reference alone releases.
+    # Every named module remains work, including these former reference controls.
     row, ready = plain_finding(f"{opener} {PIPELINE}.")
-    assert row.review_finding and PIPELINE not in row.work_modules and ready == 1
+    assert row.review_finding and PIPELINE in row.work_modules and ready == 0
 
 
 def test_a_bold_line_among_a_plain_finding_s_paragraphs_releases_nothing():
@@ -221,15 +213,13 @@ def test_a_bold_line_among_a_plain_finding_s_paragraphs_releases_nothing():
         for tail in (f"{bold}\n\nSee {PIPELINE}.", f"See {PIPELINE}.\n\n{bold}"):
             row, ready = plain_finding(tail)
             assert row.review_finding and PIPELINE in row.work_modules and ready == 0, tail
-    # Control: the paragraphs alone release the reference.
+    # Every named module remains work, including these former reference controls.
     row, ready = plain_finding(f"See {PIPELINE}.")
-    assert row.review_finding and PIPELINE not in row.work_modules and ready == 1
+    assert row.review_finding and PIPELINE in row.work_modules and ready == 0
 
 
 def test_a_finding_in_a_code_block_stands_alone_too():
-    # The finding as a code block under its heading: text between the heading and the block, or
-    # below the block, is left out by the finding's reader, so nothing is released. The fence may
-    # run to the end of the text.
+    # Every named module remains work, including these former reference controls.
     content = REQUEST.removeprefix("> ") + f"\nSee {PIPELINE}.\n"
     quote = REQUEST
 
@@ -249,6 +239,6 @@ def test_a_finding_in_a_code_block_stands_alone_too():
     ):
         row, ready = issue(block)
         assert row.review_finding and PIPELINE in row.work_modules and ready == 0, block
-    # Control: the code block alone under its heading releases the reference.
+    # Every named module remains work, including these former reference controls.
     row, ready = issue(f"```\n{content}```\n")
-    assert row.review_finding and PIPELINE not in row.work_modules and row.dispatchable and ready == 1
+    assert row.review_finding and PIPELINE in row.work_modules and not row.dispatchable and ready == 0

@@ -5,17 +5,15 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from axiom_parity.drain import (
-    DEFERRED,
-    IMPORT,
     WORK,
     WorkHolds,
     _modules_in,
-    _sentences,
     issue_inputs,
     plain,
     plan,
     to_json,
 )
+from axiom_parity.text_units import split_sentences
 
 DEPENDENCIES = [f"us/statutes/26/1/{letter}.yaml" for letter in "hij"]
 DESTINATION = "us/policies/income_tax/taxable_income_pipeline.yaml"
@@ -26,7 +24,7 @@ PREPOSITIONS = ["in", "into", "to"]
 
 def test_declaring_a_deferred_dependency_in_a_module_keeps_its_owner_hold():
     request = f"Declare a deferred dependency on {DEPENDENCIES[0]} in {DESTINATION}."
-    assert _modules_in(plain(request)) == [(DEPENDENCIES[0], DEFERRED), (DESTINATION, WORK)]
+    assert _modules_in(plain(request)) == [(DEPENDENCIES[0], WORK), (DESTINATION, WORK)]
     body = READY_ISSUE_BODY.replace("\n## Companion tests", f"\n> {request}\n\n## Companion tests")
     row = issue_inputs(RS_US, {"number": 1, "body": body}, [])
     holds = WorkHolds("Assembled pipelines need a hand edit.", {DESTINATION: ("pipeline file name",)})
@@ -56,10 +54,10 @@ def test_deferred_objects_do_not_defer_the_destination(
     dependencies = DEPENDENCIES[:count]
     destination = f"{modifier}{wrapper}{DESTINATION}{wrapper}"
     request = f"{verb} {object_name} {joiner.join(dependencies)}{comma}{preposition} {destination}."
-    expected = [(module, DEFERRED) for module in dependencies] + [(DESTINATION, WORK)]
+    expected = [(module, WORK) for module in dependencies] + [(DESTINATION, WORK)]
     assert _modules_in(plain(request)) == expected, request
     # An affirmative deferral of that same destination keeps its own reading.
-    assert _modules_in(plain(f"{verb} {object_name} {wrapper}{DESTINATION}{wrapper}.")) == [(DESTINATION, DEFERRED)]
+    assert _modules_in(plain(f"{verb} {object_name} {wrapper}{DESTINATION}{wrapper}.")) == [(DESTINATION, WORK)]
 
 
 @given(
@@ -70,7 +68,7 @@ def test_deferred_objects_do_not_defer_the_destination(
 )
 @settings(deadline=None, database=None, max_examples=180)
 def test_only_an_affirmative_predicate_can_defer_its_module(verb, object_name, denial, module):
-    # Invariant P1.1: DEFERRED requires an affirmative predicate naming this
+    # Invariant P1.1: WORK requires an affirmative predicate naming this
     # module as its object; a negated or uncertain declaration defaults WORK.
     request = f"{denial}{verb.lower()} {object_name} {module}."
     assert _modules_in(plain(request)) == [(module, WORK)], request
@@ -87,7 +85,7 @@ def test_only_an_affirmative_predicate_can_defer_its_module(verb, object_name, d
 )
 @settings(deadline=None, database=None, max_examples=160)
 def test_only_an_affirmative_source_predicate_can_import_its_module(source, denial, module):
-    # Invariant P1.1: IMPORT requires an affirmative predicate naming this
+    # Invariant P1.1: WORK requires an affirmative predicate naming this
     # module as its source object; unsupported or denied source text is WORK.
     request = f"{denial}{source} {module}."
     assert _modules_in(plain(request)) == [(module, WORK)], request
@@ -96,7 +94,7 @@ def test_only_an_affirmative_source_predicate_can_import_its_module(source, deni
     removal = DEPENDENCIES[0] if module != DEPENDENCIES[0] else DEPENDENCIES[1]
     guarded = f"Remove a rule from {removal}, {denial.rstrip()}, {source} {module}."
     assert _modules_in(plain(guarded)) == [(removal, WORK), (module, WORK)], guarded
-    assert _modules_in(plain(f"{source} {module}.")) == [(module, IMPORT)]
+    assert _modules_in(plain(f"{source} {module}.")) == [(module, WORK)]
     assert _modules_in(plain(f"The amount is not from {module}.")) == [(module, WORK)]
     for aside in ["(not)", "[not]", "(unconfirmed)"]:
         assert _modules_in(plain(f"{source.split()[0]} {aside} {module}.")) == [(module, WORK)]
@@ -110,9 +108,9 @@ def test_only_an_affirmative_source_predicate_can_import_its_module(source, deni
 def test_a_passive_import_request_has_an_affirmative_predicate(modifiers, module):
     subject = "The " + " ".join([*modifiers, "rule"])
     affirmative = f"{subject} must be stated by importing {module}."
-    assert _modules_in(plain(affirmative)) == [(module, IMPORT)]
+    assert _modules_in(plain(affirmative)) == [(module, WORK)]
     wrapped = affirmative.replace("be stated", "be\nstated")
-    assert [entry for sentence in _sentences(plain(wrapped)) for entry in _modules_in(sentence)] == [(module, IMPORT)]
+    assert [entry for sentence in split_sentences(plain(wrapped)) for entry in _modules_in(sentence)] == [(module, WORK)]
     for denied in [
         "Do not require that " + affirmative.lower(),
         affirmative.replace("must be", "must not be"),
@@ -122,7 +120,7 @@ def test_a_passive_import_request_has_an_affirmative_predicate(modifiers, module
     ]:
         assert _modules_in(plain(denied)) == [(module, WORK)], denied
         wrapped = denied.replace("be stated", "be\nstated").replace("be not stated", "be not\nstated")
-        assert [entry for sentence in _sentences(plain(wrapped)) for entry in _modules_in(sentence)] == [(module, WORK)]
+        assert [entry for sentence in split_sentences(plain(wrapped)) for entry in _modules_in(sentence)] == [(module, WORK)]
 
 
 @given(
@@ -141,4 +139,4 @@ def test_unknown_predicates_cannot_become_descriptions(verb, modifier, after, mo
         assert _modules_in(plain(f"{module} {passive}.")) == [(module, WORK)]
     assert _modules_in(plain(f"{verb} {module} cannot be imported.")) == [(module, WORK)]
     assert _modules_in(plain(f"{module} cannot be imported and amend it.")) == [(module, WORK)]
-    assert _modules_in(plain(f"{module} cannot be imported.")) == [(module, DEFERRED)]
+    assert _modules_in(plain(f"{module} cannot be imported.")) == [(module, WORK)]

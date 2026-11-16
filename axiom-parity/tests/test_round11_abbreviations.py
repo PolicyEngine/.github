@@ -114,7 +114,7 @@ def test_a_predicate_after_a_locator_reaches_the_module(locator):
 
 
 def kinds(text: str) -> list[tuple[str, str]]:
-    return [entry for clause, rest in _clauses(plain(text)) for entry in _modules_in(clause, rest)]
+    return [entry for clause, rest in _clauses(plain(text)) for entry in _modules_in(clause)]
 
 
 FIRST_MODULE, FIRST_CITATION, SECOND_MODULE = "us/statutes/26/86.yaml", "us/statute/26/86", "us/statutes/26/151.yaml"

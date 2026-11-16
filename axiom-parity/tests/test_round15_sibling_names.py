@@ -1,4 +1,4 @@
-"""Round 15: findings that give a module by a short sibling name release nothing."""
+"""Round 15: modules named through references and sibling paths remain work."""
 
 import pytest
 from conftest import REQUEST_ONLY_BODY, RS_US
@@ -47,12 +47,11 @@ def test_the_round_15_verifier_s_sibling_inputs_keep_the_hold(label, block, modu
     assert_held(block, module)
 
 
-def test_a_request_with_every_path_in_full_still_releases_a_reference():
-    # Controls: the request names its modules in full, so a reference to another module is released;
-    # a module the request itself names in full is work, as before.
+def test_a_request_with_every_path_in_full_keeps_a_reference_work():
+    # Every named module remains work, including these former reference controls.
     for block in (f"Fix {D} and {THIRD}.\n\nSee {P}.", f"Fix {D}, us/statutes/26/32/h.yaml and {THIRD}.\n\n- See {P}."):
         row, ready = planned(block)
-        assert P not in row.work_modules and H not in row.work_modules and row.dispatchable and ready == 1, block
+        assert P in row.work_modules and not row.dispatchable and ready == 0, block
     assert_held(f"Fix {D} and {H}.\n\nSee {H}.", H)
 
 
@@ -84,7 +83,7 @@ def test_a_short_sibling_name_releases_nothing(request, reference, listed, where
     else:
         row, _ = planned(f"Fix {THIRD}.\n\n{named}\n\n{request}")
         assert H in row.work_modules and not row.dispatchable
-    # Control: the same request with every module written in full leaves another reference released.
+    # Every named module remains work, including these former reference controls.
     full = request.replace("h.yaml", "us/statutes/26/32/h.yaml").replace("i.yaml", "us/statutes/26/32/i.yaml")
     row, ready = planned(f"{full}\n\nSee {P}.")
-    assert P not in row.work_modules, full
+    assert P in row.work_modules, full

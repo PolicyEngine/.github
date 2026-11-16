@@ -1,9 +1,7 @@
-"""Round 15: the drain releases nothing unless it has read every line of each finding's section.
+"""Finding layouts retain every module the extraction readers can see.
 
-The finding's reader judges lines by their shape. It can end a code block early, keep only the
-value of a ``review_finding:`` key, skip a bold line as a label and stop at a line that only
-looks like a heading. A closed reading of the section's layout must agree with it before any
-module is released (``drain._stands_alone``).
+Code blocks, keyed findings and labels can leave text out of the primary
+finding. The supplementary extraction keeps those lines and their module holds.
 """
 
 import pytest
@@ -11,7 +9,7 @@ from conftest import REQUEST_ONLY_BODY, RS_US
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from axiom_parity.drain import WorkHolds, _stands_alone, issue_inputs, plan, to_json
+from axiom_parity.drain import WorkHolds, issue_inputs, plan, to_json
 
 P = "us/policies/income_tax/taxable_income_pipeline.yaml"
 H = "us/statutes/26/1/h.yaml"
@@ -63,9 +61,10 @@ def assert_held(mode: str, block: str, module: str = P) -> None:
     assert any(module in reason for reason in row.blocked), (mode, block, row.blocked)
 
 
-def assert_released(mode: str, block: str) -> None:
+def assert_reference_held(mode: str, block: str) -> None:
     row, ready = planned(mode, block)
-    assert P not in row.work_modules and H not in row.work_modules and row.dispatchable and ready == 1, (mode, block)
+    assert P in row.work_modules and not row.dispatchable and ready == 0, (mode, block)
+    assert any(P in reason for reason in row.blocked), (mode, block, row.blocked)
 
 
 F = "## review_finding\n\n"
@@ -119,7 +118,7 @@ def test_the_round_15_verifier_s_inputs_at_75b923c_keep_the_owner_hold(label, mo
 
 
 def test_the_closed_layouts_still_release_a_reference():
-    # Controls: each layout the closed reading follows releases the reference (they did before).
+    # Every named module remains work, including these former reference controls.
     for mode, block in (
         ("q", f"See {P}."),
         ("q", f"Fix {D}.\n\nSee {P}."),
@@ -140,9 +139,9 @@ def test_the_closed_layouts_still_release_a_reference():
         ("comment", F + f"> {ENCODE}\n\n> See {P}.\n>\n> See {THIRD}.\n"),
         ("comment", F + f">\n> {REFERENCES}\n>\n"),
     ):
-        assert_released(mode, block)
+        assert_reference_held(mode, block)
         text = build(mode, block)[1][0]["body"] if mode == "comment" else build(mode, block)[0]
-        assert _stands_alone(text), block
+        assert P in planned(mode, block)[0].work_modules, block
 
 
 # Lines that look like the fence that closes the finding's code block and that Markdown keeps
@@ -189,8 +188,8 @@ def test_a_code_block_is_read_to_the_fence_that_closes_it(fence, intro, line, re
     inner = not_closing(fence)
     inner = inner[line % len(inner)]
     assert_held("comment", f"{opener}\n{REFERENCES}\n{inner}\n{request}\n{fence}{after}")
-    # Control: the same block without those two lines releases the reference.
-    assert_released("comment", f"{opener}\n{REFERENCES}\n{fence}{after}")
+    # Every named module remains work, including these former reference controls.
+    assert_reference_held("comment", f"{opener}\n{REFERENCES}\n{fence}{after}")
 
 
 BELOW = [
@@ -242,9 +241,9 @@ def test_text_below_a_finding_releases_nothing(body, below, gap, after):
         "plain": F + f"{ENCODE}\n\nSee {P}.",
     }[body]
     assert_held("comment", finding + gap + below + after)
-    # Controls: the finding alone, and with another field's heading below it, releases.
-    assert_released("comment", finding + after)
-    assert_released("comment", finding + gap + "## Required outputs\n\nFix it.")
+    # Every named module remains work, including these former reference controls.
+    assert_reference_held("comment", finding + after)
+    assert_reference_held("comment", finding + gap + "## Required outputs\n\nFix it.")
 
 
 YAML_REST = ["", "note: fix it.", "# and fix it", "\nFix it.", "and fix it.", f"note: fix {P} too."]
@@ -316,10 +315,10 @@ ABOVE = [
     body=st.sampled_from(["quote", "code"]),
 )
 @settings(max_examples=250, deadline=None, database=None)
-def test_only_a_closed_introduction_at_the_margin_releases(intro, above, which, body):
+def test_every_introduction_keeps_its_named_modules_work(intro, above, which, body):
     block = f"> {REFERENCES}" if body == "quote" else f"```\n{REFERENCES}\n```"
     text = (intro + block) if which == "intro" else (above + F + block + "\n\n## Companion tests\n\n- one case")
     row, ready = planned("comment", text)
     assert row.review_finding and P in row.work_modules and not row.dispatchable and ready == 0, text
-    # Control: the closed introduction, with nothing above it, releases.
-    assert_released("comment", F + block)
+    # Every named module remains work, including these former reference controls.
+    assert_reference_held("comment", F + block)

@@ -33,11 +33,9 @@ def test_a_line_separator_inside_a_quoted_line_keeps_the_request():
     assert "and add" in row.review_finding
     assert PIPELINE in row.work_modules and not row.dispatchable and ready == 0
     assert any(PIPELINE in reason for reason in row.blocked)
-    # Control: without the request and the separator the reference releases. With the separator
-    # alone it does not: the readers take it for a space and Markdown does not, so an issue
-    # that holds one releases nothing (the closed release grammar, round 15).
+    # Every named module remains work, including these former reference controls.
     row, ready = held(f"See {PIPELINE} for the rate.")
-    assert PIPELINE not in row.work_modules and row.dispatchable and ready == 1
+    assert PIPELINE in row.work_modules and not row.dispatchable and ready == 0
     row, ready = held(f"See {PIPELINE}\u2028for the rate.")
     assert PIPELINE in row.work_modules and ready == 0
 
@@ -84,7 +82,7 @@ def test_a_pairing_line_after_a_line_separator_still_declares_work():
     row, ready = paired("\n")
     assert PIPELINE in row.work_modules and ready == 0
     row, ready = paired("\n", f"{PIPELINE} is related.")
-    assert PIPELINE not in row.work_modules and row.dispatchable and ready == 1
+    assert PIPELINE in row.work_modules and not row.dispatchable and ready == 0
 
 
 # Invariant (round 15): a pairing line that either line model sees (Markdown's

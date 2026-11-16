@@ -219,7 +219,7 @@ def test_blocked_modules_block_targets_and_imports(tmp_path):
         "R",
         {
             "number": 2,
-            # A reference releases only after a request in a closed form (the release grammar, round 15).
+            # An import in a paragraph of its own still names requested work.
             "body": REQUEST_ONLY_BODY.replace("32/d", "32/c").replace(
                 "(corpus us/statute/26/32/c).\n",
                 "(corpus us/statute/26/32/c).\n>\n> Import us:statutes/26/25A#credit.\n",
@@ -227,10 +227,11 @@ def test_blocked_modules_block_targets_and_imports(tmp_path):
         },
         [],
     )
-    assert "us/statutes/26/25A.yaml" in importer.modules and "us/statutes/26/25A.yaml" not in importer.work_modules
-    (batch,) = plan([importer], corpus={"us/statute/26/32/c"}, blocked_modules=blocked)
-    assert not batch.ready
-    # An import named inside a request's sentence is held as requested work (round 15), and blocks all the same.
+    assert "us/statutes/26/25A.yaml" in importer.modules and "us/statutes/26/25A.yaml" in importer.work_modules
+    batches = plan([importer], corpus={"us/statute/26/32/c", "us/statute/26/25A"}, blocked_modules=blocked)
+    assert all(not batch.ready for batch in batches)
+    assert any("blocked" in reason for reason in importer.blocked)
+    # The same hold applies when the import is named inside a request's sentence.
     inline = issue_inputs(
         "R",
         {
@@ -329,33 +330,34 @@ def test_a_repealed_row_blocks_even_when_rows_below_it_have_text(tmp_path):
     assert not in_pin("us-mt/statute/15-30-2131", present, repealed)  # repealed, whatever sits below
 
 
-def test_a_module_named_only_to_defer_it_is_not_an_import(tmp_path):
+def test_a_module_named_only_to_defer_it_keeps_its_block(tmp_path):
     blocked = {"us/statutes/26/32.yaml"}
     base = REQUEST_ONLY_BODY.replace("us/statute/26/32/d", "us-in/statute/6-3.1-21-6").replace(
         "us/statutes/26/32/d.yaml", "us-in/statutes/6-3.1-21-6.yaml"
     )
-    # A reference releases only in a paragraph of its own, after a request in a closed form
-    # (the release grammar, round 15).
+    # Deferral wording still names requested work in a paragraph of its own.
     last = "(corpus us-in/statute/6-3.1-21-6).\n"
     assert last in base
     deferred = base.replace(
         last, last + ">\n> Declare a deferred dependency on us:statutes/26/32 (#eitc). Do not import it now.\n"
     )
     row = issue_inputs("R", {"number": 1, "body": deferred}, [])
-    (batch,) = plan([row], corpus={"us-in/statute/6-3.1-21-6"}, blocked_modules=blocked)
-    assert batch.ready
+    batches = plan([row], corpus={"us-in/statute/6-3.1-21-6", "us/statute/26/32"}, blocked_modules=blocked)
+    assert all(not batch.ready for batch in batches)
+    assert "us/statutes/26/32.yaml" in row.work_modules
+    assert any("blocked" in reason for reason in row.blocked)
     used = base.replace(last, last + ">\n> Import us:statutes/26/32#eitc.\n")
     row = issue_inputs("R", {"number": 2, "body": used}, [])
-    (batch,) = plan([row], corpus={"us-in/statute/6-3.1-21-6"}, blocked_modules=blocked)
-    assert not batch.ready
+    batches = plan([row], corpus={"us-in/statute/6-3.1-21-6", "us/statute/26/32"}, blocked_modules=blocked)
+    assert all(not batch.ready for batch in batches)
+    assert "us/statutes/26/32.yaml" in row.work_modules
     # Among the request's own sentences the deferral is held as requested work.
     inline = base.replace(
         last, last.rstrip("\n") + " Declare a deferred dependency on us:statutes/26/32 (#eitc). Do not import it now.\n"
     )
     assert inline != base
     assert "us/statutes/26/32.yaml" in issue_inputs("R", {"number": 3, "body": inline}, []).work_modules
-    # So is a deferral in a paragraph of its own after any sentence that is no request in a closed
-    # form: the complete fixture's finding has one (round 15).
+    # Extra prose before a deferral keeps the same module as requested work.
     free = deferred.replace(last, last.rstrip("\n") + " The separated-spouse rule must be stated from its elements.\n")
     assert free != deferred
     assert "us/statutes/26/32.yaml" in issue_inputs("R", {"number": 4, "body": free}, []).work_modules
@@ -474,10 +476,8 @@ def test_a_blocked_module_blocks_the_citations_it_owns():
     assert not held.ready
 
 
-def test_modules_the_finding_names_are_targets_or_imports_by_what_it_asks():
+def test_every_module_the_finding_names_is_requested_work():
     def row(extra: str, apart: bool = True):
-        # A reference releases only in a paragraph of its own, after a request in a closed form
-        # (the release grammar, round 15).
         joint = "\n>\n> " if apart else " "
         body = REQUEST_ONLY_BODY.replace("(corpus us/statute/26/32/d).", "(corpus us/statute/26/32/d)." + joint + extra)
         return issue_inputs("R", {"number": 1, "body": body}, [])
@@ -485,20 +485,24 @@ def test_modules_the_finding_names_are_targets_or_imports_by_what_it_asks():
     # Asked for by module name, in any spelling: a target.
     assert row("Also encode us:statutes/26/32/e.").targets == ["us/statute/26/32/d", "us/statute/26/32/e"]
     assert row("Re-encode us/statutes/26/32/e.yaml in place.").targets == ["us/statute/26/32/d", "us/statute/26/32/e"]
-    # Imported, mirrored or deferred: named, but not a target.
-    assert row("Import us/statutes/26/1/c for the rate.").targets == ["us/statute/26/32/d"]
-    assert row("As in us/statutes/26/24/d.yaml.").targets == ["us/statute/26/32/d"]
-    # Inside a request's sentence, or among its sentences, the same module is held as a target.
+    # Imports and precedents are targets too, including in paragraphs of their own.
+    assert row("Import us/statutes/26/1/c for the rate.").targets == ["us/statute/26/32/d", "us/statute/26/1/c"]
+    assert row("As in us/statutes/26/24/d.yaml.").targets == ["us/statute/26/32/d", "us/statute/26/24/d"]
+    # The same names inside a request's sentence remain targets.
     assert row("Encode it mirroring us/statutes/26/24/d.yaml.").targets == ["us/statute/26/32/d", "us/statute/26/24/d"]
     inline = row("Import us/statutes/26/1/c for the rate.", apart=False)
     assert inline.targets == ["us/statute/26/32/d", "us/statute/26/1/c"]
-    # An import blocks whichever way the module is spelled; a deferral doesn't.
+    # Imports and deferrals keep the block whichever way the module is spelled.
     blocked = {"us/statutes/26/1/c.yaml"}
     for spelling in ("us/statutes/26/1/c", "us/statutes/26/1/c.yaml", "us:statutes/26/1/c#rate"):
-        (batch,) = plan([row(f"Import {spelling} for the rate.")], blocked_modules=blocked)
-        assert not batch.ready, spelling
-    (batch,) = plan([row("Declare a deferred dependency on us/statutes/26/1/c.yaml.")], blocked_modules=blocked)
-    assert batch.ready
+        named = row(f"Import {spelling} for the rate.")
+        batches = plan([named], blocked_modules=blocked)
+        assert all(not batch.ready for batch in batches), spelling
+        assert "us/statutes/26/1/c.yaml" in named.work_modules
+    deferred = row("Declare a deferred dependency on us/statutes/26/1/c.yaml.")
+    batches = plan([deferred], blocked_modules=blocked)
+    assert all(not batch.ready for batch in batches)
+    assert "us/statutes/26/1/c.yaml" in deferred.work_modules
     # A state module's path respells its section, so the path alone gives no citation.
     assert row("Also encode us-la/statutes/47/44/1.yaml.").targets == ["us/statute/26/32/d"]
 
@@ -525,15 +529,14 @@ def test_braced_citations_are_all_targets():
     assert row.documents == ["uk/regulation/uksi/2006/213"]
 
 
-def test_a_modules_line_lists_targets_and_a_precedent_is_not_one():
+def test_a_modules_line_and_a_precedent_both_list_targets():
     precedent = "uk/regulations/uksi/2012/2885/schedule/1/paragraph/11.yaml"
     modules = (
         "Modules: uk/regulations/ssi/2012/319/21.yaml, "
         "uk/regulations/ssi/2021/249/36.yaml and uk/regulations/wsi/2013/3029/schedule/1/paragraph/5.yaml."
     )
     base = READY_ISSUE_BODY.replace("corpus citation `us/statute/26/32/d`", "see the finding")
-    # A precedent in a paragraph of its own, after the line that lists the modules, is a reference
-    # (the closed release grammar, round 15).
+    # A precedent in a paragraph of its own still names requested work.
     body = REQUEST_ONLY_BODY.replace("corpus citation `us/statute/26/32/d`", "see the finding").replace(
         "> Encode 26 USC 32(d) as its own module at us/statutes/26/32/d.yaml (corpus us/statute/26/32/d).\n",
         f"> {modules}\n>\n> As in {precedent}.\n",
@@ -545,11 +548,11 @@ def test_a_modules_line_lists_targets_and_a_precedent_is_not_one():
         "uk/regulation/ssi/2021/249/36",
         "uk/regulation/wsi/2013/3029/schedule/1/paragraph/5",
     ]
-    assert row.targets == targets
-    # A precedent is neither written nor imported, so a block on it doesn't hold the issue.
-    assert precedent not in row.modules
-    # Named inside a request's sentence it is not established as only a
-    # precedent. Keep ambiguous requested work until it is declared explicitly.
+    assert row.targets == [*targets, "uk/regulation/uksi/2012/2885/schedule/1/paragraph/11"]
+    assert precedent in row.modules and precedent in row.work_modules
+    assert all(not batch.ready for batch in plan([row], blocked_modules={precedent}))
+    assert any("blocked" in reason for reason in row.blocked)
+    # The same precedent inside a request's sentence remains requested work.
     for request in (
         f"Encode it matching the existing England module {precedent}.",
         f"Encode whose income counts in Scotland and Wales, matching the existing England module {precedent}.",
@@ -596,9 +599,9 @@ def test_a_numbered_worklist_of_modules_is_all_targets():
     assert not batch.ready and batch.issues[0].blocked == ["not in the pinned corpus release"]
 
 
-def test_a_deferral_covers_only_its_own_clause():
+def test_a_deferral_keeps_work_in_its_own_paragraph_or_clause():
     blocked = {"us/statutes/26/1/c.yaml"}
-    # Each reference stands in a paragraph of its own, last in the finding (the closed release grammar, round 15).
+    # Each named module remains work in a paragraph of its own.
     both = issue_inputs(
         "R",
         _with_finding(
@@ -607,9 +610,9 @@ def test_a_deferral_covers_only_its_own_clause():
         ),
         [],
     )
-    assert "us/statutes/26/1/c.yaml" in both.modules and "us/statutes/26/1/h.yaml" not in both.modules
-    (batch,) = plan([both], corpus={"us/statute/26/32/d"}, blocked_modules=blocked)
-    assert not batch.ready
+    assert "us/statutes/26/1/c.yaml" in both.work_modules and "us/statutes/26/1/h.yaml" in both.work_modules
+    batches = plan([both], corpus={"us/statute/26/32/d", "us/statute/26/1/c", "us/statute/26/1/h"}, blocked_modules=blocked)
+    assert all(not batch.ready for batch in batches)
     without = issue_inputs(
         "R",
         _with_finding(
@@ -617,8 +620,9 @@ def test_a_deferral_covers_only_its_own_clause():
         ),
         [],
     )
-    assert without.targets == ["us/statute/26/32/d", "us/statute/26/32/e"]
-    assert "us/statutes/26/1/h.yaml" not in without.modules
+    assert without.targets == ["us/statute/26/32/d", "us/statute/26/32/e", "us/statute/26/1/h"]
+    assert "us/statutes/26/1/h.yaml" in without.work_modules
+    assert all(not batch.ready for batch in plan([without], blocked_modules={"us/statutes/26/1/h.yaml"}))
     # In one sentence with another clause, or inside the request's own sentence, both modules are held.
     for finding in (
         "Import us/statutes/26/1/c.yaml, but do not import us/statutes/26/1/h.yaml. "
@@ -628,10 +632,10 @@ def test_a_deferral_covers_only_its_own_clause():
         assert "us/statutes/26/1/h.yaml" in issue_inputs("R", _with_finding(finding), []).work_modules, finding
 
 
-def test_a_precedent_or_a_description_is_neither_work_nor_an_import():
+def test_a_precedent_or_a_description_keeps_requested_work_and_its_block():
     blocked = {"us/statutes/26/32/c.yaml"}
     request = "Encode us/statutes/26/32/d.yaml (corpus us/statute/26/32/d)."
-    # A reference in a paragraph of its own, after a request in a closed form (the release grammar, round 15).
+    # A reference in a paragraph of its own still names requested work.
     for wording in (
         "As in us/statutes/26/32/c.yaml.",
         "Compare us/statutes/26/32/c.yaml.",
@@ -640,10 +644,12 @@ def test_a_precedent_or_a_description_is_neither_work_nor_an_import():
         "Cf. us/statutes/26/32/c.yaml.",
     ):
         row = issue_inputs("R", _with_finding(request + "\n\n" + wording), [])
-        assert row.targets == ["us/statute/26/32/d"], wording
-        (batch,) = plan([row], corpus={"us/statute/26/32/d"}, blocked_modules=blocked)
-        assert batch.ready, wording
-    # The same module named inside a request's sentence, or among its sentences, is held as requested work.
+        assert row.targets == ["us/statute/26/32/d", "us/statute/26/32/c"], wording
+        assert "us/statutes/26/32/c.yaml" in row.work_modules, wording
+        (batch,) = plan([row], corpus={"us/statute/26/32/d", "us/statute/26/32/c"}, blocked_modules=blocked)
+        assert not batch.ready, wording
+        assert any("blocked" in reason for reason in row.blocked), wording
+    # The same module inside a request's sentence remains requested work.
     for wording in (
         "Encode it at us/statutes/26/32/d.yaml, mirroring the existing us/statutes/26/32/c.yaml.",
         "Encode it at us/statutes/26/32/d.yaml, as us/statutes/26/32/c.yaml does.",
@@ -751,7 +757,7 @@ def test_the_encoder_owner_s_dispatch_verdicts_are_holds(tmp_path):
     assert not batch.ready
 
 
-def test_work_on_a_module_the_owner_holds_is_held_and_an_import_from_it_is_not(tmp_path):
+def test_work_and_an_import_from_a_module_both_keep_the_owner_hold(tmp_path):
     from axiom_parity.drain import load_work_holds, markdown, to_json
 
     listing = tmp_path / "assembled.json"
@@ -786,8 +792,7 @@ def test_work_on_a_module_the_owner_holds_is_held_and_an_import_from_it_is_not(t
     assert not batch.ready and "taxable_income_pipeline.yaml [pipeline file name]" in reason
     assert "Assembled pipelines are edited by hand" in markdown([batch], 10, holds)
     assert to_json([batch], 10, holds)["work_hold_rule"].startswith("Assembled pipelines")
-    # An import in a paragraph of its own, after a request in a closed form, is a reference
-    # (the release grammar, round 15).
+    # An import in a paragraph of its own keeps the pipeline owner hold.
     imports = issue_inputs(
         "R",
         _with_finding(
@@ -797,7 +802,9 @@ def test_work_on_a_module_the_owner_holds_is_held_and_an_import_from_it_is_not(t
         [],
     )
     (batch,) = plan([imports], corpus=pin, work_holds=holds)
-    assert batch.ready
+    assert not batch.ready
+    assert "us/policies/income_tax/taxable_income_pipeline.yaml" in imports.work_modules
+    assert "taxable_income_pipeline.yaml [pipeline file name]" in batch.issues[0].blocked[0]
     # Inside the request's own sentence the import is held as requested work.
     inline = issue_inputs(
         "R",

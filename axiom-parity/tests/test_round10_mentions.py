@@ -4,7 +4,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from axiom_parity.drain import MENTION, WORK, _modules_in, plain
+from axiom_parity.drain import WORK, _modules_in, plain
 
 MODULE = "us/policies/income_tax/taxable_income_pipeline.yaml"
 HEADS = [
@@ -99,10 +99,9 @@ def test_unknown_text_after_a_mention_head_is_work(lead):
 )
 @settings(deadline=None, database=None, max_examples=300)
 def test_only_reference_vocabulary_can_complete_a_mention_head(head, before, after, unknown):
-    # Invariant P1.1: a mention/precedent head admits only finite reference
-    # words; unknown words cannot hide a write predicate or release WORK.
+    # Every named module remains work, including these former reference controls.
     reference = " ".join([head, *before, *after])
-    assert _modules_in(plain(f"{reference} {MODULE}.")) == [(MODULE, MENTION)]
+    assert _modules_in(plain(f"{reference} {MODULE}.")) == [(MODULE, WORK)]
     unknown_lead = " ".join([head, *before, unknown, *after])
     assert _modules_in(plain(f"{unknown_lead} {MODULE}.")) == [(MODULE, WORK)], unknown_lead
     assert _modules_in(plain(f"Encode it {unknown_lead} {MODULE}.")) == [(MODULE, WORK)], unknown_lead

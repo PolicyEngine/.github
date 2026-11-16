@@ -9,7 +9,7 @@ from hypothesis import strategies as st
 from test_round7_outputs import finding_only
 from test_round9_outputs import PAD
 
-from axiom_parity.drain import MENTION, WorkHolds, _clauses, _modules_in, issue_inputs, plain, plan, to_json
+from axiom_parity.drain import WORK, WorkHolds, _readings, issue_inputs, plain, plan, to_json
 from axiom_parity.issue_lint import lint_issue
 from axiom_parity.text_units import split_sentences
 
@@ -19,7 +19,7 @@ BASE = finding_only("Preserve the existing statutory wording and its current pro
 
 
 def kinds(text: str) -> list[tuple[str, str]]:
-    return [entry for clause, rest in _clauses(plain(text)) for entry in _modules_in(clause, rest)]
+    return [entry for _, _, found in _readings(plain(text)) for entry in found]
 
 
 def held(request: str):
@@ -48,6 +48,9 @@ def missing(finding: str) -> list[str]:
         f"See {PIPELINE} under Treas. Reg. 1.32-2 and fix it.",
         f"See {PIPELINE} under Minn. Stat. 290.0671 and fix it.",
         f"- See {PIPELINE}:\n  - fix it.",
+        # Review 14 findings 1 and 2: ambiguous destination and nested continuation.
+        f"See {PIPELINE} and add {OTHER} to the former module.",
+        f"- See {PIPELINE};\n  - fix it.",
     ],
 )
 def test_a_later_predicate_keeps_the_owner_hold(request_text):
@@ -64,8 +67,11 @@ def test_a_later_predicate_keeps_the_owner_hold(request_text):
         f"See {PIPELINE} for the 2026 filing season.",
     ],
 )
-def test_a_bare_reference_still_releases(sentence):
-    assert kinds(sentence) == [(PIPELINE, MENTION)]
+def test_a_bare_reference_keeps_work_and_the_owner_hold(sentence):
+    assert kinds(sentence) == [(PIPELINE, WORK)]
+    row, ready = held(sentence)
+    assert PIPELINE in row.work_modules and not row.dispatchable and ready == 0
+    assert any(PIPELINE in reason for reason in row.blocked)
 
 
 # F6 regression: a sentence that ends in a citation whose last segment is a

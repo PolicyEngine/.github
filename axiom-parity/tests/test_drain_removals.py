@@ -3,7 +3,7 @@ from conftest import READY_ISSUE_BODY, RS_US
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from axiom_parity.drain import DEFERRED, IMPORT, WORK, WorkHolds, _modules_in, issue_inputs, normal_module, plain, plan
+from axiom_parity.drain import WORK, WorkHolds, _modules_in, issue_inputs, normal_module, plain, plan
 
 
 def test_removing_a_rule_from_a_module_keeps_its_owner_hold():
@@ -99,9 +99,9 @@ def test_removal_from_a_module_is_work_across_objects_layouts_and_wrappers(
 
 @given(st.sampled_from(["Read a rule from", "Import the rule from", "Import from", "Add a rule from"]))
 @settings(database=None, deadline=None)
-def test_sources_are_still_imports_without_a_removal_request(lead):
+def test_sources_are_work_without_a_removal_request(lead):
     module = "us/policies/income_tax/taxable_income_pipeline.yaml"
-    assert _modules_in(plain(f"{lead} {module}.")) == [(module, IMPORT)]
+    assert _modules_in(plain(f"{lead} {module}.")) == [(module, WORK)]
 
 
 @given(
@@ -111,10 +111,10 @@ def test_sources_are_still_imports_without_a_removal_request(lead):
     ),
 )
 @settings(database=None, deadline=None)
-def test_a_new_import_clause_does_not_inherit_a_removal(separator, lead):
+def test_a_new_import_clause_keeps_the_named_module_work(separator, lead):
     module = "us/policies/income_tax/taxable_income_pipeline.yaml"
     request = f"Remove an obsolete rule{separator}{lead} {module}."
-    assert _modules_in(plain(request)) == [(module, IMPORT)], request
+    assert _modules_in(plain(request)) == [(module, WORK)], request
 
 
 @given(
@@ -122,7 +122,7 @@ def test_a_new_import_clause_does_not_inherit_a_removal(separator, lead):
     st.sampled_from(["do not import", "never import", "declare a deferred dependency on", "without importing"]),
 )
 @settings(database=None, deadline=None)
-def test_a_new_deferral_clause_does_not_inherit_a_removal(separator, lead):
+def test_a_new_deferral_clause_keeps_the_named_module_work(separator, lead):
     module = "us/policies/income_tax/taxable_income_pipeline.yaml"
     request = f"Remove an obsolete rule{separator}{lead} {module}."
-    assert _modules_in(plain(request)) == [(module, DEFERRED)], request
+    assert _modules_in(plain(request)) == [(module, WORK)], request

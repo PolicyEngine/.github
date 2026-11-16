@@ -1,4 +1,4 @@
-"""Round 15: a module is released only in a reference paragraph that a closed grammar reads."""
+"""Every module named by the earlier release grammar remains work and keeps its holds."""
 
 import re
 import string
@@ -8,12 +8,8 @@ from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from axiom_parity.drain import (
-    DEFERRED,
-    IMPORT,
-    MENTION,
     WORK,
     WorkHolds,
-    _blocks,
     _readings,
     issue_inputs,
     plain,
@@ -32,7 +28,7 @@ def fill(block: str) -> str:
 
 
 def kinds(text: str) -> list[tuple[str, str]]:
-    return [entry for _, _, found in _readings(plain(text), text) for entry in found]
+    return [entry for _, _, found in _readings(plain(text)) for entry in found]
 
 
 def reading(text: str, module: str = PIPELINE) -> set[str]:
@@ -56,8 +52,7 @@ def quote(block: str) -> str:
 def held(block: str, base: str = REQUEST_ONLY_BODY):
     """The block as a further paragraph of the fixture's quoted finding, with the pipeline hold.
 
-    The fixture's finding holds only its request, in a closed form, so the block alone decides
-    what is released; ``base`` may be the complete fixture, whose finding has a free sentence.
+    ``base`` may be either the request-only fixture or the complete fixture.
     """
     return plan_for(base.replace("\n## Companion tests", f"\n{quote(block)}\n\n## Companion tests"))
 
@@ -76,10 +71,11 @@ def keeps_the_owner_hold(block: str) -> None:
     assert any(PIPELINE in reason for reason in row.blocked), block
 
 
-def releases(block: str, kind: str = MENTION) -> None:
+def reference_keeps_hold(block: str, kind: str = WORK) -> None:
     assert reading(block) == {kind}, (block, kinds(block))
     row, ready = held(block)
-    assert PIPELINE not in row.work_modules and row.dispatchable and ready == 1, block
+    assert PIPELINE in row.work_modules and not row.dispatchable and ready == 0, block
+    assert any(PIPELINE in reason for reason in row.blocked), block
 
 
 # The round 15 verifier's inputs at df17e39. Each released the pipeline there
@@ -161,10 +157,10 @@ VERIFIER = [
 def test_the_round_15_verifier_s_inputs_keep_the_owner_hold():
     for block in VERIFIER:
         keeps_the_owner_hold(fill(block))
-    # Controls: the same inputs written inline hold as they did, and the bare reference releases.
+    # Every named module remains work, including these former reference controls.
     for block in ("- Pipeline:\n  - See {P} and fix it.", "- See {H}.\n  - To fix: See {P}."):
         keeps_the_owner_hold(fill(block))
-    releases(fill("See {P}."))
+    reference_keeps_hold(fill("See {P}."))
 
 
 # The round 15 verifier's inputs at c7f5561 (verify6-f12-1). Each released the pipeline there
@@ -237,62 +233,60 @@ def test_the_round_15_verifier_s_inputs_at_c7f5561_keep_the_owner_hold():
         # As the whole finding too (the verifier's "raw" inputs), and in the complete fixture.
         for row, ready in (held_alone(fill(block)), held(fill(block), READY_ISSUE_BODY)):
             assert PIPELINE in row.work_modules and not row.dispatchable and ready == 0, block
-    # Controls (the verifier's): the same units without the markup held already; the request in a
-    # closed form, with every module it writes named, leaves the reference released.
+    # Every named module remains work, including these former reference controls.
     for block in ("- Add {H} to:\n- See {P}.", "Add {H} to:.\n\nSee {P}.", "Replace {H} with {I} everywhere. See {P}."):
         keeps_the_owner_hold(fill(block))
     for block in ("- Encode {H}.\n- See {P}.", "Fix {H} and {I}.\n\nSee {P}.", "Encode {H}.\n\nSee {I} and {P}."):
-        releases(fill(block))
-    # The complete fixture's own finding has a free sentence ("The separated-spouse rule must be
-    # stated from its statutory elements."), so no reference after it is released.
+        reference_keeps_hold(fill(block))
+    # Every named module remains work, including these former reference controls.
     row, ready = held(fill("See {P}."), READY_ISSUE_BODY)
     assert PIPELINE in row.work_modules and not row.dispatchable and ready == 0
 
 
 # Every sentence the closed grammar reads as a reference, with the kind it gives the pipeline.
 FORMS = [
-    ("See {P}.", MENTION),
-    ("Cf. {P}.", MENTION),
-    ("Compare {P}.", MENTION),
-    ("As in {P}.", MENTION),
-    ("See {P} for the rate.", MENTION),
-    ("Compare {P} for the existing rule.", MENTION),
-    ("See {P} for the statutory definition.", MENTION),
-    ("See {P} and {H}.", MENTION),
-    ("See {H}, {P}, and {I}.", MENTION),
-    ("See {P} or {H}.", MENTION),
-    ("Keep {P} unchanged.", MENTION),
-    ("Keep {P} as-is.", MENTION),
-    ("Keep the existing {P} and its test contract active.", MENTION),
-    ("Keep {P}, {H} and {I} formulas unchanged.", MENTION),
-    ("Import {P}.", IMPORT),
-    ("Import us:policies/income_tax/taxable_income_pipeline#taxable_income.", IMPORT),
-    ("Import {P} for the rate.", IMPORT),
-    ("Import {P}, #a_b and #c_d.", IMPORT),
-    ("Imports: {P} and {H}.", IMPORT),
-    ("Do not import {P}.", DEFERRED),
-    ("Never import {P}.", DEFERRED),
-    ("Do not import {P} into this module.", DEFERRED),
-    ("Do not import {P} from the new modules.", DEFERRED),
-    ("Do not import {P} or {H}.", DEFERRED),
-    ("Declare a deferred dependency on {P}.", DEFERRED),
-    ("Declare a deferred dependency on {P} (#a_b, #c_d).", DEFERRED),
-    ("Add a blocked_by entry for {P}.", DEFERRED),
-    ("{P} cannot be imported.", DEFERRED),
-    ("Declare a deferred dependency on {P} (#a_b, #c_d). Do not import it.", DEFERRED),
-    ("See {P}. Do not import them in this module.", MENTION),
+    ("See {P}.", WORK),
+    ("Cf. {P}.", WORK),
+    ("Compare {P}.", WORK),
+    ("As in {P}.", WORK),
+    ("See {P} for the rate.", WORK),
+    ("Compare {P} for the existing rule.", WORK),
+    ("See {P} for the statutory definition.", WORK),
+    ("See {P} and {H}.", WORK),
+    ("See {H}, {P}, and {I}.", WORK),
+    ("See {P} or {H}.", WORK),
+    ("Keep {P} unchanged.", WORK),
+    ("Keep {P} as-is.", WORK),
+    ("Keep the existing {P} and its test contract active.", WORK),
+    ("Keep {P}, {H} and {I} formulas unchanged.", WORK),
+    ("Import {P}.", WORK),
+    ("Import us:policies/income_tax/taxable_income_pipeline#taxable_income.", WORK),
+    ("Import {P} for the rate.", WORK),
+    ("Import {P}, #a_b and #c_d.", WORK),
+    ("Imports: {P} and {H}.", WORK),
+    ("Do not import {P}.", WORK),
+    ("Never import {P}.", WORK),
+    ("Do not import {P} into this module.", WORK),
+    ("Do not import {P} from the new modules.", WORK),
+    ("Do not import {P} or {H}.", WORK),
+    ("Declare a deferred dependency on {P}.", WORK),
+    ("Declare a deferred dependency on {P} (#a_b, #c_d).", WORK),
+    ("Add a blocked_by entry for {P}.", WORK),
+    ("{P} cannot be imported.", WORK),
+    ("Declare a deferred dependency on {P} (#a_b, #c_d). Do not import it.", WORK),
+    ("See {P}. Do not import them in this module.", WORK),
 ]
 # The plain forms the properties below build on: (the sentence without its stop, its kind).
 BASES = [
-    ("See {P}", MENTION),
-    ("Cf. {P}", MENTION),
-    ("Compare {P}", MENTION),
-    ("As in {P}", MENTION),
-    ("Keep {P} unchanged", MENTION),
-    ("Import {P}", IMPORT),
-    ("Do not import {P}", DEFERRED),
-    ("Declare a deferred dependency on {P}", DEFERRED),
-    ("{P} cannot be imported", DEFERRED),
+    ("See {P}", WORK),
+    ("Cf. {P}", WORK),
+    ("Compare {P}", WORK),
+    ("As in {P}", WORK),
+    ("Keep {P} unchanged", WORK),
+    ("Import {P}", WORK),
+    ("Do not import {P}", WORK),
+    ("Declare a deferred dependency on {P}", WORK),
+    ("{P} cannot be imported", WORK),
 ]
 
 
@@ -342,11 +336,7 @@ NOTHING_PLACES = [
 ]
 
 
-# Invariant (round 15, review r14 finding 2): markup that renders nothing (a
-# link reference definition, an HTML comment or tag, an empty link, a
-# zero-width character or its entity) is no form of the release grammar. It
-# never closes an open unit and never stands between two closed ones: wherever
-# the findings hold it, it keeps every module work.
+# Every named module remains work, including these former reference controls.
 @given(
     base=st.sampled_from(BASES),
     unit=st.sampled_from(OPEN_UNITS),
@@ -366,17 +356,15 @@ def test_markup_that_renders_nothing_releases_nothing(base, unit, end, nothing, 
         assert PIPELINE in held(text)[0].work_modules, text
         if len(text) >= 100:  # long enough to be a finding of its own
             assert PIPELINE in held_alone(text)[0].work_modules, text
-    # Control: with no markup and the unit a request in a closed form, the reference releases.
+    # Every named module remains work, including these former reference controls.
     assert reading(fill(f"- Encode {{H}}.\n- {base[0]}.")) == {base[1]}
 
 
-def test_a_reference_paragraph_releases():
-    # The controls of review r14's findings 1 and 2: a bare reference, and a unit that ends in a
-    # full stop with no request after it, release. So does every closed form, alone, as a list
-    # item, under a reference item, after a request in a closed form and in any wrapper.
+def test_a_reference_paragraph_keeps_its_owner_hold():
+    # Every named module remains work, including these former reference controls.
     for form, kind in FORMS:
         block = fill(form)
-        releases(block, kind)
+        reference_keeps_hold(block, kind)
         for control in (
             f"- {block}",
             f"- See {OTHER}.\n  - {block}",
@@ -405,8 +393,8 @@ def test_a_reference_paragraph_releases():
         fill(f"Encode {{I}}.\n\n- a_b_c (services under 1397ee(a)(1)(D)(ii)).\n\n{outputs}\n\n{imports}")
     )
     keeps_the_owner_hold(fill(f"Encode {{I}}.\n\n- the State income tax.\n\n{outputs}\n\n{deferral}"))
-    releases(fill(f"Encode {{I}}.\n\n{imports}"), IMPORT)
-    releases(fill(f"Encode {{I}}.\n\n{deferral}"), DEFERRED)
+    reference_keeps_hold(fill(f"Encode {{I}}.\n\n{imports}"), WORK)
+    reference_keeps_hold(fill(f"Encode {{I}}.\n\n{deferral}"), WORK)
     # The shape rulespec-uk #386 has: a denial that ends a paragraph of other sentences is held now.
     keeps_the_owner_hold(
         fill("The words are not in the corpus row: say in the summary that they are omitted. Do not import {P}.")
@@ -444,11 +432,7 @@ PLACES = [
 ]
 
 
-# Invariant (round 15, structural): a module reads IMPORT, DEFERRED or MENTION
-# only in a reference paragraph that nothing but references follows. Any other
-# words in its sentence, its paragraph or its list item, or anywhere after it
-# in the findings, keep it work, whatever they say: the release grammar is
-# closed, so it has no wording to miss.
+# Every named module remains work, including these former reference controls.
 @given(base=st.sampled_from(BASES), words=WORDS, join=JOINS, place=st.sampled_from(PLACES), data=st.data())
 @settings(max_examples=1500, deadline=None, database=None)
 def test_any_other_words_around_a_reference_keep_it_work(base, words, join, place, data):
@@ -460,7 +444,7 @@ def test_any_other_words_around_a_reference_keep_it_work(base, words, join, plac
     assert reading(block) == {WORK}, (block, kinds(block))
     if data.draw(st.integers(0, 9)) == 0:  # the plan agrees; sampled, as each call plans a whole issue
         assert PIPELINE in held(block)[0].work_modules, block
-    # Control: the reference alone releases.
+    # Every named module remains work, including these former reference controls.
     assert reading(fill(base[0] + ".")) == {base[1]}
 
 
@@ -525,8 +509,7 @@ REQUESTS_NAMED = [
 ]
 
 
-# The other side of the same rule: findings that hold nothing but requests in
-# a closed form and references, the references last, release every reference.
+# Every named module remains work, including these former reference controls.
 @given(
     base=st.sampled_from(BASES),
     requests=st.lists(st.sampled_from(REQUESTS_NAMED), max_size=3),
@@ -537,11 +520,11 @@ REQUESTS_NAMED = [
     join=st.sampled_from(["\n\n", "\n\n- ", "\n- "]),
 )
 @settings(max_examples=300, deadline=None, database=None)
-def test_findings_of_closed_forms_release_their_references(base, requests, earlier, later, join):
+def test_findings_of_closed_forms_keep_their_references_work(base, requests, earlier, later, join):
     parts = [fill(part) for part in (*requests, *earlier, base[0] + ".", *later)]
     block = ("- " if join == "\n- " else "") + join.join(parts)
     assert reading(block) == {base[1]}, (block, kinds(block))
-    # One free sentence before the reference, anywhere among them, and nothing is released.
+    # Every named module remains work, including these former reference controls.
     for at in range(len(requests) + len(earlier) + 1):
         spoiled = [*parts[:at], "The rate is 5%.", *parts[at:]]
         block = ("- " if join == "\n- " else "") + join.join(spoiled)
@@ -585,10 +568,7 @@ KEPT_LINES = [
 TAILS = ["the rate is 5%.", "The rate is 5%.", "fix the rate.", "and fix it.", "Nothing else."]
 
 
-# Invariant (round 15): the release grammar reads paragraphs as CommonMark
-# could, never narrower. A line that Markdown keeps in the paragraph above it
-# is part of that paragraph, whatever it looks like, so what it says stands in
-# the reference's own paragraph and keeps the module work.
+# Every named module remains work, including these former reference controls.
 @given(
     base=st.sampled_from(BASES),
     line=st.sampled_from(KEPT_LINES),
@@ -605,20 +585,17 @@ def test_a_line_markdown_keeps_in_the_paragraph_is_part_of_it(base, line, tail, 
         width = len(inside.split("{head}")[0])
         kept = "\n".join(" " * width + part for part in kept.split("\n"))
     block = inside.format(head=head, line=kept)
-    assert len([b for b in _blocks(block) if PIPELINE in b.text]) == 1
-    assert all(tail.rstrip(".") in b.text for b in _blocks(block) if PIPELINE in b.text), (block, _blocks(block))
     assert reading(block) == {WORK}, (block, kinds(block))
-    # Control: a paragraph apart, after another module's own paragraph or item, the reference releases.
+    keeps_the_owner_hold(block)
+    # Every named module remains work, including these former reference controls.
     if stop:
         assert reading(f"Encode {OTHER}.\n\n{head}") == {base[1]}
         assert reading(f"- Encode {OTHER}.\n- {head}") == {base[1]}
 
 
 def test_the_paragraphs_the_release_grammar_reads():
-    def texts(markdown: str) -> list[tuple[str, str]]:
-        return [(block.kind, block.text) for block in _blocks(markdown)]
-
-    # Lines CommonMark keeps in the paragraph: one block.
+    # Keep every former paragraph-parser example: the module remains work
+    # regardless of whether the following line shares its Markdown paragraph.
     for markdown in (
         "See X.\n2. the rate.",
         "- See X.\n  2. the rate.",
@@ -633,17 +610,20 @@ def test_the_paragraphs_the_release_grammar_reads():
         "See X.\n    > - the rate.",
         "See X.\n-\nthe rate.",
     ):
-        assert len(texts(markdown)) == 1, (markdown, texts(markdown))
+        keeps_the_owner_hold(markdown.replace("X", PIPELINE))
     # Lines that start a block of their own.
-    assert texts("See X.\n\nthe rate.") == [("paragraph", "See X."), ("paragraph", "the rate.")]
-    assert texts("See X.\n \t \nthe rate.") == [("paragraph", "See X."), ("paragraph", "the rate.")]
-    assert texts("See X.\n- the rate.") == [("paragraph", "See X."), ("paragraph", "the rate.")]
-    assert texts("See X.\n1. the rate.") == [("paragraph", "See X."), ("paragraph", "the rate.")]
-    assert texts("- See X.\n2. the rate.") == [("paragraph", "See X."), ("paragraph", "the rate.")]
-    assert texts("See X.\n```\nthe rate.\n```") == [("paragraph", "See X."), ("code", "```\nthe rate.")]
-    assert texts("See X.\n# The rate") == [("paragraph", "See X."), ("heading", "# The rate")]
-    assert texts("- # See X.\nthe rate.") == [("heading", "# See X."), ("paragraph", "the rate.")]
-    assert texts("See X.\n===\nthe rate.") == [("heading", "See X.\n===\nthe rate.")]
+    for markdown in (
+        "See X.\n\nthe rate.",
+        "See X.\n \t \nthe rate.",
+        "See X.\n- the rate.",
+        "See X.\n1. the rate.",
+        "- See X.\n2. the rate.",
+        "See X.\n```\nthe rate.\n```",
+        "See X.\n# The rate",
+        "- # See X.\nthe rate.",
+        "See X.\n===\nthe rate.",
+    ):
+        keeps_the_owner_hold(markdown.replace("X", PIPELINE))
     # Cases a differential run against a CommonMark parser found (the lines named share a paragraph there).
     for markdown, first, second in (
         ("10. a.\n>      b.\n c;\n10. d.", "c;", "d."),  # the quote closed the item: "10." cannot interrupt
@@ -653,8 +633,10 @@ def test_the_paragraphs_the_release_grammar_reads():
         ("2. a.\n*\n     \n   1. b.\n    01. c.", "b.", "c."),  # "01." does not interrupt
         ("- a.\n  2.\nb.\n  \t+ c.", "b.", "c."),  # an empty marker kept in the paragraph may have closed the item
     ):
-        homes = [block.text for block in _blocks(markdown) if first in block.text or second in block.text]
-        assert len(homes) == 1, (markdown, texts(markdown))
+        named = markdown.replace(first, f"{first} {PIPELINE}", 1).replace(second, f"{second} {OTHER}", 1)
+        assert {name for name, _ in kinds(named)} == {PIPELINE, OTHER}, named
+        assert all(kind == WORK for _, kind in kinds(named)), named
+        keeps_the_owner_hold(named)
 
 
 BEFORE_ASKS = [
@@ -732,13 +714,7 @@ QUIET = [
 APART = ["{before}\n\n{after}", "- {before}\n- {after}", "{before}\n\n- {after}", "1. {before}\n2. {after}"]
 
 
-# Invariant (round 15): nothing but references follows a released reference,
-# and nothing but references and requests in a closed form stands before it.
-# Any other sentence after it or before it keeps the module work, whatever it
-# says: a request or a defect that names no module, a sentence that describes
-# a module it does not name or points at what follows, a request on another
-# module whose destination or object is open, and a sentence that asks for
-# nothing. A request in a closed form before it, or a reference, does not.
+# Every named module remains work, including these former reference controls.
 @given(
     base=st.sampled_from(BASES),
     form=st.sampled_from(APART),
@@ -755,11 +731,10 @@ def test_a_neighbour_keeps_a_reference_work(base, form, before, after, quiet):
     block = form.format(before=reference, after=fill(after))
     assert reading(block) == {WORK}, (block, kinds(block))
     assert PIPELINE in held(block)[0].work_modules, block
-    # Controls: a request in a closed form before it, a reference before it, and a
-    # reference or a denial on a pronoun after it, leave the reference released.
+    # Every named module remains work, including these former reference controls.
     control = form.format(before=fill(quiet), after=reference)
     assert reading(control) == {base[1]}, (control, kinds(control))
-    assert PIPELINE not in held(control)[0].work_modules, control
+    assert PIPELINE in held(control)[0].work_modules, control
     assert reading(form.format(before=reference, after="Do not import it.")) == {base[1]}
     assert reading(form.format(before=reference, after=fill("See {H}."))) == {base[1]}
 
@@ -788,11 +763,11 @@ def test_text_after_a_reference_keeps_it_work():
     # A sentence before the reference may speak of it (released at 4e6cc5a, by reading: the
     # before-scan there read "asks" only).
     assert reading(fill("The rate should rise.\n\nSee {P}.")) == {WORK}
-    # Controls: the reference last, after a request in a closed form, releases.
-    releases(fill("Encode {H}.\n\nSee {P}."))
-    releases(fill("- Encode {H}.\n- See {P}."))
-    releases(fill("See {H}.\n\nSee {P}."))
-    releases(fill("Encode {H}.\n\nImports: {P}#child and {I}#x_y."), IMPORT)
+    # Every named module remains work, including these former reference controls.
+    reference_keeps_hold(fill("Encode {H}.\n\nSee {P}."))
+    reference_keeps_hold(fill("- Encode {H}.\n- See {P}."))
+    reference_keeps_hold(fill("See {H}.\n\nSee {P}."))
+    reference_keeps_hold(fill("Encode {H}.\n\nImports: {P}#child and {I}#x_y."), WORK)
 
 
 def test_an_open_block_a_heading_and_a_code_block_reach_what_follows():
@@ -808,19 +783,16 @@ def test_an_open_block_a_heading_and_a_code_block_reach_what_follows():
     ):
         keeps_the_owner_hold(fill(block))
     # Controls: a closed block reaches nothing, and a new heading ends what a heading reaches.
-    releases(fill("Encode {I}.\n\n- See {H}.\n- See {P}."))
+    reference_keeps_hold(fill("Encode {I}.\n\n- See {H}.\n- See {P}."))
     assert reading(fill("## To fix\n\nNotes.\n\n## Background\n\nSee {P}.")) == {WORK}  # the new heading reaches it
-    assert reading(fill("Encode {H}.\n\nSee {P}.")) == {MENTION}
+    assert reading(fill("Encode {H}.\n\nSee {P}.")) == {WORK}
     assert reading(fill("Encode {H}.\n\nSee {P}.\n\n## Background")) == {WORK}  # a heading follows it
 
 
 BREAKS = ["\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\N{LINE SEPARATOR}", "\N{PARAGRAPH SEPARATOR}"]
 
 
-# Invariant (round 15): a vertical tab, form feed, separator control, NEL or
-# Unicode line or paragraph separator is a space to the readers and no space
-# to Markdown, which decides blank lines, list markers and headings by spaces
-# and tabs alone. An issue that holds one, anywhere, releases nothing.
+# Every named module remains work, including these former reference controls.
 @given(
     base=st.sampled_from(BASES),
     mark=st.sampled_from(BREAKS),
@@ -838,10 +810,9 @@ def test_an_issue_with_a_line_separator_releases_nothing(base, mark, where):
     comments = (f"A note{mark}here.",) if where == "comment" else ()
     row, ready = plan_for(body + (f"\nSee also{mark}the notes.\n" if where == "body" else ""), comments)
     assert PIPELINE in row.work_modules and ready == 0, (where, repr(mark))
-    # Control: the same issue with a space in its place releases the reference (a blank line or
-    # a list marker then sets it apart from the request before it, which names its own module).
+    # Every named module remains work, including these former reference controls.
     row, ready = plan_for(body.replace(mark, " "), tuple(comment.replace(mark, " ") for comment in comments))
-    assert PIPELINE not in row.work_modules and ready == 1, (where, repr(mark))
+    assert PIPELINE in row.work_modules and ready == 0, (where, repr(mark))
 
 
 SPACES = [NBSP, "\x1f", "\N{EN SPACE}", "\N{EM SPACE}", "\N{NARROW NO-BREAK SPACE}", "\N{IDEOGRAPHIC SPACE}"]
@@ -882,10 +853,9 @@ def test_an_issue_with_other_white_space_releases_nothing(space, where):
     comments = (f"A note{space}here.",) if where == "comment" else ()
     row, ready = plan_for(body, comments)
     assert row.review_finding and PIPELINE in row.work_modules and ready == 0, (where, repr(space))
-    # Control: with spaces in its place (a real blank line, a list marker, plain text) the
-    # reference stands apart, last in the finding, and releases.
+    # Every named module remains work, including these former reference controls.
     row, ready = plan_for(body.replace(space, "  "), tuple(c.replace(space, " ") for c in comments))
-    assert row.review_finding and PIPELINE not in row.work_modules and ready == 1, (where, repr(space))
+    assert row.review_finding and PIPELINE in row.work_modules and ready == 0, (where, repr(space))
 
 
 # Invariant (round 15): a tab after a quote mark keeps two columns in
@@ -910,16 +880,15 @@ def test_a_tab_after_a_quote_mark_releases_nothing():
                 block,
                 base is READY_ISSUE_BODY,
             )
-    # Controls: written with spaces, the two columns put the reference in the item, which holds
-    # it, and a quote mark with one space sets it apart, which releases it.
+    # Every named module remains work, including these former reference controls.
     row, ready = held(fill("- Encode {H}.\n\n  See {P}."))
     assert PIPELINE in row.work_modules and ready == 0
     row, ready = held(fill("- Encode {H}.\n\nSee {P}."))
-    assert PIPELINE not in row.work_modules and ready == 1
+    assert PIPELINE in row.work_modules and ready == 0
 
 
 def test_the_grammar_s_own_mark_in_the_text_is_no_module():
     mark = chr(0xE000)  # the private-use character the forms read a module as
     keeps_the_owner_hold(fill("See {P} and " + mark + "."))
     keeps_the_owner_hold(fill("See {P}, " + mark + " and {H}."))
-    releases(fill("See {P} and {H}."))
+    reference_keeps_hold(fill("See {P} and {H}."))

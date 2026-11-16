@@ -16,7 +16,6 @@ from axiom_parity.drain import (
     WORK,
     WorkHolds,
     _modules_in,
-    _released,
     _spellings,
     _unspelled,
     issue_inputs,
@@ -94,7 +93,7 @@ VERIFY_9 = [
     ("N4", {"block": f"Fix us/statutes/26/32/{{d.yaml, and the pipeline it feeds}}.\n\nSee {P}."}, P),
     ("N5", {"block": f"Do not import {P_DIR}{{taxable_income_pipeline.yaml, edit it in place instead}}."}, P),
     ("N6", {"section": SECTION + f"See {P_DIR}{{taxable_income_pipeline.yaml, and fix that file}}."}, P),
-    ("MENTION", {"block": f"Keep {P_DIR}{{taxable_income_pipeline.yaml, but rewrite its rate}} unchanged."}, P),
+    ("WORK", {"block": f"Keep {P_DIR}{{taxable_income_pipeline.yaml, but rewrite its rate}} unchanged."}, P),
 ]
 
 
@@ -115,12 +114,11 @@ def test_a_blocked_module_in_a_brace_group_keeps_its_block():
 
 
 def test_the_same_sentences_without_braces_read_as_before():
-    # Controls: the request written out holds the pipeline, a group that spells every path names
-    # every module, and a reference with no brace in the findings is released.
+    # Every named module remains work, including these former reference controls.
     assert_held(P, block=f"See {P} and fix that file.")
     assert_held(H, block="Fix us/statutes/26/1/{i,h}.yaml.")
     row, ready = planned(block=f"See {P}.")
-    assert P not in row.work_modules and row.dispatchable and ready == 1 and not row.unread
+    assert P in row.work_modules and not row.dispatchable and ready == 0 and not row.unread
 
 
 # Invariant (round 15, verify8-f12-2 P1): the readers see every word the text holds. A brace group
@@ -172,15 +170,15 @@ def test_no_word_of_a_brace_group_is_dropped(opener, words, shape, spaced, where
         "second-file": f"{P_DIR}{{{name}{comma}taxable_income_pipeline.test.yaml {words}}}",
     }[shape]
     sentence = opener.format(group)
-    # The text keeps the group as written, so every word reaches the readers, and nothing is released.
+    # Every named module remains work, including these former reference controls.
     assert group in plain(sentence), sentence
-    assert _released(sentence) == {}, sentence
+    assert all(kind == WORK for _, kind in _modules_in(plain(sentence))), sentence
     if where == "section":
         assert_held(P, section=SECTION + sentence)
     else:
         assert_held(P, block=("- " if where == "listed" else "") + sentence)
     # Control: the opener on the path alone is a reference the grammar reads.
-    assert _released(opener.format(P)), opener
+    assert _modules_in(plain(opener.format(P))) == [(P, WORK)], opener
 
 
 # Invariant (round 15): findings that hold a brace release nothing, whatever the brace holds:
@@ -206,7 +204,7 @@ def test_findings_that_hold_a_brace_release_nothing(opener, brace, listed):
     bullet = "- " if listed else ""
     block = bullet + opener.format(text) if kind == "own" else f"{text}\n\n{bullet}{opener.format(P)}"
     assert_held(P, block=block)
-    # Control: the same findings with each path written out release the reference.
+    # Every named module remains work, including these former reference controls.
     full = {
         "Fix us/statutes/26/32/{h,i}.yaml.": "Fix us/statutes/26/32/h.yaml and us/statutes/26/32/i.yaml.",
         "Fix us/statutes/26/32/{h}.yaml.": "Fix us/statutes/26/32/h.yaml.",
@@ -215,7 +213,7 @@ def test_findings_that_hold_a_brace_release_nothing(opener, brace, listed):
     }
     block = bullet + opener.format(P) if kind == "own" else f"{full[text]}\n\n{bullet}{opener.format(P)}"
     row, ready = planned(block=block)
-    assert P not in row.work_modules and ready == 1, block
+    assert P in row.work_modules and not row.dispatchable and ready == 0, block
 
 
 # Invariant (round 15, verify8-f12-2 P1, second variant): a brace expression that is not spelled

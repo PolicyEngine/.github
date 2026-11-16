@@ -1,4 +1,4 @@
-"""Bracket matching stays linear without changing the established clause grammar."""
+"""Path extraction stays linear through the earlier clause grammar's inputs."""
 
 from time import perf_counter
 
@@ -6,14 +6,15 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from round9_clause_reference import _modules_in as reference_modules
 
-from axiom_parity.drain import DEFERRED, IMPORT, MENTION, WORK, _modules_in, _own_clause
+from axiom_parity.drain import WORK, _modules_in
 
 
 def test_sixteen_thousand_unmatched_openers_finish_under_a_second():
-    # Invariant P2: unmatched brackets are visited once, never rescanned as suffixes.
-    text = "Remove a rule " + "(" * 16_000 + " from "
+    # Unmatched brackets cannot hide a named module or trigger repeated suffix scans.
+    module = "us/statutes/26/32/d.yaml"
+    text = "Remove a rule " + "(" * 16_000 + " from " + module
     start = perf_counter()
-    assert _own_clause(text) == text
+    assert _modules_in(text) == [(module, WORK)]
     assert perf_counter() - start < 1
 
 
@@ -38,15 +39,9 @@ def test_sixteen_thousand_unmatched_openers_finish_under_a_second():
 )
 @settings(deadline=None, database=None, max_examples=250)
 def test_linear_scan_preserves_the_previous_correct_clause_classifications(verb, object_name, additions):
-    # Differential over bounded established grammar; the old oracle deliberately
-    # excludes the removal-list and metadata bugs pinned by their own properties.
+    # Differential over the established removal, import and reference wording.
     gap = verb + object_name + "".join(additions) + " from "
     module = "us/statutes/26/32/d.yaml"
     actual = _modules_in(gap + module)
     previous = reference_modules(gap + module)
-    # The scan preserves all WORK/removal readings. The affirmative predicate
-    # grammar may conservatively turn an old unproven non-WORK reading into
-    # WORK; positive and ambiguous cases are pinned in the round10 properties.
-    assert actual == previous or (
-        actual == [(module, WORK)] and previous in [[(module, IMPORT)], [(module, MENTION)], [(module, DEFERRED)]]
-    )
+    assert actual == previous == [(module, WORK)]

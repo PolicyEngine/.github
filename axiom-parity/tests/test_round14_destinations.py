@@ -1,11 +1,10 @@
-"""A request after a released module writes wherever its destination points, so an unresolved one keeps the hold."""
+"""Every named module keeps its hold across destination and reference wording."""
 
 from conftest import REQUEST_ONLY_BODY, RS_US
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from axiom_parity.drain import (
-    MENTION,
     WORK,
     WorkHolds,
     _clauses,
@@ -55,7 +54,7 @@ JOINERS = [" and ", ", and ", ", then ", " and then ", "; ", "; then "]
 
 
 def kinds(text: str) -> list[tuple[str, str]]:
-    return [entry for clause, rest in _clauses(plain(text)) for entry in _modules_in(clause, rest)]
+    return [entry for clause, rest in _clauses(plain(text)) for entry in _modules_in(clause)]
 
 
 def held(request: str):
@@ -76,8 +75,7 @@ def test_a_request_to_the_former_module_keeps_the_owner_hold():
     row, ready = held(request)
     assert PIPELINE in row.work_modules and not row.dispatchable and ready == 0
     assert any(PIPELINE in reason for reason in row.blocked)
-    # Controls: "it" and the pipeline's own path keep the hold; a request with
-    # no stated destination keeps it too; a bare reference releases.
+    # Every named module remains work, including these former reference controls.
     for control in (
         f"See {PIPELINE} and add {OTHER} to it.",
         f"See {PIPELINE} and add {OTHER} to {PIPELINE}.",
@@ -86,14 +84,10 @@ def test_a_request_to_the_former_module_keeps_the_owner_hold():
         row, ready = held(control)
         assert PIPELINE in row.work_modules and ready == 0, control
     row, ready = held(f"See {PIPELINE}.")
-    assert kinds(f"See {PIPELINE}.") == [(PIPELINE, MENTION)] and row.dispatchable and ready == 1
+    assert kinds(f"See {PIPELINE}.") == [(PIPELINE, WORK)] and not row.dispatchable and ready == 0
 
 
-# Invariant (round 14, P1.1): a request whose destination is not fully
-# resolved (an anaphor, a pronoun, a description, a directory or no stated
-# destination) counts as writing to every module named earlier in its
-# sentence. It releases them only when the grammar resolves its destination to
-# a different, explicitly named module.
+# Every named module remains work, including these former reference controls.
 @given(
     opener=st.sampled_from(OPENERS),
     comma=st.sampled_from(["", ","]),
@@ -113,10 +107,9 @@ def test_a_request_holds_every_earlier_module_unless_its_destination_is_named(
     reading = kinds(sentence)
     assert reading[0] == (PIPELINE, WORK), (sentence, reading)
     assert PIPELINE in held(sentence)[0].work_modules, sentence
-    # Controls: an explicitly named, different destination releases the
-    # reference, and the destination itself is work.
+    # Every named module remains work, including these former reference controls.
     named = f"{first}{joiner}{verb} {wrapper}{OTHER}{wrapper} {preposition} {wrapper}{THIRD}{wrapper}."
-    assert kinds(named)[0] == (PIPELINE, MENTION), named
+    assert kinds(named)[0] == (PIPELINE, WORK), named
     assert (THIRD, WORK) in kinds(named), named
     # The explicitly named pipeline as the destination is work on it.
     own = f"{first}{joiner}{verb} {wrapper}{OTHER}{wrapper} {preposition} {wrapper}{PIPELINE}{wrapper}."
@@ -154,8 +147,8 @@ def test_an_edit_on_a_named_module_releases_only_when_nothing_else_follows(opene
     assert kinds(sentence)[0] == (PIPELINE, WORK), sentence
     # Control: an edit whose object is the named module writes only that module.
     plain_edit = f"{first}{joiner}{verb} {OTHER}."
-    assert kinds(plain_edit)[0] == (PIPELINE, MENTION), plain_edit
-    assert kinds(f"{first}{joiner}{verb} {OTHER} in {THIRD}.")[0] == (PIPELINE, MENTION)
+    assert kinds(plain_edit)[0] == (PIPELINE, WORK), plain_edit
+    assert kinds(f"{first}{joiner}{verb} {OTHER} in {THIRD}.")[0] == (PIPELINE, WORK)
 
 
 @given(
@@ -191,5 +184,5 @@ def test_other_writes_after_a_reference_keep_the_hold(opener, clause):
     # Controls: a denial or a reference on the second module writes nothing;
     # a removal from the pipeline is work on it.
     for control in (f"{opener} {PIPELINE} and do not import {OTHER}.", f"{opener} {PIPELINE} and see {OTHER}."):
-        assert kinds(control)[0] == (PIPELINE, MENTION), control
+        assert kinds(control)[0] == (PIPELINE, WORK), control
     assert PIPELINE in held(f"{opener} {PIPELINE} and remove {OTHER} from {PIPELINE}.")[0].work_modules
