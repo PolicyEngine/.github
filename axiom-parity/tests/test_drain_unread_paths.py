@@ -20,9 +20,9 @@ def row_with(path):
         "uѕ/policies/income_tax/x.yaml",  # Cyrillic small dze
         "us/POLICIES/income_tax/x.yaml",
         "us/policies/income_tax/x–rate.yaml",
-        "us/unknown_kind/x.yaml",
-        "other/module.yaml",
         "US/statutes/26/1/h",
+        "unknown-jurisdiction/policies/income_tax/x.yaml",
+        "programs/UNKNOWN/tanf/x–rate.yaml",
     ],
 )
 def test_a_path_shaped_name_the_reader_misses_keeps_an_unread_hold(path):
@@ -50,9 +50,50 @@ def test_read_paths_citations_and_directories_add_no_unread_hold(path):
     assert not row_with(path).unread
 
 
+@pytest.mark.parametrize("prefix", ["rulespec-us/", "https://github.com/TheAxiomFoundation/rulespec-us/blob/main/"])
+@pytest.mark.parametrize("root", ["US/policies/", "programs/US/"])
+def test_an_unread_uppercase_module_behind_a_prefix_is_held(prefix, root):
+    path = f"{root}income_tax/x.yaml"
+    row = row_with(prefix + path)
+    # A prefix before programs/ can itself look like a jurisdiction root.
+    assert len(row.unread) == 1 and row.unread[0].endswith(path)
+    plan([row], corpus={"us/statute/26/32/d"})
+    assert not row.dispatchable
+    assert any("writes a path the plan cannot read in full" in reason and path in reason for reason in row.blocked)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "https://nysenate.gov/legislation/bills/2025/S9009/amendment/C",
+        "nysenate.gov/legislation/x.yaml",
+        "programs/nysenate.gov/x.yaml",
+        "policyengine_us/tests/policy/baseline/gov/irs/income_tax/x.yaml",
+        "152/c.yaml",
+        "bridges/mappings/uk.yaml",
+        # Lane 1 held these through the removed any-YAML alternative.
+        "us/unknown_kind/x.yaml",
+        "other/module.yaml",
+    ],
+)
+def test_a_path_without_a_module_root_is_neither_read_nor_held(path):
+    row = row_with(path)
+    assert not row.unread
+    assert row.modules == row_with("").modules
+    assert row.targets == row_with("").targets
+
+
 @given(st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789_", min_size=1, max_size=30))
 @settings(deadline=None, database=None)
-def test_the_raw_guard_cannot_silently_accept_an_unknown_yaml_path(name):
+def test_the_raw_guard_ignores_an_unknown_yaml_path_without_a_module_root(name):
     path = f"unrecognized/{name}.yaml"
+    assert _unread_paths(f"See `{path}`.", []) == []
+    assert _unread_paths(f"See `{path}`.", [path]) == []
+
+
+@given(st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789_", min_size=1, max_size=30))
+@settings(deadline=None, database=None)
+def test_the_raw_guard_holds_an_unknown_jurisdiction_with_a_module_kind(name):
+    path = f"unrecognized/policies/{name}.yaml"
     assert _unread_paths(f"See `{path}`.", []) == [path]
     assert _unread_paths(f"See `{path}`.", [path]) == []

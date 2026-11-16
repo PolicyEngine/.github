@@ -520,20 +520,21 @@ def _shown(path: str) -> str:
 
 # An independent, deliberately crude census over the finding as written,
 # before ``plain`` rewrites paths. Broader than ``_MODULE_NAME``: uppercase
-# or unknown jurisdictions/kinds, Unicode punctuation, and unrecognized YAML
-# paths must hold an issue rather than disappear or read as a shorter module.
+# or unknown jurisdictions and Unicode punctuation in rooted module paths
+# must hold an issue rather than disappear or read as a shorter module.
+# A slash may precede a root in a repository/URL prefix. Dots are neither
+# jurisdiction characters nor a root boundary, so hosts cannot supply a root.
 _RAW_PATH_PART = r"[^\s`*<>\"'{}\[\](),;!?/]+"
 _RAW_MODULE_PATH = re.compile(
-    rf"(?<![\w/-])(?:[\w.\-]+[/:](?:{_MODULE_KINDS})/|programs/[\w.\-]+/)"
+    rf"(?<![\w.\-])(?:[\w\-]+[/:](?:{_MODULE_KINDS})/|programs/[\w\-]+/)"
     rf"(?:{_RAW_PATH_PART}/)*?{_RAW_PATH_PART}?\.yaml(?:/?\.test\.yaml)?(?!\w)"
-    rf"|(?<![\w/-])(?:[\w.\-]+[/:](?:{_MODULE_KINDS})/|programs/[\w.\-]+/)[^\s`*<>\"'{{}}\[\](),;!?]+"
-    rf"|(?<![\w/-])(?:[\w.:\-]+/)+[\w.\-]+\.yaml(?:/?\.test\.yaml)?(?!\w)",
+    rf"|(?<![\w.\-])(?:[\w\-]+[/:](?:{_MODULE_KINDS})/|programs/[\w\-]+/)[^\s`*<>\"'{{}}\[\](),;!?]+",
     re.IGNORECASE,
 )
 
 
 def _unread_paths(finding: str, modules: list[str]) -> list[str]:
-    """Raw path-shaped module names that no extracted module accounts for.
+    """Rooted raw module paths that no extracted module accounts for.
 
     Repository/URL prefixes and a module's rule fragment do not change its
     name. Directories and corpus citations are not module files. Brace
