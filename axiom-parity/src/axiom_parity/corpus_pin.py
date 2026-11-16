@@ -100,43 +100,64 @@ def pinned_citations(corpus: Path, pin: Pin) -> set[str]:
     return pinned_rows(corpus, pin)[0]
 
 
+# `git cat-file --batch` answers each object name with "<oid> <type> <size>",
+# the object's bytes and a newline, or with the name itself and " missing" or
+# " ambiguous".
+_BATCH_FOUND = re.compile(rb"(?:[0-9a-f]{40}|[0-9a-f]{64}) [a-z]+ ([0-9]+)\n")
+
+
 def pinned_rows(corpus: Path, pin: Pin) -> tuple[set[str], set[str]]:
-    """(citations the encoder can read, citations whose row is marked repealed)."""
+    """(citations the encoder can read, citations whose row is marked repealed).
+
+    Each selected scope's file goes to ``git cat-file --batch`` as one
+    ``<ref>:<path>`` line, and Git cuts a name at a NUL, so a name holding a
+    newline or a NUL would name some other object: it raises before Git
+    starts. Each answer must be exactly one the protocol defines for the name
+    sent, and a found object must arrive whole, or it raises. So no other
+    object's rows reach the pin, and no scope is read in part. A missing or
+    ambiguous scope adds nothing, as before, which holds its citations.
+    """
     manifest = json.loads(_show(corpus, pin.corpus_ref, f"manifests/releases/{pin.release}.json"))
     paths = [
         f"data/corpus/provisions/{s['jurisdiction']}/{s['document_class']}/{s['version']}.jsonl"
         for s in manifest.get("scopes", [])
     ]
+    names = [f"{pin.corpus_ref}:{path}".encode() for path in paths]
+    for name in names:
+        if b"\n" in name or b"\0" in name:
+            raise ValueError(f"git cat-file --batch can't name {name!r}: it holds a newline or a NUL")
     out: set[str] = set()
     repealed: set[str] = set()
-    proc = subprocess.Popen(
+    with subprocess.Popen(
         ["git", "-C", str(corpus), "cat-file", "--batch"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-    )
-    assert proc.stdin and proc.stdout
-    for path in paths:
-        proc.stdin.write(f"{pin.corpus_ref}:{path}\n".encode())
-        proc.stdin.flush()
-        header = proc.stdout.readline().decode().split()
-        if len(header) != 3:  # "<object> missing"
-            continue
-        size = int(header[2])
-        remaining = size
-        buf = b""
-        while remaining > 0:
-            chunk = proc.stdout.read(min(remaining, 1 << 20))
-            if not chunk:
-                break
-            remaining -= len(chunk)
-            buf += chunk
-            *lines, buf = buf.split(b"\n")
-            for line in lines:
-                _take(line, out, repealed)
-        _take(buf, out, repealed)
-        proc.stdout.read(1)  # trailing newline after each object
-    proc.stdin.close()
-    proc.wait()
+    ) as proc:
+        assert proc.stdin and proc.stdout
+        for name in names:
+            proc.stdin.write(name + b"\n")
+            proc.stdin.flush()
+            header = proc.stdout.readline()
+            if header in (name + b" missing\n", name + b" ambiguous\n"):
+                continue
+            found = _BATCH_FOUND.fullmatch(header)
+            if found is None:
+                raise ValueError(f"git cat-file --batch answered {header!r} for {name!r}")
+            remaining = int(found.group(1))
+            buf = b""
+            while remaining > 0:
+                chunk = proc.stdout.read(min(remaining, 1 << 20))
+                if not chunk:
+                    raise ValueError(f"git cat-file --batch output ended inside {name!r}")
+                remaining -= len(chunk)
+                buf += chunk
+                *lines, buf = buf.split(b"\n")
+                for line in lines:
+                    _take(line, out, repealed)
+            if proc.stdout.read(1) != b"\n":  # the newline after each object
+                raise ValueError(f"git cat-file --batch: no newline after {name!r}")
+            _take(buf, out, repealed)
+        proc.stdin.close()
     return out, repealed - out
 
 

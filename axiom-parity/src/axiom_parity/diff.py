@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from .git_paths import name_status, show
 from .github import GitHub, NotFound
 
 
@@ -21,29 +22,45 @@ class LocalDiff:
         self.head = head
         self._renames: dict[str, str] = {}
 
-    def _git(self, *args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(["git", "-C", str(self.root), *args], capture_output=True, text=True)
-
     def changed_files(self) -> list[str]:
-        out = self._git("diff", "--name-status", "-M", self.base, self.head)
+        """Each changed file's path at head (a deleted file's at base).
+
+        ``-z`` keeps a path Git would quote, or that holds a newline or tab,
+        whole, and each record is parsed by its status: a rename's base path is
+        kept for ``read``. ``--no-relative`` lists paths from the top of the
+        tree even if the ``diff.relative`` setting is on. Output the record
+        grammar doesn't account for raises rather than dropping a file.
+        """
+        out = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(self.root),
+                "diff",
+                "--name-status",
+                "--no-relative",
+                "-M",
+                "-z",
+                self.base,
+                self.head,
+            ],
+            capture_output=True,
+        )
         if out.returncode != 0:
-            raise RuntimeError(out.stderr.strip())
+            raise RuntimeError(out.stderr.decode("utf-8", "replace").strip())
         files = []
-        for line in out.stdout.splitlines():
-            parts = line.split("\t")
-            if parts[0].startswith("R") and len(parts) == 3:
-                self._renames[parts[2]] = parts[1]
-                files.append(parts[2])
-            elif len(parts) >= 2:
-                files.append(parts[-1])
+        for change in name_status(out.stdout):
+            if change.status == "R" and change.source is not None:
+                self._renames[change.path] = change.source
+            # A copy's head path is a new file: its base side reads as absent.
+            files.append(change.path)
         return files
 
     def read(self, path: str, side: str) -> str | None:
         ref = self.base if side == "base" else self.head
         if side == "base":
             path = self._renames.get(path, path)
-        res = self._git("show", f"{ref}:{path}")
-        return res.stdout if res.returncode == 0 else None
+        return show(self.root, ref, path)
 
 
 class ApiDiff:

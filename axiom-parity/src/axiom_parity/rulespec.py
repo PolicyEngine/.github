@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from . import pe_yaml
+from .git_paths import show, tree_paths
 from .github import GitHub, NotFound
 from .refs import AXIOM_OWNER, LegalRef, TestRef, norm_dashes
 
@@ -78,23 +79,26 @@ class LocalSource:
         self._paths: set[str] | None = None
 
     def paths(self) -> set[str]:
+        """Every file in the ref's whole tree, by the exact path ``read`` takes.
+
+        ``-z`` keeps a path Git would quote (``1437c–1.yaml``) or that holds a
+        newline whole; ``--full-tree`` lists from the top of the tree, as
+        ``git show <ref>:<path>`` reads, whatever directory ``root`` names.
+        """
         if self._paths is None:
             out = subprocess.run(
-                ["git", "-C", str(self.root), "ls-tree", "-r", "--name-only", self.ref],
+                ["git", "-C", str(self.root), "ls-tree", "-r", "--full-tree", "--name-only", "-z", self.ref],
                 check=True,
                 capture_output=True,
-                text=True,
             ).stdout
-            self._paths = set(out.splitlines())
+            self._paths = set(tree_paths(out))
         return self._paths
 
     def read(self, path: str) -> str:
-        res = subprocess.run(
-            ["git", "-C", str(self.root), "show", f"{self.ref}:{path}"], capture_output=True, text=True
-        )
-        if res.returncode != 0:
+        text = show(self.root, self.ref, path)
+        if text is None:
             raise NotFound(path)
-        return res.stdout
+        return text
 
 
 @dataclass
