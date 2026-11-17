@@ -16,6 +16,7 @@ from axiom_parity.drain import (
     plan,
     to_json,
 )
+from axiom_parity.issue_lint import _TODO
 
 PIPELINE = "us/policies/income_tax/taxable_income_pipeline.yaml"
 OTHER = "us/statutes/26/1/h.yaml"
@@ -402,7 +403,13 @@ def test_a_reference_paragraph_keeps_its_owner_hold():
 
 
 # Other words: anything but a reference sentence or a denial on a pronoun.
-WORDS = st.lists(st.text(alphabet=string.ascii_letters, min_size=1, max_size=9), min_size=1, max_size=6)
+# A placeholder word (TBD, TODO, FIXME, TBC) makes the issue unready on its
+# own, so the domain leaves it out.
+WORDS = st.lists(
+    st.text(alphabet=string.ascii_letters, min_size=1, max_size=9).filter(lambda word: not _TODO.search(word)),
+    min_size=1,
+    max_size=6,
+)
 JOINS = st.sampled_from([" ", ", ", "; ", ": ", " - ", "' "])
 # Where the other words stand: in the reference's sentence, in its paragraph, or in its list item.
 PLACES = [
