@@ -62,7 +62,22 @@ def test_every_exact_unquoted_and_quoted_cue(cue, prefix):
     check_outputs(f"{prefix}{cue[:-1]}\n{prefix}1. one_named_output (Money): a computed amount.\n", False)
 
 
-@pytest.mark.parametrize("root", ["# Required outputs", "#### Required outputs", "## Outputs", "## required outputs", "Required outputs", "Required Outputs:", "required_outputs", "__Required outputs__", "- Required outputs:", "> ## Required outputs", "> **Required outputs:**"])
+@pytest.mark.parametrize(
+    "root",
+    [
+        "# Required outputs",
+        "#### Required outputs",
+        "## Outputs",
+        "## required outputs",
+        "Required outputs",
+        "Required Outputs:",
+        "required_outputs",
+        "__Required outputs__",
+        "- Required outputs:",
+        "> ## Required outputs",
+        "> **Required outputs:**",
+    ],
+)
 def test_other_output_labels_are_not_roots(root):
     check_outputs(layout(root=root), False)
 
@@ -78,12 +93,40 @@ def test_other_item_markers_are_refused(marker):
     check_outputs(layout(marker=marker), False)
 
 
-@pytest.mark.parametrize("field", ["one_named_output", "`one_named_output`", "one_named_output.", "#rule", "`#rule`", "us:statutes/26/86#taxable_amount", "`us:statutes/26/86#taxable_amount`", "us/statutes/26/86.yaml#taxable_amount", "one_named_output, two_named_outputs", "`one_named_output`; #another_rule."])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "one_named_output",
+        "`one_named_output`",
+        "one_named_output.",
+        "#rule",
+        "`#rule`",
+        "us:statutes/26/86#taxable_amount",
+        "`us:statutes/26/86#taxable_amount`",
+        "us/statutes/26/86.yaml#taxable_amount",
+        "one_named_output, two_named_outputs",
+        "`one_named_output`; #another_rule.",
+    ],
+)
 def test_supported_name_and_reference_fields(field):
     check_outputs(layout(field), True)
 
 
-@pytest.mark.parametrize("field", ["income", "One_named_output", "oneNamedOutput", "one-named-output", "one_named_output two_named_outputs", "us:statutes/26/86", "#Rule", "**one_named_output**", "Output one_named_output", "one_named_output Money"])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "income",
+        "One_named_output",
+        "oneNamedOutput",
+        "one-named-output",
+        "one_named_output two_named_outputs",
+        "us:statutes/26/86",
+        "#Rule",
+        "**one_named_output**",
+        "Output one_named_output",
+        "one_named_output Money",
+    ],
+)
 def test_nonfields_cannot_supply_identifier_prefix_evidence(field):
     check_outputs(layout(field), False)
 
@@ -109,13 +152,36 @@ def test_typed_descriptions_with_each_supported_period(kind, period):
     check_outputs(layout(f"one_named_output ({kind}, {period}): the computed amount."), True)
 
 
-@pytest.mark.parametrize("field", ["one_named_output:", "one_named_output=", "one_named_output,Two_named_outputs", "one_named_output (custom prose)", "one_named_output (Float)", "one_named_output (Money, Fortnight): a computed amount.", "one_named_output: `source_amount` plus `other_amount`."])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "one_named_output:",
+        "one_named_output=",
+        "one_named_output,Two_named_outputs",
+        "one_named_output (custom prose)",
+        "one_named_output (Float)",
+        "one_named_output (Money, Fortnight): a computed amount.",
+        "one_named_output: `source_amount` plus `other_amount`.",
+    ],
+)
 def test_frozen_descriptive_field_edges(field):
     # C's parenthesis delimiter admits prose even when it is not a finite type.
     check_outputs(layout(field), True)
 
 
-@pytest.mark.parametrize("field", ["one_named_output: supplied as an input", "one_named_output (Money): an imPORTed value", "one_named_output: supplied as an in**put**", "one_named_output: supplied as i_n_p_u_t", "one_named_output: im.port this value", "one_named_output: an important amount", "net_input_amount", "one_named_output, another_import_amount"])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "one_named_output: supplied as an input",
+        "one_named_output (Money): an imPORTed value",
+        "one_named_output: supplied as an in**put**",
+        "one_named_output: supplied as i_n_p_u_t",
+        "one_named_output: im.port this value",
+        "one_named_output: an important amount",
+        "net_input_amount",
+        "one_named_output, another_import_amount",
+    ],
+)
 def test_input_import_veto_covers_the_complete_field(field):
     check_outputs(layout(field), False)
     check_outputs(layout("one_named_output: a computed amount"), True)
@@ -124,7 +190,10 @@ def test_input_import_veto_covers_the_complete_field(field):
 def test_input_veto_rejects_a_row_without_discarding_supported_siblings():
     text = "Required outputs:\n- one_named_output: supplied as an input\n- two_named_outputs: computed from source amounts\n"
     result = check_outputs(text, True)
-    assert result.found["required_outputs"] == "body: line 3 (root line 1): - two_named_outputs: computed from source amounts"
+    assert (
+        result.found["required_outputs"]
+        == "body: line 3 (root line 1): - two_named_outputs: computed from source amounts"
+    )
 
 
 @pytest.mark.parametrize("header,separator,row", TABLES)
@@ -145,7 +214,9 @@ def test_table_other_columns_veto_the_complete_row(header, separator, row, desig
 
 
 def test_number_column_also_participates_in_table_row_veto():
-    text = "| # | Output | Rule |\n| --- | --- | --- |\n| import | one_named_output | 1 |\n| 2 | two_named_outputs | 2 |\n"
+    text = (
+        "| # | Output | Rule |\n| --- | --- | --- |\n| import | one_named_output | 1 |\n| 2 | two_named_outputs | 2 |\n"
+    )
     result = check_outputs(text, True)
     assert result.found["required_outputs"] == "body: line 4 (root line 1): | 2 | two_named_outputs | 2 |"
 
@@ -160,12 +231,36 @@ def test_invalid_table_separators_are_refused(separator):
     check_outputs(f"| Output | Value |\n{separator}\n| one_named_output | 1 |\n", False)
 
 
-@pytest.mark.parametrize("field", ["one_named_output", "`one_named_output` (Money)", "one_named_output: a computed amount.", "one_named_output, #other_rule"])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "one_named_output",
+        "`one_named_output` (Money)",
+        "one_named_output: a computed amount.",
+        "one_named_output, #other_rule",
+    ],
+)
 def test_tables_use_the_same_closed_fields(field):
     check_outputs(f"| Output | Value |\n| --- | --- |\n| {field} | 1 |\n", True)
 
 
-@pytest.mark.parametrize("opener", ["```text", "~~~text", "- ```text", "* ~~~text", "+ ```", "1. ~~~", "prose ```text", "<table>", "- <!--", "<?xml", "</section>", "<!DOCTYPE html>"])
+@pytest.mark.parametrize(
+    "opener",
+    [
+        "```text",
+        "~~~text",
+        "- ```text",
+        "* ~~~text",
+        "+ ```",
+        "1. ~~~",
+        "prose ```text",
+        "<table>",
+        "- <!--",
+        "<?xml",
+        "</section>",
+        "<!DOCTYPE html>",
+    ],
+)
 def test_container_openers_anywhere_before_anchor_refuse_it(opener):
     check_outputs(opener + "\n\n" + layout(), False)
     check_outputs("Ordinary text.\n\n" + layout(), True)
@@ -177,7 +272,27 @@ def test_unpaired_or_multiple_backtick_runs_before_anchor_are_refused(before):
     check_outputs("A `paired` span.\n\n" + layout(), True)
 
 
-@pytest.mark.parametrize("space", ["\t", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x1f", "\u0085", "\u00a0", "\u1680", "\u2003", "\u2009", "\u2028", "\u2029", "\u202f", "\u3000"])
+@pytest.mark.parametrize(
+    "space",
+    [
+        "\t",
+        "\v",
+        "\f",
+        "\x1c",
+        "\x1d",
+        "\x1e",
+        "\x1f",
+        "\u0085",
+        "\u00a0",
+        "\u1680",
+        "\u2003",
+        "\u2009",
+        "\u2028",
+        "\u2029",
+        "\u202f",
+        "\u3000",
+    ],
+)
 @pytest.mark.parametrize("position", ["before", "field", "after"])
 def test_raw_unicode_whitespace_and_tabs_are_refused_before_normalization(space, position):
     if position == "before":
@@ -214,7 +329,27 @@ def test_input_ancestor_stays_active_through_deeper_unrelated_headings():
     check_outputs("# Inputs\n# Results\n### Required outputs\n- one_named_output\n", True)
 
 
-@pytest.mark.parametrize("bad_group", ["- one_named_output\n  - nested_named_output", "- one_named_output\n  continuation", "- one_named_output\ncontinuation", "- one_named_output\n## Next heading", "- one_named_output\n\n  continued paragraph", "- one_named_output\n\n  - nested_named_output", "- one_named_output\n- ```text", "- one_named_output\n- other_named_output: ~~~text", "- one_named_output\n- other_named_output: <table>", "- one_named_output\n- other_named_output: unpaired ` span", "- one_named_output\n- other_named_output: ``paired`` span", "- one_named_output\n- other_named_output: a\\b", "- one_named_output\n- other_named_output: a[b]", "- one_named_output\n- other_named_output: a]b", "- one_named_output\n- other_named_output: a & b", "- one_named_output\n- other_named_output: an &#105;nput"])
+@pytest.mark.parametrize(
+    "bad_group",
+    [
+        "- one_named_output\n  - nested_named_output",
+        "- one_named_output\n  continuation",
+        "- one_named_output\ncontinuation",
+        "- one_named_output\n## Next heading",
+        "- one_named_output\n\n  continued paragraph",
+        "- one_named_output\n\n  - nested_named_output",
+        "- one_named_output\n- ```text",
+        "- one_named_output\n- other_named_output: ~~~text",
+        "- one_named_output\n- other_named_output: <table>",
+        "- one_named_output\n- other_named_output: unpaired ` span",
+        "- one_named_output\n- other_named_output: ``paired`` span",
+        "- one_named_output\n- other_named_output: a\\b",
+        "- one_named_output\n- other_named_output: a[b]",
+        "- one_named_output\n- other_named_output: a]b",
+        "- one_named_output\n- other_named_output: a & b",
+        "- one_named_output\n- other_named_output: an &#105;nput",
+    ],
+)
 def test_unsupported_list_group_refuses_even_an_earlier_good_sibling(bad_group):
     check_outputs("Required outputs:\n" + bad_group + "\n", False)
     check_outputs("Required outputs:\n- one_named_output\n\nOrdinary next paragraph.\n", True)
@@ -237,16 +372,42 @@ def test_quoted_cues_require_a_fresh_block(prior):
 
 @pytest.mark.parametrize("boundary", ["", ">"])
 def test_quoted_blank_boundaries_before_root_and_between_rows(boundary):
-    check_outputs(f"> earlier quotation\n{boundary}\n> Required outputs:\n{boundary}\n> - one_named_output\n{boundary}\n", True)
+    check_outputs(
+        f"> earlier quotation\n{boundary}\n> Required outputs:\n{boundary}\n> - one_named_output\n{boundary}\n", True
+    )
 
 
-@pytest.mark.parametrize("bad", [">> Required outputs:\n>> - one_named_output", " > Required outputs:\n > - one_named_output", "> Required outputs:\n- one_named_output", "> Required outputs:\n> - one_named_output\nlazy continuation", "> Required outputs:\n> - one_named_output\n> continuation", "> Required outputs:\n> - one_named_output\n>\n>   continuation", "> Required outputs:\n> - one_named_output\n\n  continuation", "> Required outputs:\n> - one_named_output\n>  - nested_named_output"])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        ">> Required outputs:\n>> - one_named_output",
+        " > Required outputs:\n > - one_named_output",
+        "> Required outputs:\n- one_named_output",
+        "> Required outputs:\n> - one_named_output\nlazy continuation",
+        "> Required outputs:\n> - one_named_output\n> continuation",
+        "> Required outputs:\n> - one_named_output\n>\n>   continuation",
+        "> Required outputs:\n> - one_named_output\n\n  continuation",
+        "> Required outputs:\n> - one_named_output\n>  - nested_named_output",
+    ],
+)
 def test_quoted_layout_refuses_other_containers_and_continuations(bad):
     check_outputs(bad + "\n", False)
     check_outputs("> Required outputs:\n> - one_named_output\n>\nNext paragraph.\n", True)
 
 
-@pytest.mark.parametrize("tail", ["| second_named_output |", "| second_named_output | 2 | extra |", "| second_named_output | ``value`` |", "| second_named_output | [value] |", "| second_named_output | a\\b |", "| second_named_output | a & b |", "| second_named_output | <table> |", "continued prose"])
+@pytest.mark.parametrize(
+    "tail",
+    [
+        "| second_named_output |",
+        "| second_named_output | 2 | extra |",
+        "| second_named_output | ``value`` |",
+        "| second_named_output | [value] |",
+        "| second_named_output | a\\b |",
+        "| second_named_output | a & b |",
+        "| second_named_output | <table> |",
+        "continued prose",
+    ],
+)
 def test_malformed_or_ambiguous_table_group_discards_earlier_row(tail):
     text = "| Output | Value |\n| --- | --- |\n| one_named_output | 1 |\n"
     check_outputs(text + tail + "\n", False)
@@ -316,7 +477,12 @@ FROZEN_C_CASES = [
     ("A `paired` span.\n\nRequired outputs:\n- `one_named_output`\n", 3, 4, "- `one_named_output`"),
     ("A ``paired`` span.\n\nRequired outputs:\n- one_named_output\n", None, None, None),
     ("## Inputs\n## Results\nRequired outputs:\n- one_named_output\n", 3, 4, "- one_named_output"),
-    ("| Output | Value |\n| --- | --- |\n| one_named_output | input |\n| two_named_outputs | 1 |\n", 1, 4, "| two_named_outputs | 1 |"),
+    (
+        "| Output | Value |\n| --- | --- |\n| one_named_output | input |\n| two_named_outputs | 1 |\n",
+        1,
+        4,
+        "| two_named_outputs | 1 |",
+    ),
     ("| Output | Value |\n| --- | --- |\n| one_named_output | 1 |\n## Next\n", 1, 3, "| one_named_output | 1 |"),
 ]
 
@@ -329,7 +495,11 @@ def test_frozen_c_layout_decisions_and_first_evidence(text, root_line, line, row
 
 
 @given(
-    st.lists(st.tuples(st.sampled_from(["", "input", "im.port", "in**put**", "important"]), st.sampled_from(TYPES)), min_size=1, max_size=8),
+    st.lists(
+        st.tuples(st.sampled_from(["", "input", "im.port", "in**put**", "important"]), st.sampled_from(TYPES)),
+        min_size=1,
+        max_size=8,
+    ),
     st.sampled_from(["-", "*", "+", "1.", "2)"]),
     st.sampled_from(ROOTS),
 )
@@ -337,7 +507,10 @@ def test_frozen_c_layout_decisions_and_first_evidence(text, root_line, line, row
 def test_property_supported_flat_lists_select_first_complete_nonvetoed_row(rows, marker, root):
     # Independent oracle for this restricted family: every generated field has
     # a valid signature; only the frozen alphabetic row veto selects evidence.
-    raw_rows = [f"{marker} value_{index} ({kind}): computed amount {designation}" for index, (designation, kind) in enumerate(rows)]
+    raw_rows = [
+        f"{marker} value_{index} ({kind}): computed amount {designation}"
+        for index, (designation, kind) in enumerate(rows)
+    ]
     eligible = [index for index, (designation, _) in enumerate(rows) if designation == ""]
     result = check_outputs(root + "\n" + "\n".join(raw_rows) + "\n", bool(eligible))
     if eligible:
@@ -346,7 +519,11 @@ def test_property_supported_flat_lists_select_first_complete_nonvetoed_row(rows,
 
 
 @given(
-    st.lists(st.sampled_from(["one_named_output", "two_named_outputs (Money)", "third_named_output: computed amount"]), min_size=1, max_size=8),
+    st.lists(
+        st.sampled_from(["one_named_output", "two_named_outputs (Money)", "third_named_output: computed amount"]),
+        min_size=1,
+        max_size=8,
+    ),
     st.sampled_from(["\\", "[", "]", "&", "```", "~~~", "<table>", "`", "``paired``"]),
     st.integers(min_value=0, max_value=7),
 )

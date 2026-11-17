@@ -72,7 +72,9 @@ def test_generated_abbreviations_never_end_the_declaring_sentence(abbreviation, 
 def test_a_real_sentence_end_still_splits():
     assert split_sentences("Add `a_b_c` Money. It is an input.") == ["Add `a_b_c` Money.", "It is an input."]
     assert split_sentences("Set the rate at 1.5. Then stop.") == ["Set the rate at 1.5.", "Then stop."]
-    assert lint_issue({"body": finding_only("Add `a_b_c` Money (TaxUnit). It is an input." + PAD)}).missing == ["required_outputs"]
+    assert lint_issue({"body": finding_only("Add `a_b_c` Money (TaxUnit). It is an input." + PAD)}).missing == [
+        "required_outputs"
+    ]
     # rulespec-uk#427 and rulespec-us#1426: a possessive or an alphanumeric
     # label ends in one or two letters, but the whole token is longer.
     assert split_sentences("They are never the applicant's. Inputs are leaves.") == [

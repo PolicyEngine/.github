@@ -117,7 +117,9 @@ def test_no_preamble_keeps_excluded_declarations_as_evidence(
         else ["required_outputs"]
     )
     assert lint_issue({"body": body([*rows, row(marker, "`d_e_f`, a Judgment.")])}).missing == named_missing
-    assert lint_issue({"body": body([*rows, row(marker, "A count rule for one claim a year.")])}).missing == ["required_outputs"]
+    assert lint_issue({"body": body([*rows, row(marker, "A count rule for one claim a year.")])}).missing == [
+        "required_outputs"
+    ]
 
 
 def test_an_unnamed_item_after_the_excluded_items_counts():
@@ -138,4 +140,6 @@ def test_an_unnamed_item_after_the_excluded_items_counts():
 def test_prose_still_counts_where_nothing_was_excluded():
     prose = "The module must produce the separated-spouse determination for each tax unit and each year it covers."
     assert lint_issue({"body": BASE + "\n\n## Required outputs\n\n" + prose}).missing == ["required_outputs"]
-    assert lint_issue({"body": BASE + "\n\n## Required outputs\n\n- The separated-spouse determination"}).missing == ["required_outputs"]
+    assert lint_issue({"body": BASE + "\n\n## Required outputs\n\n- The separated-spouse determination"}).missing == [
+        "required_outputs"
+    ]

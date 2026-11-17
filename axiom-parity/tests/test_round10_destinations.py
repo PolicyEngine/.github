@@ -110,7 +110,9 @@ def test_a_passive_import_request_has_an_affirmative_predicate(modifiers, module
     affirmative = f"{subject} must be stated by importing {module}."
     assert _modules_in(plain(affirmative)) == [(module, WORK)]
     wrapped = affirmative.replace("be stated", "be\nstated")
-    assert [entry for sentence in split_sentences(plain(wrapped)) for entry in _modules_in(sentence)] == [(module, WORK)]
+    assert [entry for sentence in split_sentences(plain(wrapped)) for entry in _modules_in(sentence)] == [
+        (module, WORK)
+    ]
     for denied in [
         "Do not require that " + affirmative.lower(),
         affirmative.replace("must be", "must not be"),
@@ -120,7 +122,9 @@ def test_a_passive_import_request_has_an_affirmative_predicate(modifiers, module
     ]:
         assert _modules_in(plain(denied)) == [(module, WORK)], denied
         wrapped = denied.replace("be stated", "be\nstated").replace("be not stated", "be not\nstated")
-        assert [entry for sentence in split_sentences(plain(wrapped)) for entry in _modules_in(sentence)] == [(module, WORK)]
+        assert [entry for sentence in split_sentences(plain(wrapped)) for entry in _modules_in(sentence)] == [
+            (module, WORK)
+        ]
 
 
 @given(

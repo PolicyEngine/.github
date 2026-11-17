@@ -611,7 +611,9 @@ def test_a_deferral_keeps_work_in_its_own_paragraph_or_clause():
         [],
     )
     assert "us/statutes/26/1/c.yaml" in both.work_modules and "us/statutes/26/1/h.yaml" in both.work_modules
-    batches = plan([both], corpus={"us/statute/26/32/d", "us/statute/26/1/c", "us/statute/26/1/h"}, blocked_modules=blocked)
+    batches = plan(
+        [both], corpus={"us/statute/26/32/d", "us/statute/26/1/c", "us/statute/26/1/h"}, blocked_modules=blocked
+    )
     assert all(not batch.ready for batch in batches)
     without = issue_inputs(
         "R",

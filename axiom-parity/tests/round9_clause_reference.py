@@ -2,7 +2,6 @@
 
 import re
 
-
 _PATH = re.compile(
     r"(?<![\w/-])[a-z]{2}(?:-[a-z0-9]+)*[/:]"
     r"(?:statutes|regulations|policies|legislation|programs)/[\w./-]+"

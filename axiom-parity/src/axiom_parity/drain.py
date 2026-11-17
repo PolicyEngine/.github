@@ -361,9 +361,7 @@ def _clauses(text: str) -> list[tuple[str, str]]:
 def _modules_in(sentence: str) -> list[tuple[str, str]]:
     """Every module named in plain text is requested work, whatever its surrounding words."""
     return [
-        (normal_module(match.group(0)), WORK)
-        for match in _MODULE_NAME.finditer(sentence)
-        if not match.group("dir")
+        (normal_module(match.group(0)), WORK) for match in _MODULE_NAME.finditer(sentence) if not match.group("dir")
     ]
 
 

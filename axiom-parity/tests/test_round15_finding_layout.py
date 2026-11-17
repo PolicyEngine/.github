@@ -140,7 +140,6 @@ def test_the_closed_layouts_still_release_a_reference():
         ("comment", F + f">\n> {REFERENCES}\n>\n"),
     ):
         assert_reference_held(mode, block)
-        text = build(mode, block)[1][0]["body"] if mode == "comment" else build(mode, block)[0]
         assert P in planned(mode, block)[0].work_modules, block
 
 

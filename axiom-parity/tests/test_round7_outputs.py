@@ -62,7 +62,9 @@ def test_reference_links_in_an_entity_annotation_do_not_supply_outputs(annotatio
     # Reference definitions can sit outside the finding handed to the encoder.
     definitions = "\n\n[entity]: https://example.test/entity\n[TaxUnit]: https://example.test/entity\n"
     assert lint_issue({"body": finding_only(finding) + definitions}).missing == ["required_outputs"]
-    assert lint_issue({"body": finding_only(finding.replace("as an input", "= 1")) + definitions}).missing == ["required_outputs"]
+    assert lint_issue({"body": finding_only(finding.replace("as an input", "= 1")) + definitions}).missing == [
+        "required_outputs"
+    ]
 
 
 def test_shortcut_normalization_does_not_invent_an_output_declaration():

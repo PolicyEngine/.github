@@ -79,7 +79,9 @@ def test_property_input_designation_survives_every_signature_token_boundary(
         rendered = re.sub(r"\n(?:[^\S\n]*\n)+", "\n", rendered)
         declaration = ("Add " if typed else "Output ") + rendered
         # Both variations remain outside C's closed layouts.
-        assert lint_issue({"body": finding_only(declaration + " = 1." + PAD)}).missing == ["required_outputs"], declaration
+        assert lint_issue({"body": finding_only(declaration + " = 1." + PAD)}).missing == ["required_outputs"], (
+            declaration
+        )
         assert lint_issue({"body": finding_only(declaration + " " + designation + "." + PAD)}).missing == [
             "required_outputs"
         ], declaration + " " + designation
